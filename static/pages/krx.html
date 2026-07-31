@@ -161,7 +161,7 @@
       renderBadges(status);
 
       if (!dates.length) {
-        $('status').textContent = '캐시가 비어 있습니다. 터미널에서 python3 fetch_krx.py 를 실행하세요.';
+        $('status').textContent = '캐시가 비어 있습니다. 터미널에서 python3 scripts/fetch_krx.py 를 실행하세요.';
         return;
       }
       // 날짜 선택 박스는 실제로 데이터가 있는 거래일만 담는다 (휴장일을 골라 빈 화면 보는 일 방지)

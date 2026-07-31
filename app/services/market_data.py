@@ -218,7 +218,7 @@ def screening_funnel(window: int = DEFAULT_WINDOW) -> Dict:
     if not metrics:
         return {"as_of": None, "universe": "KOSPI + KOSDAQ", "total": 0,
                 "selected": 0, "steps": [], "picks": [],
-                "note": "캐시가 비어 있습니다. python3 fetch_krx.py 를 먼저 실행하세요."}
+                "note": "캐시가 비어 있습니다. python3 scripts/fetch_krx.py 를 먼저 실행하세요."}
 
     # 각 단계는 (이름, 조건 설명, 남길지 판단하는 함수) 로 정의한다.
     # 앞 단계를 통과한 종목만 다음 단계로 넘어간다.
@@ -379,7 +379,7 @@ def monte_carlo_frontier(samples: int = DEFAULT_FRONTIER_SAMPLES,
     if len(usable) < 2:
         return {"risk_free_rate": RISK_FREE_RATE, "samples": 0, "assets": [],
                 "portfolios": [], "frontier": [], "max_sharpe": None, "min_variance": None,
-                "note": "종가 데이터가 부족합니다. python3 fetch_krx.py 로 캐시를 채우세요."}
+                "note": "종가 데이터가 부족합니다. python3 scripts/fetch_krx.py 로 캐시를 채우세요."}
 
     mu, cov, n_obs = _annualized_stats(closes, usable)
     names = {r["code"]: r for r in store.universe()}
@@ -481,7 +481,7 @@ def factor_radar(codes: Sequence[str], window: int = DEFAULT_WINDOW) -> Dict:
     metrics = stock_metrics(window)
     if not metrics:
         return {"factors": FACTORS, "max_score": FACTOR_MAX_SCORE, "stocks": [],
-                "note": "캐시가 비어 있습니다. python3 fetch_krx.py 를 먼저 실행하세요."}
+                "note": "캐시가 비어 있습니다. python3 scripts/fetch_krx.py 를 먼저 실행하세요."}
 
     # 추세 축은 별도 지표가 없어 "20일선 위(50점) + 최근 등락률" 로 합성한다
     for row in metrics:

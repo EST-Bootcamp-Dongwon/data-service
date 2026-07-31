@@ -26,7 +26,7 @@ def _require_cache() -> None:
     if not store.latest_date():
         raise HTTPException(
             status_code=503,
-            detail="시세 캐시가 비어 있습니다. 터미널에서 `python3 fetch_krx.py` 를 먼저 실행하세요.",
+            detail="시세 캐시가 비어 있습니다. 터미널에서 `python3 scripts/fetch_krx.py` 를 먼저 실행하세요.",
         )
 
 
@@ -222,7 +222,7 @@ def get_ohlcv(
     """일봉과 이동평균을 함께 반환한다.
 
     - 값은 전부 **실제 KRX 일별매매정보**이며 이미 호가단위에 맞는 가격이다.
-    - 캐시에 있는 거래일만 반환하므로, 기간이 짧으면 `python3 fetch_krx.py --days 250` 을 실행한다.
+    - 캐시에 있는 거래일만 반환하므로, 기간이 짧으면 `python3 scripts/fetch_krx.py --days 250` 을 실행한다.
     - `moving_averages[].values` 는 캔들과 길이가 같고, 앞쪽 계산 불가 구간은 `null` 이다.
     """
     _require_cache()

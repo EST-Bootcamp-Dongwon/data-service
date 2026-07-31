@@ -188,7 +188,7 @@ def get_krx_stocks(
     강의 원본은 요청할 때마다 KRX 를 직접 불렀지만, 여기서는 `krx_cache.db` 에서 읽는다.
     덕분에 응답이 2~3초에서 수십 밀리초로 줄고, 정렬·검색·페이지를 서버에서 처리할 수 있다.
 
-    캐시를 채우려면 터미널에서 `python3 fetch_krx.py` 를 실행하거나
+    캐시를 채우려면 터미널에서 `python3 scripts/fetch_krx.py` 를 실행하거나
     `POST /api/krx/sync` 를 호출한다.
     """
     if sort not in api.SORTABLE:
@@ -201,7 +201,7 @@ def get_krx_stocks(
     if not bas_dd:
         raise HTTPException(
             status_code=503,
-            detail="시세 캐시가 비어 있습니다. `python3 fetch_krx.py` 를 먼저 실행하세요.",
+            detail="시세 캐시가 비어 있습니다. `python3 scripts/fetch_krx.py` 를 먼저 실행하세요.",
         )
     if not api.DATE_PATTERN.fullmatch(bas_dd):
         raise HTTPException(status_code=422, detail="bas_dd 는 YYYYMMDD 형식이어야 합니다.")
@@ -263,7 +263,7 @@ def sync_cache(
     """캐시에 없는 최근 거래일을 KRX 에서 받아 채운다.
 
     장 마감 후 하루치를 더할 때 쓴다. 250거래일을 처음부터 채우는 것은
-    **화면이 아니라 터미널**에서 `python3 fetch_krx.py --days 250` 으로 실행한다.
+    **화면이 아니라 터미널**에서 `python3 scripts/fetch_krx.py --days 250` 으로 실행한다.
     (수 분이 걸려 HTTP 요청이 타임아웃될 수 있다.)
     """
     api.reset_auth_block()      # 승인 직후에도 바로 다시 시도할 수 있게 차단기를 푼다

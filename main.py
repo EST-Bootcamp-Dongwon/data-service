@@ -44,15 +44,16 @@ TAGS_METADATA = [
         # 괄호로 감싸면 여러 줄 문자열을 자동으로 이어 붙일 수 있다 (줄바꿈은 들어가지 않는다)
         "description": (
             "한국거래소 OpenAPI의 **유가증권·코스닥 일별매매정보**를 조회한다. "
-            "받은 데이터는 `krx_cache.db`(SQLite)에 쌓아 두고 여기서 읽는다. "
-            "호출 코드는 `krx_data.py`, 저장은 `krx_store.py` 에 있다."
+            "받은 데이터는 `data/krx_cache.db`(SQLite)에 쌓아 두고 여기서 읽는다. "
+            "호출 코드는 `app/clients/krx_data.py`, 저장은 `app/repositories/krx_store.py` 에 있다."
         ),
     },
     {
         "name": "시장 분석",
         "description": (
             "캐시에 쌓인 실제 시세로 계산하는 분석 API. "
-            "계산 로직은 `market_data.py`(서비스), 응답 형식은 `market_router.py`(컨트롤러)에 있다. "
+            "계산 로직은 `app/services/market_data.py`(서비스), "
+            "응답 형식은 `app/routers/market_router.py`(컨트롤러)에 있다. "
             "**같은 거래일에 대해서는 항상 같은 값**이 나온다."
         ),
     },
@@ -66,15 +67,15 @@ FastAPI로 만든 백엔드 API 서버입니다. **한국거래소(KRX) OpenAPI�
 ## 계층 구조
 
 ```
-KRX OpenAPI → krx_data(호출·정규화) → krx_store(SQLite 캐시) → market_data(분석) → 라우터 → 화면
+KRX OpenAPI → clients(호출·정규화) → repositories(SQLite 캐시) → services(분석) → routers → 화면
 ```
 
 | 파일 | 역할 |
 | --- | --- |
-| `krx_data.py` | KRX 와 HTTP 통신, 대문자 축약 필드를 snake_case 로 정규화 |
-| `krx_store.py` | 받은 일별 데이터를 `krx_cache.db` 에 쌓고 꺼냄 |
-| `market_data.py` | 쌓인 데이터로 스크리닝·포트폴리오·팩터 계산 |
-| `fetch_krx.py` | 캐시를 채우는 수집 스크립트 (`python3 fetch_krx.py`) |
+| `app/clients/krx_data.py` | KRX 와 HTTP 통신, 대문자 축약 필드를 snake_case 로 정규화 |
+| `app/repositories/krx_store.py` | 받은 일별 데이터를 `data/krx_cache.db` 에 쌓고 꺼냄 |
+| `app/services/market_data.py` | 쌓인 데이터로 스크리닝·포트폴리오·팩터 계산 |
+| `scripts/fetch_krx.py` | 캐시를 채우는 수집 스크립트 (`python3 scripts/fetch_krx.py`) |
 
 ## 화면
 
@@ -87,7 +88,7 @@ KRX OpenAPI → krx_data(호출·정규화) → krx_store(SQLite 캐시) → mar
 
 ## 사용 순서
 
-1. 터미널에서 `python3 fetch_krx.py` 로 시세 캐시를 채운다 (최초 1회, 약 7분)
+1. 터미널에서 `python3 scripts/fetch_krx.py` 로 시세 캐시를 채운다 (최초 1회, 약 7분)
 2. `GET /health` — 서버가 살아있는지 확인
 3. `GET /api/krx/status` — 인증키·캐시 상태 확인
 4. `GET /api/krx/stocks` — 최근 거래일 전 종목 조회

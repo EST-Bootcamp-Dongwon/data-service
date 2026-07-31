@@ -7,7 +7,7 @@
 |------|------|
 | 프레임워크 | FastAPI 0.141 + Uvicorn 0.52 |
 | 데이터 출처 | **KRX OpenAPI 실데이터** (유가증권·코스닥 일별매매정보) |
-| 시세 저장소 | SQLite (`krx_cache.db`) — 약 232거래일 · 64만 행 · 96MB |
+| 시세 저장소 | SQLite (`data/krx_cache.db`) — 약 232거래일 · 64만 행 · 96MB |
 | 사용자 저장소 | 메모리 리스트(`db_users`) — **서버 재시작 시 초기화** |
 | 외부 라이브러리 | 없음 (KRX 호출·DB 모두 파이썬 표준 라이브러리) |
 
@@ -22,7 +22,7 @@
 
 | 위치 | 내용 | 수정 |
 |------|------|------|
-| 저장소 루트 | 내 실습 코드 (`main.py` · `krx_*.py` · `market_*.py` · `static/`) | 자유롭게 |
+| 저장소 루트 | 내 실습 코드 (`main.py` · [`app/`](app) · [`static/`](static) · [`scripts/`](scripts)) | 자유롭게 |
 | [`lecture/`](lecture) | 강사님 원본 [edumgt/api-test2](https://github.com/edumgt/api-test2) — **서브모듈** | ❌ 읽기 전용 |
 
 ```bash
@@ -39,35 +39,65 @@ git add lecture && git commit -m "chore: 강의 자료(api-test2) 갱신" && git
 
 ---
 
-## 2. 계층 구조
+## 2. 폴더 구조 · 계층 ★
 
 강의 원본은 `main.py` 한 파일에 KRX 호출·검증·응답이 모두 들어 있다.
-이 저장소는 **Controller → Service → Repository** 로 나눴다.
+이 저장소는 **Controller → Service → Repository** 로 나누고, **폴더도 계층대로** 뒀다.
+
+```
+api-test/
+├── main.py                 FastAPI 앱 진입점 (uvicorn main:app)
+├── app/
+│   ├── routers/            ← 컨트롤러 : 요청 검증 · DTO · 엔드포인트
+│   │   ├── krx_router.py       KRX 시세 API   (/api/krx/...)
+│   │   └── market_router.py    분석 API       (/api/...)
+│   ├── services/           ← 서비스   : 비즈니스 로직
+│   │   └── market_data.py      스크리닝 · 투자선 · 팩터
+│   ├── repositories/       ← 저장소   : SQLite 저장 · 조회
+│   │   └── krx_store.py
+│   ├── clients/            ← 외부 연동 : KRX HTTP 호출 · 응답 정규화
+│   │   └── krx_data.py
+│   └── core/               ← 공통 유틸 : 거래일 · KST
+│       └── trading_calendar.py
+├── scripts/fetch_krx.py    캐시를 채우는 CLI 수집 스크립트
+├── static/
+│   ├── pages/              화면 4종 (index · krx · quant · tetris)
+│   └── assets/             공통 app.css · app.js
+├── data/krx_cache.db       시세 캐시 (.gitignore 대상)
+├── docs/                   todo · 작업 기록
+└── lecture/                강사님 원본 (서브모듈, 읽기 전용)
+```
+
+데이터가 흐르는 방향은 **한쪽뿐**이다. 아래 계층은 위 계층을 import 하지 않는다.
+이 방향만 지키면 순환 import 가 생기지 않는다.
 
 ```
 KRX OpenAPI
     ↓  HTTP (AUTH_KEY 헤더)
-krx_data.py        호출 + 응답 정규화          ← 외부 연동
+app/clients/krx_data.py         호출 + 응답 정규화          ← 외부 연동
     ↓
-krx_store.py       SQLite 저장 · 조회           ← 저장소(Repository)
+app/repositories/krx_store.py   SQLite 저장 · 조회           ← 저장소(Repository)
     ↓
-market_data.py     스크리닝 · 포트폴리오 · 팩터   ← 서비스(Service)
+app/services/market_data.py     스크리닝 · 포트폴리오 · 팩터   ← 서비스(Service)
     ↓
-krx_router.py / market_router.py               ← 컨트롤러(Controller) + DTO
+app/routers/*.py                DTO + 엔드포인트             ← 컨트롤러(Controller)
     ↓
-static/*.html      화면 (받은 값을 그리기만)
+static/pages/*.html             화면 (받은 값을 그리기만)
 ```
 
 | 파일 | 줄 수 | 역할 |
 |------|------|------|
-| `krx_data.py` | 368 | KRX HTTP 호출, 인증키 로딩, 대문자 축약 필드 → snake_case 정규화, 집계·정렬 |
-| `krx_store.py` | 343 | `krx_cache.db` 스키마·수집·조회. 병렬 수집과 쓰기 직렬화 |
-| `market_data.py` | 531 | 종목 지표 계산 → 스크리닝 깔때기 · 효율적 투자선 · 팩터 점수 |
-| `market_router.py` | 313 | 분석 API 의 DTO 와 엔드포인트 |
-| `krx_router.py` | 270 | KRX 시세 API 의 DTO 와 엔드포인트 |
-| `trading_calendar.py` | 61 | 거래일·KST 유틸 (순환 import 방지용 공통 모듈) |
-| `fetch_krx.py` | 86 | 캐시를 채우는 CLI 수집 스크립트 |
-| `main.py` | 410 | FastAPI 앱, 사용자 CRUD, 화면 라우트 |
+| `app/clients/krx_data.py` | 371 | KRX HTTP 호출, 인증키 로딩, 대문자 축약 필드 → snake_case 정규화, 집계·정렬 |
+| `app/repositories/krx_store.py` | 349 | `data/krx_cache.db` 스키마·수집·조회. 병렬 수집과 쓰기 직렬화 |
+| `app/services/market_data.py` | 532 | 종목 지표 계산 → 스크리닝 깔때기 · 효율적 투자선 · 팩터 점수 |
+| `app/routers/market_router.py` | 316 | 분석 API 의 DTO 와 엔드포인트 |
+| `app/routers/krx_router.py` | 272 | KRX 시세 API 의 DTO 와 엔드포인트 |
+| `app/core/trading_calendar.py` | 61 | 거래일·KST 유틸 (순환 import 방지용 공통 모듈) |
+| `scripts/fetch_krx.py` | 92 | 캐시를 채우는 CLI 수집 스크립트 |
+| `main.py` | 413 | FastAPI 앱, 사용자 CRUD, 화면 라우트 |
+
+> `main.py` 만 루트에 남겨 뒀다. 강의에서 쓰는 `uvicorn main:app` 명령을 그대로 쓰기 위해서다.
+> DB·인증키 경로는 파일 위치를 기준으로 계산하므로, 어느 폴더에서 실행해도 같은 파일을 찾는다.
 
 ---
 
@@ -116,16 +146,19 @@ KRX 일별매매정보는 **하루치 전 종목 스냅샷**만 준다. 캔들 �
 그래서 받은 날짜를 SQLite에 쌓아 두고 다음부터는 DB에서 읽는다.
 
 ```bash
-python3 fetch_krx.py                 # 최근 250거래일 (없는 날짜만) — 약 7분
-python3 fetch_krx.py --days 60       # 최근 60거래일만 — 약 100초
-python3 fetch_krx.py --days 1        # 장 마감 후 하루치 추가 — 약 3초
-python3 fetch_krx.py --status        # 받지 않고 현재 캐시 상태만 확인
+python3 scripts/fetch_krx.py                 # 최근 250거래일 (없는 날짜만) — 약 7분
+python3 scripts/fetch_krx.py --days 60       # 최근 60거래일만 — 약 100초
+python3 scripts/fetch_krx.py --days 1        # 장 마감 후 하루치 추가 — 약 3초
+python3 scripts/fetch_krx.py --status        # 받지 않고 현재 캐시 상태만 확인
 ```
+
+> **저장소 루트에서** 실행한다. 스크립트가 알아서 루트를 찾아 `app` 패키지를 불러온다.
 
 - 이미 받은 날짜는 건너뛴다. **휴장일(0건)도 기록**해 두므로 다시 요청하지 않는다.
 - 단, 최근 7일 이내의 0건은 다시 확인한다 (당일 데이터는 장 마감 후 올라오기 때문).
 - 서버를 껐다 켜도 캐시는 남는다. `--reload` 로 코드를 저장해도 마찬가지다.
-- `krx_cache.db` 는 `.gitignore` 대상이다 (약 96MB, 언제든 재생성 가능).
+- `data/krx_cache.db` 는 `.gitignore` 대상이다 (약 96MB, 언제든 재생성 가능).
+- `data/` 폴더가 없으면 처음 실행할 때 자동으로 만들어진다.
 
 ---
 
@@ -158,15 +191,15 @@ hostname -I            # 표시된 IP 로 http://서버_IP:8000/ 접속
 ## 6. 화면
 
 기능별로 파일을 나눴다. 파일명만 봐도 무슨 화면인지 알 수 있고, 각 화면은 자기 API만 호출한다.
-공통 스타일·유틸은 `static/app.css` · `static/app.js` 에 모아 중복을 없앴다.
+화면(HTML)은 `static/pages/`, 공통 스타일·유틸은 `static/assets/` 로 분리해 중복을 없앴다.
 
 | 주소 | 파일 | 화면 |
 |------|------|------|
-| `/` | `static/index.html` | 홈 · 사용자 API 테스트 |
-| `/krx` | `static/krx.html` | KRX 일별 시세 |
-| `/quant` | `static/quant.html` | 퀀트 분석 |
-| `/tetris` | `static/tetris.html` | Canvas 테트리스 |
-| — | `static/app.css` · `app.js` | 4개 화면 공통 스타일·유틸 |
+| `/` | `static/pages/index.html` | 홈 · 사용자 API 테스트 |
+| `/krx` | `static/pages/krx.html` | KRX 일별 시세 |
+| `/quant` | `static/pages/quant.html` | 퀀트 분석 |
+| `/tetris` | `static/pages/tetris.html` | Canvas 테트리스 |
+| — | `static/assets/app.css` · `app.js` | 4개 화면 공통 스타일·유틸 |
 
 ### `/` — 홈 · 사용자 API 테스트
 
@@ -274,7 +307,7 @@ HTML5 `<canvas>` 2D 컨텍스트만으로 만든 게임. 외부 라이브러리 
 |------|-----------|
 | 404 | 없는 사용자 ID · 캐시에 없는 종목코드 · 캐시에 없는 거래일 |
 | 422 | 타입/형식 불일치, 정렬 불가 필드, 이동평균 기간 > 거래일 수, 프론티어 종목 2개 미만 |
-| 503 | **시세 캐시가 비어 있음** → `python3 fetch_krx.py` 안내 |
+| 503 | **시세 캐시가 비어 있음** → `python3 scripts/fetch_krx.py` 안내 |
 
 ---
 
@@ -380,7 +413,7 @@ curl -s -H "AUTH_KEY: $KRX_API_KEY" \
 
 ### 화면이 비어 있고 `503` 이 뜬다
 
-시세 캐시가 없다는 뜻이다. `python3 fetch_krx.py` 를 먼저 실행한다.
+시세 캐시가 없다는 뜻이다. `python3 scripts/fetch_krx.py` 를 먼저 실행한다.
 
 ### 수집 중 `database is locked`
 
@@ -415,7 +448,7 @@ WSL과 Windows 호스트 간 네트워크가 분리돼 있을 수 있다.
 ## 13. 다음 단계
 
 - **사용자도 DB로** — 시세는 이미 SQLite를 쓴다. `db_users` 를 같은 방식으로 옮기고 `Depends(get_db)` 로 주입
-- **자동 수집** — cron 또는 GitHub Actions로 장 마감 후 `fetch_krx.py --days 1` 실행
+- **자동 수집** — cron 또는 GitHub Actions로 장 마감 후 `scripts/fetch_krx.py --days 1` 실행
 - **ETF·지수 확장** — `etp/etf_bydd_trd` · `idx/kospi_dd_trd` 를 `MARKET_APIS` 에 추가하면 같은 구조로 붙는다
 - **배포** — Docker(`python:3.12-slim`) 또는 Render/Fly.io/Cloud Run
 

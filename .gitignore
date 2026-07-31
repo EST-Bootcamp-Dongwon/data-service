@@ -26,3 +26,8 @@ Thumbs.db
 data/krx_cache.db
 data/krx_cache.db-wal
 data/krx_cache.db-shm
+
+# 에디터 스왑 파일
+*.swp
+*.swo
+*~
