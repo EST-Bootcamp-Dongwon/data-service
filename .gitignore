@@ -31,6 +31,9 @@ data/krx_cache.db-shm
 # ./test.sh 또는 scripts/kosis_rss.py 로 언제든 다시 만들 수 있다.
 data/kosis_rss/
 
+# yf.py 가 저장한 차트 이미지 (언제든 다시 그릴 수 있는 산출물)
+data/yf/
+
 # 에디터 스왑 파일
 *.swp
 *.swo

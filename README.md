@@ -6,10 +6,10 @@
 | 항목 | 내용 |
 |------|------|
 | 프레임워크 | FastAPI 0.141 + Uvicorn 0.52 |
-| 데이터 출처 | **KRX OpenAPI 실데이터** (유가증권·코스닥 일별매매정보) |
+| 데이터 출처 | **KRX OpenAPI** (유가증권·코스닥 일별매매정보) · **KOSIS OpenAPI** · **야후 파이낸스** |
 | 시세 저장소 | SQLite (`data/krx_cache.db`) — 약 232거래일 · 64만 행 · 96MB |
 | 사용자 저장소 | 메모리 리스트(`db_users`) — **서버 재시작 시 초기화** |
-| 외부 라이브러리 | 없음 (KRX 호출·DB 모두 파이썬 표준 라이브러리) |
+| 외부 라이브러리 | KRX·KOSIS·DB는 표준 라이브러리만. **야후 파이낸스 화면·스크립트만** `yfinance` · `matplotlib` |
 
 > ⚠️ 목업이 아니다. 화면에 보이는 시세·거래대금·시가총액은 전부 KRX가 준 실제 값이다.
 
@@ -47,10 +47,12 @@ git add lecture && git commit -m "chore: 강의 자료(api-test2) 갱신" && git
 ```
 api-test/
 ├── main.py                 FastAPI 앱 진입점 (uvicorn main:app)
+├── yf.py                   야후 파이낸스 차트 스크립트 (matplotlib · 단독 실행)
 ├── app/
 │   ├── routers/            ← 컨트롤러 : 요청 검증 · DTO · 엔드포인트
 │   │   ├── krx_router.py       KRX 시세 API   (/api/krx/...)
 │   │   ├── kosis_router.py     KOSIS 통계 API (/api/kosis/...)
+│   │   ├── yf_router.py        야후 시세 API  (/api/yf/...)
 │   │   └── market_router.py    분석 API       (/api/...)
 │   ├── services/           ← 서비스   : 비즈니스 로직
 │   │   └── market_data.py      스크리닝 · 투자선 · 팩터
@@ -58,7 +60,8 @@ api-test/
 │   │   └── krx_store.py
 │   ├── clients/            ← 외부 연동 : 외부 API 호출 · 응답 정규화
 │   │   ├── krx_data.py         KRX OpenAPI
-│   │   └── kosis_data.py       KOSIS OpenAPI + 차트용 변환
+│   │   ├── kosis_data.py       KOSIS OpenAPI + 차트용 변환
+│   │   └── yf_data.py          야후 파이낸스(yfinance) + 차트용 변환
 │   └── core/               ← 공통 유틸 : 거래일 · KST · 인증키
 │       ├── trading_calendar.py
 │       └── secrets.py          KRX·KOSIS 인증키 로딩
@@ -67,10 +70,11 @@ api-test/
 │   └── kosis_rss.py        KOSIS 공지 크롤러 → RSS 2.0 변환
 ├── test.sh                 KOSIS 공지 범위 수집 실행 스크립트
 ├── static/
-│   ├── pages/              화면 6종 (index · kosis · krx · quant · users · tetris)
+│   ├── pages/              화면 7종 (index · kosis · krx · yf · quant · users · tetris)
 │   └── assets/             공통 app.css · app.js
 ├── data/
 │   ├── krx_cache.db        시세 캐시 (.gitignore 대상)
+│   ├── yf/                 yf.py 가 저장한 차트 PNG (.gitignore 대상)
 │   └── kosis_rss/          KOSIS 공지 RSS 산출물 (.gitignore 대상)
 ├── docs/                   todo · 작업 기록
 └── lecture/                강사님 원본 (서브모듈, 읽기 전용)
@@ -80,21 +84,26 @@ api-test/
 이 방향만 지키면 순환 import 가 생기지 않는다.
 
 ```
-KRX OpenAPI                          KOSIS OpenAPI
-    ↓  HTTP (AUTH_KEY 헤더)              ↓  HTTP (apiKey 쿼리)
-app/clients/krx_data.py              app/clients/kosis_data.py    ← 외부 연동
-  호출 + 응답 정규화                    호출 + 차트용 변환
-    ↓                                    │
-app/repositories/krx_store.py            │                        ← 저장소(Repository)
-  SQLite 저장 · 조회                     │
-    ↓                                    │
-app/services/market_data.py              │                        ← 서비스(Service)
-  스크리닝 · 포트폴리오 · 팩터            │
-    ↓                                    ↓
-app/routers/*.py                     app/routers/kosis_router.py  ← 컨트롤러(Controller)
-    ↓                                    ↓
-static/pages/*.html                  static/pages/kosis.html      ← 화면 (그리기만)
+KRX OpenAPI                          KOSIS OpenAPI                야후 파이낸스
+    ↓  HTTP (AUTH_KEY 헤더)              ↓  HTTP (apiKey 쿼리)        ↓  yfinance (키 불필요)
+app/clients/krx_data.py              app/clients/kosis_data.py    app/clients/yf_data.py   ← 외부 연동
+  호출 + 응답 정규화                    호출 + 차트용 변환            호출 + 차트용 변환
+    ↓                                    │                            ├──────────────┐
+app/repositories/krx_store.py            │                            │              │  ← 저장소(Repository)
+  SQLite 저장 · 조회                     │                            │              │
+    ↓                                    │                            │              │
+app/services/market_data.py              │                            │              │  ← 서비스(Service)
+  스크리닝 · 포트폴리오 · 팩터            │                            │              │
+    ↓                                    ↓                            ↓              │
+app/routers/*.py                     app/routers/kosis_router.py  app/routers/       │  ← 컨트롤러(Controller)
+                                                                   yf_router.py      │
+    ↓                                    ↓                            ↓              ↓
+static/pages/*.html                  static/pages/kosis.html      static/pages/    yf.py
+                                                                   yf.html          (matplotlib)
 ```
+
+> `yf.py` 는 서버를 거치지 않고 **클라이언트 계층을 직접 호출**한다. 화면과 스크립트가 같은
+> `app/clients/yf_data.py` 를 쓰므로, 브라우저 차트와 터미널 차트의 값·Y축 눈금이 항상 일치한다.
 
 > KOSIS는 **캐시를 두지 않는다.** 매번 다른 통계표를 실험하는 화면이라 미리 쌓아 둘 대상이
 > 정해지지 않기 때문이다. 반대로 KRX는 전 종목 시세라 대상이 고정되어 캐시가 이득이다.
@@ -104,6 +113,9 @@ static/pages/*.html                  static/pages/kosis.html      ← 화면 (�
 | `app/clients/krx_data.py` | 338 | KRX HTTP 호출, 대문자 축약 필드 → snake_case 정규화, 집계·정렬 |
 | `app/clients/kosis_data.py` | 419 | KOSIS 호출·재시도, 평평한 응답 → 차트용 `series`/`categories` 변환 |
 | `app/routers/kosis_router.py` | 227 | KOSIS 실험 3단계의 DTO 와 엔드포인트 |
+| `app/clients/yf_data.py` | 274 | yfinance 호출, 가격 5종 정규화·Y축 범위 계산, 60초 메모리 캐시 |
+| `app/routers/yf_router.py` | 159 | 야후 시세 API 의 DTO 와 엔드포인트 |
+| `yf.py` | 200 | 야후 가격 지표를 matplotlib 막대+꺾은선으로 그리는 CLI 스크립트 |
 | `app/core/secrets.py` | 85 | KRX·KOSIS 인증키 로딩 (환경변수 → `.env` → `.key`) |
 | `app/repositories/krx_store.py` | 349 | `data/krx_cache.db` 스키마·수집·조회. 병렬 수집과 쓰기 직렬화 |
 | `app/services/market_data.py` | 532 | 종목 지표 계산 → 스크리닝 깔때기 · 효율적 투자선 · 팩터 점수 |
@@ -124,8 +136,11 @@ static/pages/*.html                  static/pages/kosis.html      ← 화면 (�
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate            # Windows PowerShell: .venv\Scripts\Activate.ps1
-pip install -r requirements.txt      # 또는: pip install fastapi uvicorn
+pip install -r requirements.txt      # 또는: pip install fastapi uvicorn yfinance matplotlib
 ```
+
+> `yfinance` · `matplotlib` 은 **야후 파이낸스 화면(`/yf`)과 스크립트(`yf.py`) 전용**이다.
+> 이 둘을 안 쓸 거면 `fastapi uvicorn` 만 있어도 나머지 화면은 전부 동작한다.
 
 > 우분투에서 `ensurepip is not available` 오류가 나면 `sudo apt install -y python3.12-venv` 를 먼저 설치한다.
 > `externally-managed-environment` 오류는 **가상환경 활성화를 안 한 것**이 원인이다.
@@ -207,6 +222,7 @@ uvicorn main:app --reload
 |------|------|
 | http://127.0.0.1:8000 | 홈 · 사용자 API 테스트 |
 | http://127.0.0.1:8000/krx | KRX 일별 시세 화면 |
+| http://127.0.0.1:8000/yf | 야후 파이낸스 시세 화면 |
 | http://127.0.0.1:8000/quant | 퀀트 분석 화면 |
 | http://127.0.0.1:8000/tetris | Canvas 테트리스 |
 | http://127.0.0.1:8000/docs | Swagger UI (자동 생성 문서) |
@@ -233,10 +249,11 @@ hostname -I            # 표시된 IP 로 http://서버_IP:8000/ 접속
 | `/` | `static/pages/index.html` | **랜딩** — 화면 안내 · 서버/인증키/캐시 상태 |
 | `/kosis` | `static/pages/kosis.html` | KOSIS 통계 실험실 |
 | `/krx` | `static/pages/krx.html` | KRX 일별 시세 |
+| `/yf` | `static/pages/yf.html` | 야후 파이낸스 시세 |
 | `/quant` | `static/pages/quant.html` | 퀀트 분석 |
 | `/users` | `static/pages/users.html` | 사용자 API 테스트 (CRUD) |
 | `/tetris` | `static/pages/tetris.html` | Canvas 테트리스 |
-| — | `static/assets/app.css` · `app.js` | 6개 화면 공통 스타일·유틸 |
+| — | `static/assets/app.css` · `app.js` | 7개 화면 공통 스타일·유틸 |
 
 > 화면 목록은 `static/assets/app.js` 의 `PAGES` 배열 **한 곳**에만 있다.
 > 새 화면을 추가하면 여기 한 줄만 넣으면 모든 화면의 내비게이션에 반영된다.
@@ -302,6 +319,41 @@ GET /search        itmId 는 메타에서 선택         + 데이터 표 + 원�
 - 상승 = **빨강**, 하락 = **파랑** (국내 증시 관행, 미국과 반대)
 - 검색어는 차트에도 반영된다 — 표와 차트가 같은 모집단을 본다
 - 날짜 선택 박스에는 **실제 데이터가 있는 거래일만** 담아, 휴장일을 골라 빈 화면을 보는 일이 없다
+
+### `/yf` — 야후 파이낸스 시세 ★
+
+**인증키 없이** 종목 하나의 당일 가격 움직임을 보는 화면. 터미널 스크립트 `yf.py` 와 짝을 이룬다.
+
+| 구성 | 내용 |
+|------|------|
+| 조회 조건 | 야후 티커 입력 + 예시 버튼(삼성전자·SK하이닉스·NAVER·에코프로비엠·Apple·NVIDIA·코스피 지수) |
+| 요약 | 종목명 · 현재가 · 전일 대비 · **장 상태**(장중이면 초록 점이 깜빡인다) |
+| 요약 타일 | 전일종가 · 당일 범위(저가~고가) · 거래량 · 시가총액 · 52주 범위 |
+| 차트 ① | **당일 가격 움직임** — 전일종가·시가·저가·고가·현재가를 연파랑 막대 + 빨간 꺾은선으로 겹쳐 그림 |
+| 차트 ② | **기간별 일봉** 캔들 + 거래량 브러시, 기간 버튼(5일·1개월·3개월·6개월·1년·5년) |
+| 원문 | 화면이 실제로 받은 JSON 응답 그대로 |
+
+- **국내 종목은 코스피 `.KS` · 코스닥 `.KQ`** 를 붙인다. 숫자 6자리(`005930`)만 넣으면 `.KS` 를 자동으로 붙여 준다.
+- Y축은 0이 아니라 **실제 값 구간 ±1%** 로 좁힌다. 0부터 그리면 다섯 값이 다 비슷해 보여 변화가 묻힌다.
+  범위 계산(`y_min`·`y_max`)은 서버가 해서 내려주므로 **터미널 차트와 눈금이 같다.**
+- 잘못된 티커는 `404`. yfinance 는 없는 종목에도 예외를 내지 않고 값이 전부 `None` 인 응답을 주기 때문에,
+  `app/clients/yf_data.py` 가 "유효한 가격이 하나도 없으면 실패" 로 직접 판단한다.
+- 같은 티커를 60초 안에 다시 조회하면 **서버 메모리 캐시**로 돌려준다. `.info` 호출이 1~3초씩 걸려서다.
+
+#### `yf.py` — 같은 값을 터미널에서 그리기
+
+```bash
+python3 yf.py                          # 삼성전자(005930.KS)
+python3 yf.py 000660.KS                # 종목 지정
+python3 yf.py 005930                   # 숫자 6자리면 .KS 자동
+python3 yf.py AAPL --save chart.png    # 창 대신 PNG 저장
+python3 yf.py --english                # 축·제목을 영어로 (한글 폰트가 없을 때)
+```
+
+- 한글 폰트(맑은 고딕·나눔고딕)를 찾아 자동 등록한다. 없으면 영어 라벨로 그린다.
+- **GUI 가 없는 환경**(WSL·서버)에서는 `plt.show()` 가 아무것도 하지 않으므로,
+  `data/yf/티커_시각.png` 로 자동 저장하고 경로를 알려 준다.
+- 가격 5종은 터미널에도 표로 찍어 주므로 차트를 못 띄워도 값은 확인할 수 있다.
 
 ### `/quant` — 퀀트 분석
 
@@ -382,6 +434,18 @@ HTML5 `<canvas>` 2D 컨텍스트만으로 만든 게임. 외부 라이브러리 
 
 응답의 `chart.series` · `chart.categories` 는 **ApexCharts에 그대로 넣을 수 있는 형태**이고,
 `meta` 에는 응답 시간·전체 행 수·잘라낸 계열 수와 **`apiKey` 를 뺀 실제 KOSIS 요청 URL** 이 들어 있다.
+
+### 야후 파이낸스 시세 — `/api/yf/...`
+
+| Method | Path | 설명 | 성공 |
+|--------|------|------|------|
+| GET | `/api/yf/periods` | 조회 가능한 기간 목록 (5d·1mo·3mo·6mo·1y·5y) | 200 |
+| GET | `/api/yf/quote?ticker=005930.KS` | 당일 가격 지표 5종 + 차트 데이터 | 200 |
+| GET | `/api/yf/history?ticker=005930.KS&period=3mo` | 기간별 일봉 (캔들·거래량) | 200 |
+
+**인증키가 필요 없다.** 잘못된 티커는 `404`, 허용하지 않는 `period` 는 `422`, 야후 응답 실패는 `502`.
+`quote` 응답의 `chart` 는 `categories`(한국어) · `categories_en`(영어) · `values` · `y_min` · `y_max` 로,
+ApexCharts(화면)와 matplotlib(`yf.py`)이 **같은 그림**을 그릴 수 있는 형태다.
 
 ### 시장 분석 — `/api/...`
 
