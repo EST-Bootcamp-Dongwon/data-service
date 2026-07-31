@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Canvas 테트리스 — My FastAPI Backend</title>
+  <!-- 외부 파일 없이 인라인 SVG 로 파비콘 지정 (브라우저의 /favicon.ico 404 방지) -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A7%B1%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/app.css" />
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --surface: #ffffff;
+      --border: #e3e6ea;
+      --text: #1c2024;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --accent-soft: #eff4ff;
+      --grid: #e9ecf1;
+      --board-bg: #fbfcfd;
+      --radius: 10px;
+      --mono: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #16181c;
+        --surface: #1f2226;
+        --border: #32363c;
+        --text: #e7e9ec;
+        --muted: #9aa1ab;
+        --accent: #6294ff;
+        --accent-soft: #232a3a;
+        --grid: #2a2e34;
+        --board-bg: #121417;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 24px 16px 64px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic",
+                   "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+      line-height: 1.6;
+    }
+
+    .wrap { max-width: 880px; margin: 0 auto; }
+
+    header { margin-bottom: 20px; }
+    header h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: -0.3px; }
+    header p { margin: 0; color: var(--muted); font-size: 14px; }
+    header a { color: var(--accent); text-decoration: none; }
+    header a:hover { text-decoration: underline; }
+
+    /* 게임판(좌) + 정보 패널(우) 2단 배치. 좁은 화면에서는 세로로 쌓인다. */
+    .game {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+
+    .board-box {
+      position: relative;           /* 오버레이(일시정지·게임오버)의 기준 박스 */
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px;
+      line-height: 0;               /* canvas 아래 생기는 여백 제거 */
+    }
+
+    /* 캔버스는 CSS 픽셀 크기만 지정하고, 실제 해상도는 JS 가 devicePixelRatio 로 맞춘다 */
+    #board { width: 300px; height: 600px; border-radius: 6px; display: block; }
+
+    .panel {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-width: 220px;
+      flex: 1;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+    }
+
+    .card h2 {
+      margin: 0 0 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 0.4px;
+    }
+
+    /* 점수·레벨·줄 수 3칸 그리드 */
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .stat { text-align: center; }
+    .stat .label { font-size: 11px; color: var(--muted); }
+    .stat .value { font-family: var(--mono); font-size: 20px; font-weight: 600; }
+
+    .piece-row { display: flex; gap: 12px; }
+    .piece-box { flex: 1; }
+    #hold, #next { width: 100%; display: block; border-radius: 6px; }
+
+    .keys { margin: 0; font-size: 13px; color: var(--muted); }
+    .keys div { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
+    kbd {
+      font-family: var(--mono);
+      font-size: 11px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 6px;
+    }
+
+    button {
+      font: inherit;
+      font-size: 14px;
+      cursor: pointer;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+    }
+    button.ghost {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--border);
+    }
+    button:active { transform: translateY(1px); }
+
+    .actions { display: flex; gap: 8px; }
+    .actions button { flex: 1; }
+
+    /* 게임판 위에 덮이는 안내 화면 (시작 / 일시정지 / 게임오버) */
+    .overlay {
+      position: absolute;
+      inset: 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      text-align: center;
+      line-height: 1.5;
+      background: rgba(0, 0, 0, 0.68);
+      color: #fff;
+      border-radius: 6px;
+      backdrop-filter: blur(2px);
+    }
+    .overlay[hidden] { display: none; }         /* hidden 속성이 flex 보다 우선하도록 명시 */
+    .overlay h3 { margin: 0; font-size: 20px; }
+    .overlay p { margin: 0; font-size: 13px; opacity: 0.85; }
+
+    /* 모바일용 터치 버튼 — 포인터가 없는(터치) 기기에서만 보인다 */
+    .touchpad { display: none; gap: 8px; margin-top: 12px; }
+    .touchpad button { padding: 14px 0; font-size: 13px; }
+    @media (hover: none) and (pointer: coarse) {
+      .touchpad { display: grid; grid-template-columns: repeat(5, 1fr); }
+    }
+
+    @media (max-width: 640px) {
+      #board { width: 260px; height: 520px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="page-head">
+      <div>
+        <h1>🧱 Canvas 테트리스</h1>
+        <p>HTML5 <code>&lt;canvas&gt;</code> 2D 컨텍스트만으로 구현했다. 외부 라이브러리 없음.</p>
+      </div>
+      <nav class="nav" id="nav"></nav>
+    </header>
+
+    <div class="game">
+      <!-- 게임판: 실제 그림은 전부 JS 가 canvas 에 그린다 -->
+      <div class="board-box">
+        <canvas id="board"></canvas>
+
+        <!-- 시작/일시정지/게임오버 공통 오버레이. 내용만 JS 가 바꿔 끼운다. -->
+        <div class="overlay" id="overlay">
+          <h3 id="overlayTitle">테트리스</h3>
+          <p id="overlayText">Enter 또는 아래 [시작] 버튼을 누르세요</p>
+          <button id="overlayBtn">시작</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="card">
+          <div class="stats">
+            <div class="stat">
+              <div class="label">점수</div>
+              <div class="value" id="score">0</div>
+            </div>
+            <div class="stat">
+              <div class="label">레벨</div>
+              <div class="value" id="level">1</div>
+            </div>
+            <div class="stat">
+              <div class="label">줄</div>
+              <div class="value" id="lines">0</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="piece-row">
+            <div class="piece-box">
+              <h2>HOLD</h2>
+              <canvas id="hold"></canvas>
+            </div>
+            <div class="piece-box">
+              <h2>NEXT</h2>
+              <canvas id="next"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>조작</h2>
+          <div class="keys">
+            <div><span>이동</span> <span><kbd>←</kbd> <kbd>→</kbd></span></div>
+            <div><span>소프트 드롭</span> <span><kbd>↓</kbd></span></div>
+            <div><span>하드 드롭</span> <span><kbd>Space</kbd></span></div>
+            <div><span>회전 (시계)</span> <span><kbd>↑</kbd> <kbd>X</kbd></span></div>
+            <div><span>회전 (반시계)</span> <span><kbd>Z</kbd></span></div>
+            <div><span>홀드</span> <span><kbd>C</kbd> <kbd>Shift</kbd></span></div>
+            <div><span>일시정지</span> <span><kbd>P</kbd> <kbd>Esc</kbd></span></div>
+            <div><span>다시 시작</span> <span><kbd>R</kbd></span></div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="startBtn">시작</button>
+          <button id="pauseBtn" class="ghost">일시정지</button>
+        </div>
+
+        <!-- 터치 기기 전용 조작 버튼 -->
+        <div class="touchpad">
+          <button data-act="left">◀</button>
+          <button data-act="rotate">⟳</button>
+          <button data-act="right">▶</button>
+          <button data-act="soft">▼</button>
+          <button data-act="hard">⤓</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="/static/app.js"></script>
+<script>
+(() => {
+  'use strict';
+
+  App.renderNav('tetris');   // 상단 화면 이동 메뉴
+
+  // ==================================================
+  // 1. 게임 상수
+  // ==================================================
+  const COLS = 10;                 // 가로 칸 수
+  const ROWS = 20;                 // 세로 칸 수 (화면에 보이는 영역)
+  const LOCK_DELAY = 500;          // 바닥에 닿고 굳기까지 유예 시간(ms)
+  const LOCK_RESET_LIMIT = 15;     // 유예 시간 리셋 허용 횟수 (무한 버티기 방지)
+  const DAS = 150;                 // 좌우키를 꾹 눌렀을 때 자동 반복이 시작되기까지(ms)
+  const ARR = 40;                  // 자동 반복 간격(ms)
+  const SOFT_DROP_INTERVAL = 30;   // 소프트 드롭 시 한 칸 내려가는 간격(ms)
+
+  // 테트로미노 7종의 스폰 모양과 색.
+  // 행렬의 1 이 블록이 있는 칸이며, 회전은 이 정사각 행렬을 통째로 돌려서 만든다.
+  const PIECES = {
+    I: { color: '#22b8cf', shape: [[0,0,0,0], [1,1,1,1], [0,0,0,0], [0,0,0,0]] },
+    O: { color: '#fcc419', shape: [[1,1], [1,1]] },
+    T: { color: '#cc5de8', shape: [[0,1,0], [1,1,1], [0,0,0]] },
+    S: { color: '#51cf66', shape: [[0,1,1], [1,1,0], [0,0,0]] },
+    Z: { color: '#ff6b6b', shape: [[1,1,0], [0,1,1], [0,0,0]] },
+    J: { color: '#4c6ef5', shape: [[1,0,0], [1,1,1], [0,0,0]] },
+    L: { color: '#ff922b', shape: [[0,0,1], [1,1,1], [0,0,0]] },
+  };
+  const TYPES = Object.keys(PIECES);
+
+  // SRS(Super Rotation System) 월킥 테이블.
+  // 회전했을 때 벽·블록에 걸리면 아래 오프셋들을 차례로 적용해 밀어 넣어 본다.
+  // 표기는 원본 규격대로 y 가 위쪽이 양수라서, 실제 격자에 쓸 때 dy 부호를 뒤집는다.
+  const KICKS_JLSTZ = {
+    '0>1': [[0,0], [-1,0], [-1, 1], [0,-2], [-1,-2]],
+    '1>0': [[0,0], [ 1,0], [ 1,-1], [0, 2], [ 1, 2]],
+    '1>2': [[0,0], [ 1,0], [ 1,-1], [0, 2], [ 1, 2]],
+    '2>1': [[0,0], [-1,0], [-1, 1], [0,-2], [-1,-2]],
+    '2>3': [[0,0], [ 1,0], [ 1, 1], [0,-2], [ 1,-2]],
+    '3>2': [[0,0], [-1,0], [-1,-1], [0, 2], [-1, 2]],
+    '3>0': [[0,0], [-1,0], [-1,-1], [0, 2], [-1, 2]],
+    '0>3': [[0,0], [ 1,0], [ 1, 1], [0,-2], [ 1,-2]],
+  };
+
+  // I 조각은 회전축이 달라 별도의 킥 테이블을 쓴다.
+  const KICKS_I = {
+    '0>1': [[0,0], [-2,0], [ 1,0], [-2,-1], [ 1, 2]],
+    '1>0': [[0,0], [ 2,0], [-1,0], [ 2, 1], [-1,-2]],
+    '1>2': [[0,0], [-1,0], [ 2,0], [-1, 2], [ 2,-1]],
+    '2>1': [[0,0], [ 1,0], [-2,0], [ 1,-2], [-2, 1]],
+    '2>3': [[0,0], [ 2,0], [-1,0], [ 2, 1], [-1,-2]],
+    '3>2': [[0,0], [-2,0], [ 1,0], [-2,-1], [ 1, 2]],
+    '3>0': [[0,0], [ 1,0], [-2,0], [ 1,-2], [-2, 1]],
+    '0>3': [[0,0], [-1,0], [ 2,0], [-1, 2], [ 2,-1]],
+  };
+
+  // 한 번에 지운 줄 수에 따른 기본 점수 (레벨을 곱해서 사용)
+  const LINE_SCORE = [0, 100, 300, 500, 800];
+
+  // ==================================================
+  // 2. 캔버스 준비
+  // ==================================================
+  const boardCanvas = document.getElementById('board');
+  const boardCtx = boardCanvas.getContext('2d');
+  const holdCanvas = document.getElementById('hold');
+  const holdCtx = holdCanvas.getContext('2d');
+  const nextCanvas = document.getElementById('next');
+  const nextCtx = nextCanvas.getContext('2d');
+
+  let cell = 30;   // 게임판 한 칸의 픽셀 크기 (setupCanvas 에서 화면 크기에 맞춰 계산)
+
+  /** CSS 크기와 실제 픽셀 해상도를 devicePixelRatio 로 맞춰 고해상도에서 선명하게 그린다. */
+  function fitCanvas(canvas, ctx, cssWidth, cssHeight) {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(cssWidth * dpr);      // 실제 버퍼 해상도
+    canvas.height = Math.round(cssHeight * dpr);
+    canvas.style.width = cssWidth + 'px';           // 화면상 표시 크기
+    canvas.style.height = cssHeight + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);         // 이후 좌표는 CSS 픽셀 단위로 쓴다
+  }
+
+  /** 게임판 CSS 크기로부터 칸 크기를 정하고, 보조 캔버스 크기도 함께 맞춘다. */
+  function setupCanvas() {
+    const cssWidth = boardCanvas.clientWidth || 300;
+    cell = Math.floor(cssWidth / COLS);             // 칸 크기는 정수로 (경계선 흐림 방지)
+    fitCanvas(boardCanvas, boardCtx, cell * COLS, cell * ROWS);
+
+    // HOLD / NEXT 는 부모 카드 폭을 따라간다
+    const sideWidth = holdCanvas.parentElement.clientWidth;
+    fitCanvas(holdCanvas, holdCtx, sideWidth, sideWidth * 0.75);
+    fitCanvas(nextCanvas, nextCtx, sideWidth, sideWidth * 2.6);  // 다음 조각 4개가 들어갈 높이
+  }
+
+  // ==================================================
+  // 3. 게임 상태
+  // ==================================================
+  let board = [];        // board[y][x] — 굳은 블록의 색 문자열, 빈 칸은 null
+  let bag = [];          // 7-bag 랜덤에서 아직 뽑지 않은 조각들
+  let queue = [];        // 다음에 나올 조각 대기열 (앞에서부터 사용)
+  let current = null;    // 지금 조작 중인 조각 { type, shape, rotation, x, y }
+  let holdType = null;   // 홀드 칸에 보관 중인 조각 종류
+  let holdUsed = false;  // 이번 조각에서 홀드를 이미 썼는지 (한 조각당 1회 제한)
+
+  let score = 0;
+  let lines = 0;
+  let level = 1;
+  let combo = -1;        // 연속으로 줄을 지운 횟수 (-1 이면 콤보 없음)
+  let backToBack = false;// 직전 클리어가 테트리스(4줄)였는지
+
+  let running = false;   // 게임 진행 중 여부
+  let paused = false;
+  let gameOver = false;
+
+  let dropTimer = 0;     // 자연 낙하 누적 시간(ms)
+  let lockTimer = 0;     // 바닥에 닿은 뒤 누적 시간(ms)
+  let lockResets = 0;    // lockTimer 를 리셋한 횟수
+  let landed = false;    // 현재 바닥(또는 블록 위)에 닿아 있는지
+  let lastTime = 0;      // 직전 프레임 타임스탬프 (프레임 간 경과시간 계산용)
+
+  // 좌우 자동 반복(DAS/ARR) 상태
+  const move = { dir: 0, timer: 0, repeating: false };
+  let softDropping = false;
+  let softDropTimer = 0;
+
+  // ==================================================
+  // 4. 조각 생성 — 7-bag 랜덤
+  // ==================================================
+  /**
+   * 7종을 한 세트로 섞어서 순서대로 꺼낸다.
+   * 완전 무작위와 달리 "I 가 30번 안 나오는" 극단적인 편차가 생기지 않는다.
+   */
+  function nextType() {
+    if (bag.length === 0) {
+      bag = TYPES.slice();
+      // Fisher-Yates 셔플
+      for (let i = bag.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [bag[i], bag[j]] = [bag[j], bag[i]];
+      }
+    }
+    return bag.pop();
+  }
+
+  /** 대기열을 항상 5개 이상 채워 둔다 (NEXT 미리보기 4개 + 여유 1개) */
+  function fillQueue() {
+    while (queue.length < 5) queue.push(nextType());
+  }
+
+  /** 조각 하나를 만들어 스폰 위치에 놓는다. */
+  function spawn(type) {
+    const shape = PIECES[type].shape.map(row => row.slice());  // 원본 훼손 방지용 복사
+    const piece = {
+      type,
+      shape,
+      rotation: 0,
+      // 가로 중앙 정렬 — 행렬 폭을 뺀 나머지의 절반
+      x: Math.floor((COLS - shape.length) / 2),
+      // I 는 행렬의 두 번째 행에 블록이 있어 y=-1 이어야 맨 윗줄에 딱 걸린다
+      y: type === 'I' ? -1 : 0,
+    };
+    return piece;
+  }
+
+  /** 대기열에서 하나 꺼내 현재 조각으로 만든다. 놓을 자리가 없으면 게임 오버. */
+  function takeNextPiece() {
+    fillQueue();
+    current = spawn(queue.shift());
+    fillQueue();
+    holdUsed = false;
+    resetLockState();
+
+    // 스폰하자마자 겹치면(= 쌓인 블록이 천장까지 찼으면) 게임 종료
+    if (collides(current, current.x, current.y, current.shape)) {
+      endGame();
+    }
+  }
+
+  // ==================================================
+  // 5. 충돌 판정 · 이동 · 회전
+  // ==================================================
+  /**
+   * shape 을 (x, y) 에 놓았을 때 벽·바닥·굳은 블록과 겹치는지 검사한다.
+   * y < 0 (천장 위)는 화면 밖이지만 이동은 허용해야 하므로 통과시킨다.
+   */
+  function collides(piece, x, y, shape) {
+    for (let r = 0; r < shape.length; r++) {
+      for (let c = 0; c < shape[r].length; c++) {
+        if (!shape[r][c]) continue;              // 빈 칸은 검사하지 않는다
+        const nx = x + c;
+        const ny = y + r;
+        if (nx < 0 || nx >= COLS) return true;   // 좌우 벽
+        if (ny >= ROWS) return true;             // 바닥
+        if (ny >= 0 && board[ny][nx]) return true;  // 이미 굳은 블록
+      }
+    }
+    return false;
+  }
+
+  /** 정사각 행렬을 시계방향(dir=1) 또는 반시계방향(dir=-1)으로 90도 돌린다. */
+  function rotateMatrix(matrix, dir) {
+    const n = matrix.length;
+    const out = matrix.map(row => row.slice());
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        // 시계방향: 새 [r][c] = 원본 [n-1-c][r]
+        out[r][c] = dir === 1 ? matrix[n - 1 - c][r] : matrix[c][n - 1 - r];
+      }
+    }
+    return out;
+  }
+
+  /** 좌우 이동. 성공하면 true. */
+  function tryMove(dx) {
+    if (!current) return false;
+    if (collides(current, current.x + dx, current.y, current.shape)) return false;
+    current.x += dx;
+    onPieceMoved();
+    return true;
+  }
+
+  /** 한 칸 아래로. 더 내려갈 수 없으면 false. */
+  function tryDrop() {
+    if (!current) return false;
+    if (collides(current, current.x, current.y + 1, current.shape)) return false;
+    current.y += 1;
+    onPieceMoved();
+    return true;
+  }
+
+  /** 회전 + SRS 월킥. 5개 후보 중 처음으로 들어가는 위치를 채택한다. */
+  function tryRotate(dir) {
+    if (!current || current.type === 'O') return;   // O 는 회전해도 모양이 같다
+
+    const from = current.rotation;
+    const to = (from + (dir === 1 ? 1 : 3)) % 4;    // 반시계는 +3 과 같다
+    const rotated = rotateMatrix(current.shape, dir);
+    const table = current.type === 'I' ? KICKS_I : KICKS_JLSTZ;
+    const kicks = table[`${from}>${to}`] || [[0, 0]];
+
+    for (const [dx, dy] of kicks) {
+      const nx = current.x + dx;
+      const ny = current.y - dy;                    // 규격의 y 는 위가 양수 → 부호 반전
+      if (!collides(current, nx, ny, rotated)) {
+        current.shape = rotated;
+        current.rotation = to;
+        current.x = nx;
+        current.y = ny;
+        onPieceMoved();
+        return;
+      }
+    }
+    // 5개 후보 모두 실패하면 회전하지 않는다
+  }
+
+  /** 조각이 움직였을 때 락 딜레이를 되살린다 (바닥에서 비비며 버티기 허용, 횟수 제한). */
+  function onPieceMoved() {
+    if (landed && lockResets < LOCK_RESET_LIMIT) {
+      lockTimer = 0;
+      lockResets++;
+    }
+  }
+
+  function resetLockState() {
+    lockTimer = 0;
+    lockResets = 0;
+    landed = false;
+  }
+
+  /** 현재 조각이 그대로 떨어졌을 때 멈추는 y 좌표 (고스트 표시·하드드롭에 사용) */
+  function ghostY() {
+    let y = current.y;
+    while (!collides(current, current.x, y + 1, current.shape)) y++;
+    return y;
+  }
+
+  // ==================================================
+  // 6. 고정 · 줄 삭제 · 점수
+  // ==================================================
+  /** 현재 조각을 보드에 굳히고, 줄 삭제·점수 계산 후 다음 조각을 꺼낸다. */
+  function lockPiece() {
+    const color = PIECES[current.type].color;
+    let outOfBounds = true;   // 모든 칸이 화면 위쪽(y<0)이면 락아웃 = 게임 오버
+
+    for (let r = 0; r < current.shape.length; r++) {
+      for (let c = 0; c < current.shape[r].length; c++) {
+        if (!current.shape[r][c]) continue;
+        const y = current.y + r;
+        const x = current.x + c;
+        if (y >= 0) {
+          board[y][x] = color;
+          outOfBounds = false;
+        }
+      }
+    }
+
+    if (outOfBounds) {
+      endGame();
+      return;
+    }
+
+    const cleared = clearLines();
+    addScore(cleared);
+    takeNextPiece();
+  }
+
+  /** 꽉 찬 줄을 지우고 위쪽 줄을 끌어내린다. 지운 줄 수를 반환. */
+  function clearLines() {
+    let cleared = 0;
+    for (let y = ROWS - 1; y >= 0; y--) {
+      if (board[y].every(v => v !== null)) {
+        board.splice(y, 1);                          // 꽉 찬 줄 제거
+        board.unshift(new Array(COLS).fill(null));   // 맨 위에 빈 줄 추가
+        cleared++;
+        y++;   // 줄이 내려왔으니 같은 y 를 다시 검사해야 한다
+      }
+    }
+    return cleared;
+  }
+
+  /** 지운 줄 수에 따라 점수·레벨·콤보·백투백을 갱신한다. */
+  function addScore(cleared) {
+    if (cleared === 0) {
+      combo = -1;          // 줄을 못 지우면 콤보 끊김
+      return;
+    }
+
+    combo++;
+    let gain = LINE_SCORE[cleared] * level;
+
+    // 테트리스(4줄)를 연달아 하면 1.5배 보너스
+    if (cleared === 4) {
+      if (backToBack) gain = Math.floor(gain * 1.5);
+      backToBack = true;
+    } else {
+      backToBack = false;
+    }
+
+    if (combo > 0) gain += 50 * combo * level;   // 콤보 보너스
+
+    score += gain;
+    lines += cleared;
+    level = Math.floor(lines / 10) + 1;          // 10줄마다 레벨 업
+    updateStats();
+  }
+
+  /**
+   * 레벨별 자연 낙하 간격(ms).
+   * 테트리스 가이드라인 공식을 그대로 쓴다 — 레벨이 오를수록 급격히 빨라진다.
+   */
+  function gravityInterval() {
+    const t = Math.max(0.05, 0.8 - (level - 1) * 0.007);
+    return Math.pow(t, level - 1) * 1000;
+  }
+
+  // ==================================================
+  // 7. 홀드 · 하드 드롭
+  // ==================================================
+  /** 현재 조각을 보관하고, 보관돼 있던 조각(또는 다음 조각)을 꺼낸다. */
+  function hold() {
+    if (!current || holdUsed) return;   // 한 조각당 한 번만
+    const stored = holdType;
+    holdType = current.type;
+
+    if (stored) {
+      current = spawn(stored);
+      resetLockState();
+      if (collides(current, current.x, current.y, current.shape)) endGame();
+    } else {
+      takeNextPiece();
+    }
+
+    holdUsed = true;   // takeNextPiece 가 false 로 되돌리므로 그 뒤에 설정한다
+    drawHold();
+  }
+
+  /** 바닥까지 한 번에 떨어뜨리고 즉시 굳힌다. 내려간 칸당 2점. */
+  function hardDrop() {
+    if (!current) return;
+    const target = ghostY();
+    score += (target - current.y) * 2;
+    current.y = target;
+    lockPiece();
+    updateStats();
+  }
+
+  // ==================================================
+  // 8. 그리기
+  // ==================================================
+  /** 블록 한 칸 — 채우기 + 왼쪽·위 하이라이트로 살짝 입체감을 준다. */
+  function drawCell(ctx, x, y, size, color, alpha = 1) {
+    const px = x * size;
+    const py = y * size;
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = color;
+    ctx.fillRect(px, py, size, size);
+
+    // 위·왼쪽 밝은 면
+    ctx.fillStyle = 'rgba(255,255,255,0.28)';
+    ctx.fillRect(px, py, size, size * 0.16);
+    ctx.fillRect(px, py, size * 0.16, size);
+
+    // 아래·오른쪽 어두운 면
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(px, py + size * 0.84, size, size * 0.16);
+    ctx.fillRect(px + size * 0.84, py, size * 0.16, size);
+
+    // 칸 경계선
+    ctx.globalAlpha = alpha * 0.6;
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px + 0.5, py + 0.5, size - 1, size - 1);
+    ctx.globalAlpha = 1;
+  }
+
+  // CSS 변수(라이트/다크 테마 색)는 매 프레임 읽으면 비싸므로 한 번 읽어 캐싱한다
+  const theme = { board: '#fff', grid: '#eee' };
+
+  function readTheme() {
+    const styles = getComputedStyle(document.documentElement);
+    theme.board = styles.getPropertyValue('--board-bg').trim() || '#fff';
+    theme.grid = styles.getPropertyValue('--grid').trim() || '#eee';
+  }
+
+  // OS 다크모드 전환 시 캐시를 갱신한다
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readTheme);
+
+  /** 배경 격자 */
+  function drawGrid() {
+    boardCtx.fillStyle = theme.board;
+    boardCtx.fillRect(0, 0, COLS * cell, ROWS * cell);
+
+    boardCtx.strokeStyle = theme.grid;
+    boardCtx.lineWidth = 1;
+    boardCtx.beginPath();
+    for (let x = 1; x < COLS; x++) {
+      boardCtx.moveTo(x * cell + 0.5, 0);
+      boardCtx.lineTo(x * cell + 0.5, ROWS * cell);
+    }
+    for (let y = 1; y < ROWS; y++) {
+      boardCtx.moveTo(0, y * cell + 0.5);
+      boardCtx.lineTo(COLS * cell, y * cell + 0.5);
+    }
+    boardCtx.stroke();
+  }
+
+  /** 게임판 전체 — 격자 → 굳은 블록 → 고스트 → 현재 조각 순으로 겹쳐 그린다. */
+  function drawBoard() {
+    drawGrid();
+
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        if (board[y][x]) drawCell(boardCtx, x, y, cell, board[y][x]);
+      }
+    }
+
+    if (!current) return;
+
+    // 고스트 — 하드 드롭 시 놓일 자리를 반투명하게 미리 보여준다
+    const gy = ghostY();
+    const color = PIECES[current.type].color;
+    for (let r = 0; r < current.shape.length; r++) {
+      for (let c = 0; c < current.shape[r].length; c++) {
+        if (!current.shape[r][c]) continue;
+        const y = gy + r;
+        if (y >= 0) drawCell(boardCtx, current.x + c, y, cell, color, 0.22);
+      }
+    }
+
+    // 현재 조작 중인 조각
+    for (let r = 0; r < current.shape.length; r++) {
+      for (let c = 0; c < current.shape[r].length; c++) {
+        if (!current.shape[r][c]) continue;
+        const y = current.y + r;
+        if (y >= 0) drawCell(boardCtx, current.x + c, y, cell, color);
+      }
+    }
+  }
+
+  /**
+   * 미리보기 캔버스에 조각 하나를 중앙 정렬해 그린다.
+   * 빈 행·열을 잘라낸 실제 모양 크기를 기준으로 맞춘다.
+   */
+  function drawPreview(ctx, type, cx, cy, size) {
+    if (!type) return;
+    const shape = PIECES[type].shape;
+
+    // 블록이 실제로 차지하는 범위 구하기
+    let minR = shape.length, maxR = -1, minC = shape.length, maxC = -1;
+    for (let r = 0; r < shape.length; r++) {
+      for (let c = 0; c < shape[r].length; c++) {
+        if (!shape[r][c]) continue;
+        minR = Math.min(minR, r); maxR = Math.max(maxR, r);
+        minC = Math.min(minC, c); maxC = Math.max(maxC, c);
+      }
+    }
+
+    const w = (maxC - minC + 1) * size;
+    const h = (maxR - minR + 1) * size;
+    const ox = cx - w / 2;   // 중앙 정렬 시작점
+    const oy = cy - h / 2;
+
+    ctx.save();
+    ctx.translate(ox, oy);
+    for (let r = minR; r <= maxR; r++) {
+      for (let c = minC; c <= maxC; c++) {
+        if (shape[r][c]) drawCell(ctx, c - minC, r - minR, size, PIECES[type].color);
+      }
+    }
+    ctx.restore();
+  }
+
+  function clearCanvas(ctx, canvas) {
+    const dpr = window.devicePixelRatio || 1;
+    ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+  }
+
+  function drawHold() {
+    clearCanvas(holdCtx, holdCanvas);
+    const w = holdCanvas.clientWidth;
+    const h = holdCanvas.clientHeight;
+    // 홀드를 이미 쓴 상태면 흐리게 표시해 "지금은 못 바꾼다"를 알린다
+    holdCtx.globalAlpha = holdUsed ? 0.35 : 1;
+    drawPreview(holdCtx, holdType, w / 2, h / 2, Math.min(w, h) / 5);
+    holdCtx.globalAlpha = 1;
+  }
+
+  function drawNext() {
+    clearCanvas(nextCtx, nextCanvas);
+    const w = nextCanvas.clientWidth;
+    const h = nextCanvas.clientHeight;
+    const slots = 4;                  // 미리 보여줄 개수
+    const slotH = h / slots;
+    const size = Math.min(w / 5, slotH / 3.2);
+
+    for (let i = 0; i < slots && i < queue.length; i++) {
+      nextCtx.globalAlpha = 1 - i * 0.18;   // 뒤로 갈수록 옅게
+      drawPreview(nextCtx, queue[i], w / 2, slotH * (i + 0.5), size);
+    }
+    nextCtx.globalAlpha = 1;
+  }
+
+  function render() {
+    drawBoard();
+    drawNext();
+    drawHold();
+  }
+
+  // ==================================================
+  // 9. UI 갱신 · 오버레이
+  // ==================================================
+  const scoreEl = document.getElementById('score');
+  const levelEl = document.getElementById('level');
+  const linesEl = document.getElementById('lines');
+  const overlay = document.getElementById('overlay');
+  const overlayTitle = document.getElementById('overlayTitle');
+  const overlayText = document.getElementById('overlayText');
+  const overlayBtn = document.getElementById('overlayBtn');
+  const pauseBtn = document.getElementById('pauseBtn');
+
+  function updateStats() {
+    scoreEl.textContent = score.toLocaleString('ko-KR');
+    levelEl.textContent = level;
+    linesEl.textContent = lines;
+  }
+
+  function showOverlay(title, text, btnLabel) {
+    overlayTitle.textContent = title;
+    overlayText.textContent = text;
+    overlayBtn.textContent = btnLabel;
+    overlay.hidden = false;
+  }
+
+  function hideOverlay() {
+    overlay.hidden = true;
+  }
+
+  // ==================================================
+  // 10. 게임 흐름 (시작 · 일시정지 · 종료)
+  // ==================================================
+  function resetGame() {
+    // null 로 채운 2차원 배열 생성 — fill(null) 후 map 으로 각 행을 새 배열로 만든다
+    board = Array.from({ length: ROWS }, () => new Array(COLS).fill(null));
+    bag = [];
+    queue = [];
+    holdType = null;
+    holdUsed = false;
+    score = 0;
+    lines = 0;
+    level = 1;
+    combo = -1;
+    backToBack = false;
+    dropTimer = 0;
+    softDropping = false;
+    move.dir = 0;
+    move.repeating = false;
+    gameOver = false;
+    paused = false;
+    updateStats();
+    takeNextPiece();
+  }
+
+  function startGame() {
+    resetGame();
+    running = true;
+    hideOverlay();
+    pauseBtn.textContent = '일시정지';
+    lastTime = performance.now();
+    render();
+  }
+
+  function togglePause() {
+    if (!running || gameOver) return;
+    paused = !paused;
+    pauseBtn.textContent = paused ? '계속하기' : '일시정지';
+    if (paused) {
+      showOverlay('일시정지', 'P · Esc 또는 아래 버튼으로 계속', '계속하기');
+    } else {
+      hideOverlay();
+      lastTime = performance.now();   // 멈춘 동안의 시간이 낙하에 반영되지 않도록 기준 시각 초기화
+    }
+  }
+
+  function endGame() {
+    running = false;
+    gameOver = true;
+    current = null;
+    showOverlay('게임 오버', `점수 ${score.toLocaleString('ko-KR')} · ${lines}줄 · 레벨 ${level}`, '다시 시작');
+  }
+
+  // ==================================================
+  // 11. 메인 루프
+  // ==================================================
+  /**
+   * requestAnimationFrame 으로 매 프레임 호출된다.
+   * 프레임 간격(delta)을 누적해 시간 기준으로 처리하므로 모니터 주사율과 무관하게 같은 속도로 동작한다.
+   */
+  function loop(now) {
+    requestAnimationFrame(loop);
+
+    const delta = Math.min(now - lastTime, 100);   // 탭 전환 등으로 크게 벌어진 간격은 잘라낸다
+    lastTime = now;
+
+    if (!running || paused || gameOver) return;
+
+    updateHorizontal(delta);
+    updateGravity(delta);
+    render();
+  }
+
+  /** 좌우키를 누르고 있을 때의 자동 반복(DAS → ARR) 처리 */
+  function updateHorizontal(delta) {
+    if (move.dir === 0) return;
+    move.timer += delta;
+
+    const threshold = move.repeating ? ARR : DAS;
+    while (move.timer >= threshold) {
+      move.timer -= threshold;
+      move.repeating = true;
+      if (!tryMove(move.dir)) {
+        move.timer = 0;   // 벽에 막혔으면 더 시도하지 않는다
+        break;
+      }
+    }
+  }
+
+  /** 자연 낙하 · 소프트 드롭 · 락 딜레이 처리 */
+  function updateGravity(delta) {
+    if (!current) return;
+
+    // 소프트 드롭 — 아래키를 누르고 있으면 빠른 간격으로 한 칸씩 내린다
+    if (softDropping) {
+      softDropTimer += delta;
+      while (softDropTimer >= SOFT_DROP_INTERVAL) {
+        softDropTimer -= SOFT_DROP_INTERVAL;
+        if (tryDrop()) {
+          score += 1;         // 소프트 드롭은 칸당 1점
+          updateStats();
+          dropTimer = 0;      // 직접 내렸으므로 자연 낙하 타이머는 초기화
+        } else {
+          break;
+        }
+      }
+    }
+
+    // 자연 낙하
+    dropTimer += delta;
+    const interval = gravityInterval();
+    while (dropTimer >= interval) {
+      dropTimer -= interval;
+      if (!tryDrop()) break;
+    }
+
+    // 바닥(또는 블록 위)에 닿았는지 확인
+    const resting = collides(current, current.x, current.y + 1, current.shape);
+    if (resting) {
+      if (!landed) {
+        landed = true;
+        lockTimer = 0;
+      }
+      lockTimer += delta;
+      // 유예 시간이 지나면 굳힌다
+      if (lockTimer >= LOCK_DELAY) lockPiece();
+    } else {
+      landed = false;
+      lockTimer = 0;
+    }
+  }
+
+  // ==================================================
+  // 12. 입력
+  // ==================================================
+  // 게임에서 쓰는 키는 브라우저 기본 동작(스크롤 등)을 막는다
+  const PREVENT = ['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', ' ', 'Spacebar'];
+
+  document.addEventListener('keydown', (e) => {
+    if (PREVENT.includes(e.key)) e.preventDefault();
+
+    // 게임 상태와 무관하게 동작하는 키
+    if (e.key === 'Enter') {
+      if (!running || gameOver) startGame();
+      return;
+    }
+    if (e.key === 'r' || e.key === 'R') {
+      startGame();
+      return;
+    }
+    if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
+      togglePause();
+      return;
+    }
+
+    if (!running || paused || gameOver) return;
+    if (e.repeat && e.key !== 'ArrowDown') return;   // 좌우 반복은 DAS 로 직접 처리한다
+
+    switch (e.key) {
+      case 'ArrowLeft':
+        if (move.dir !== -1) { move.dir = -1; move.timer = 0; move.repeating = false; tryMove(-1); }
+        break;
+      case 'ArrowRight':
+        if (move.dir !== 1) { move.dir = 1; move.timer = 0; move.repeating = false; tryMove(1); }
+        break;
+      case 'ArrowDown':
+        softDropping = true;
+        break;
+      case 'ArrowUp':
+      case 'x':
+      case 'X':
+        tryRotate(1);
+        break;
+      case 'z':
+      case 'Z':
+        tryRotate(-1);
+        break;
+      case ' ':
+      case 'Spacebar':
+        hardDrop();
+        break;
+      case 'c':
+      case 'C':
+      case 'Shift':
+        hold();
+        break;
+    }
+    render();
+  });
+
+  document.addEventListener('keyup', (e) => {
+    if (e.key === 'ArrowLeft' && move.dir === -1) move.dir = 0;
+    if (e.key === 'ArrowRight' && move.dir === 1) move.dir = 0;
+    if (e.key === 'ArrowDown') { softDropping = false; softDropTimer = 0; }
+  });
+
+  // 창이 백그라운드로 가면 자동으로 일시정지 (돌아왔을 때 급사 방지)
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && running && !paused && !gameOver) togglePause();
+  });
+
+  // 터치 버튼 — 각 버튼의 data-act 로 동작을 구분한다
+  document.querySelectorAll('.touchpad button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (!running || paused || gameOver) return;
+      const act = btn.dataset.act;
+      if (act === 'left') tryMove(-1);
+      else if (act === 'right') tryMove(1);
+      else if (act === 'rotate') tryRotate(1);
+      else if (act === 'soft') tryDrop();
+      else if (act === 'hard') hardDrop();
+      render();
+    });
+  });
+
+  document.getElementById('startBtn').addEventListener('click', startGame);
+  pauseBtn.addEventListener('click', togglePause);
+  overlayBtn.addEventListener('click', () => {
+    if (paused) togglePause();
+    else startGame();
+  });
+
+  // 창 크기가 바뀌면 칸 크기를 다시 계산하고 즉시 다시 그린다
+  window.addEventListener('resize', () => {
+    setupCanvas();
+    render();
+  });
+
+  // ==================================================
+  // 13. 초기화
+  // ==================================================
+  readTheme();
+  setupCanvas();
+  resetGame();          // 시작 전에도 게임판이 보이도록 초기 상태를 만들어 둔다
+  running = false;      // resetGame 은 조각까지 만들지만, Enter/시작 전까지는 멈춰 있다
+  render();
+  showOverlay('테트리스', 'Enter 또는 [시작] 버튼을 누르세요', '시작');
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KRX 일별 시세 — My FastAPI Backend</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%88%3C/text%3E%3C/svg%3E" />
+  <!-- 차트 라이브러리 (CDN) — 오프라인이면 차트 자리에 안내 문구가 뜬다 -->
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts@4/dist/apexcharts.min.js"></script>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <header class="page-head">
+    <div>
+      <h1>📈 KRX 일별 시세</h1>
+      <p>한국거래소 OpenAPI의 <b>유가증권·코스닥 일별매매정보</b>를 조회한다. 전부 실제 데이터다.</p>
+    </div>
+    <nav class="nav" id="nav"></nav>
+  </header>
+
+  <!-- 데이터 출처·캐시 상태 -->
+  <div class="badges" id="badges"></div>
+
+  <!-- 조회 조건 -->
+  <section class="card">
+    <div class="controls">
+      <label>기준일
+        <select id="date"></select>
+      </label>
+      <label>시장
+        <select id="market">
+          <option value="">전체</option>
+          <option value="KOSPI">KOSPI</option>
+          <option value="KOSDAQ">KOSDAQ</option>
+        </select>
+      </label>
+      <label>검색
+        <input id="q" type="search" placeholder="종목명 또는 종목코드" autocomplete="off" />
+      </label>
+      <label>정렬
+        <select id="sort">
+          <option value="value">거래대금</option>
+          <option value="volume">거래량</option>
+          <option value="market_cap">시가총액</option>
+          <option value="change_rate">등락률</option>
+          <option value="close">종가</option>
+          <option value="code">종목코드</option>
+          <option value="name">종목명</option>
+        </select>
+      </label>
+      <label>방향
+        <select id="order">
+          <option value="desc">내림차순</option>
+          <option value="asc">오름차순</option>
+        </select>
+      </label>
+      <button id="reload">조회</button>
+      <span class="status" id="status">불러오는 중…</span>
+    </div>
+  </section>
+
+  <!-- 요약 지표 -->
+  <div class="tiles" id="tiles"></div>
+
+  <!-- 스냅샷 차트 3종 -->
+  <div class="grid-2">
+    <section class="card">
+      <h2>거래대금 상위 15종목</h2>
+      <p class="hint">그날 돈이 가장 많이 몰린 종목. 막대를 클릭하면 캔들 차트가 열린다.</p>
+      <div id="chartTop" class="chart"></div>
+    </section>
+    <section class="card">
+      <h2>등락률 분포</h2>
+      <p class="hint">시장 전체가 오른 날인지 내린 날인지 한눈에 보인다. (상승 빨강 · 하락 파랑)</p>
+      <div id="chartHist" class="chart"></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>시장별 등락</h2>
+    <p class="hint">KOSPI · KOSDAQ 각각의 상승/보합/하락 종목 수와 거래대금 비중.</p>
+    <div id="chartMarket" class="chart"></div>
+  </section>
+
+  <!-- 종목 표 -->
+  <section class="card">
+    <h2>전 종목 <span class="muted" id="tableMeta"></span></h2>
+    <p class="hint">행을 클릭하면 그 종목의 일봉 차트가 아래에 열린다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>종목코드</th><th>종목명</th><th>시장</th>
+            <th class="num">종가</th><th class="num">대비</th><th class="num">등락률</th>
+            <th class="num">거래량</th><th class="num">거래대금</th><th class="num">시가총액</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <button id="prev" class="ghost">← 이전</button>
+      <span id="pageInfo"></span>
+      <button id="next" class="ghost">다음 →</button>
+    </div>
+  </section>
+
+  <!-- 캔들 차트 (종목 클릭 시 열림) -->
+  <section class="card" id="candleCard" hidden>
+    <div class="candle-head">
+      <div>
+        <h2 id="candleTitle">—</h2>
+        <div class="quote"><span id="candlePrice">—</span><span id="candleDelta"></span></div>
+      </div>
+      <div class="pillbar" id="rangeBar"></div>
+      <button class="ghost" id="closeCandle">닫기</button>
+    </div>
+    <div id="chartCandle" class="chart"></div>
+    <div id="chartVolume" class="chart small"></div>
+    <p class="hint">위 차트에서 드래그하면 구간이 확대되고, 아래 거래량 차트를 드래그하면 구간을 옮길 수 있다.</p>
+  </section>
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+(() => {
+  'use strict';
+
+  // ==================================================
+  // 1. 상태
+  // ==================================================
+  const state = {
+    bas_dd: '',        // 조회 기준일 (YYYYMMDD)
+    market: '',
+    q: '',
+    sort: 'value',
+    order: 'desc',
+    page: 1,
+    size: 50,
+    totalPages: 1,
+    code: null,        // 캔들 차트로 열어 둔 종목
+    days: 120,         // 캔들 기간 (거래일)
+  };
+
+  const charts = {};   // 생성한 ApexCharts 인스턴스 보관 (다시 그릴 때 파괴용)
+  const $ = (id) => document.getElementById(id);
+
+  // ==================================================
+  // 2. 초기화
+  // ==================================================
+  App.renderNav('krx');
+
+  async function init() {
+    try {
+      // 상태(인증키·캐시)와 조회 가능한 날짜를 동시에 받아 온다
+      const [status, dates] = await Promise.all([
+        App.get('/api/krx/status'),
+        App.get('/api/krx/dates?limit=400'),
+      ]);
+      renderBadges(status);
+
+      if (!dates.length) {
+        $('status').textContent = '캐시가 비어 있습니다. 터미널에서 python3 fetch_krx.py 를 실행하세요.';
+        return;
+      }
+      // 날짜 선택 박스는 실제로 데이터가 있는 거래일만 담는다 (휴장일을 골라 빈 화면 보는 일 방지)
+      $('date').innerHTML = dates
+        .map((d) => `<option value="${d}">${App.isoDate(d)}</option>`).join('');
+      state.bas_dd = dates[0];
+
+      await load();
+    } catch (error) {
+      $('status').textContent = `초기화 실패: ${error.message}`;
+    }
+  }
+
+  function renderBadges(status) {
+    const c = status.cache;
+    const keyOk = status.key_loaded && !status.auth_blocked;
+    $('badges').innerHTML = `
+      <span class="badge ${keyOk ? 'ok' : 'warn'}">
+        ${keyOk ? '✅ KRX 인증키 정상' : '⚠️ KRX 인증 확인 필요'}
+        <em>${status.key_source} · ${status.key_length}자</em>
+      </span>
+      <span class="badge">💾 캐시 ${App.isoDate(c.first_date)} ~ ${App.isoDate(c.last_date)}
+        <em>${c.days}거래일 · ${App.num(c.rows)}행 · ${c.db_size_mb}MB</em></span>
+      <span class="badge">🏷 종목 ${App.num(c.codes)}
+        <em>${status.markets.map((m) => m.api_id).join(' · ')}</em></span>
+      ${status.last_detail ? `<span class="badge warn">${status.last_detail}</span>` : ''}
+    `;
+  }
+
+  // ==================================================
+  // 3. 스냅샷 조회 · 렌더
+  // ==================================================
+  async function load() {
+    $('status').textContent = '불러오는 중…';
+    const params = new URLSearchParams({
+      bas_dd: state.bas_dd, q: state.q, sort: state.sort,
+      order: state.order, page: state.page, size: state.size,
+    });
+    if (state.market) params.set('market', state.market);
+
+    let data;
+    try {
+      data = await App.get(`/api/krx/stocks?${params}`);
+    } catch (error) {
+      $('status').textContent = error.message;
+      return;
+    }
+
+    $('status').textContent = `${data.date} 기준 · ${App.num(data.matched)}종목`;
+    state.totalPages = Math.max(1, Math.ceil(data.matched / data.size));
+
+    renderTiles(data);
+    renderTable(data);
+    renderCharts(data.summary);
+  }
+
+  function renderTiles(data) {
+    const s = data.summary;
+    const total = s.up + s.flat + s.down || 1;
+    $('tiles').innerHTML = [
+      ['상승', s.up, `${(s.up / total * 100).toFixed(1)}%`, 'up'],
+      ['보합', s.flat, `${(s.flat / total * 100).toFixed(1)}%`, ''],
+      ['하락', s.down, `${(s.down / total * 100).toFixed(1)}%`, 'down'],
+      ['거래대금', App.won(s.total_value), '전체 합계', ''],
+      ['거래량', `${App.num(Math.round(s.total_volume / 10000))}만주`, '전체 합계', ''],
+    ].map(([label, value, sub, cls]) => `
+      <div class="tile">
+        <div class="tile-label">${label}</div>
+        <div class="tile-value ${cls}">${typeof value === 'number' ? App.num(value) : value}</div>
+        <div class="tile-sub">${sub}</div>
+      </div>`).join('');
+  }
+
+  function renderTable(data) {
+    $('tableMeta').textContent =
+      `${App.num(data.matched)}종목 중 ${(data.page - 1) * data.size + 1}–${(data.page - 1) * data.size + data.count}`;
+
+    $('tbody').innerHTML = data.items.map((r) => {
+      const cls = App.signClass(r.change_rate);
+      return `<tr data-code="${r.code}" data-name="${r.name || ''}">
+        <td class="mono">${r.code}</td>
+        <td>${r.name || '-'}</td>
+        <td><span class="chip">${r.market || '-'}</span></td>
+        <td class="num mono">${App.num(r.close)}</td>
+        <td class="num mono ${cls}">${App.signed(r.change)}</td>
+        <td class="num mono ${cls}">${r.change_rate == null ? '-' : App.signed(r.change_rate, 2) + '%'}</td>
+        <td class="num mono">${App.num(r.volume)}</td>
+        <td class="num mono">${App.won(r.value)}</td>
+        <td class="num mono">${App.won(r.market_cap)}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="9" class="empty">결과가 없습니다.</td></tr>';
+
+    $('pageInfo').textContent = `${data.page} / ${state.totalPages}`;
+    $('prev').disabled = data.page <= 1;
+    $('next').disabled = data.page >= state.totalPages;
+  }
+
+  // ==================================================
+  // 4. 스냅샷 차트 3종
+  // ==================================================
+  function renderCharts(summary) {
+    if (!window.ApexCharts) {
+      ['chartTop', 'chartHist', 'chartMarket'].forEach((id) => {
+        $(id).innerHTML = '<p class="empty">차트 라이브러리를 불러오지 못했습니다 (오프라인).</p>';
+      });
+      return;
+    }
+
+    // (1) 거래대금 상위 15 — 가로 막대. 등락에 따라 막대 색을 나눈다.
+    const top = summary.top_value;
+    App.draw(charts, 'chartTop', {
+      chart: { type: 'bar', height: 420, toolbar: { show: false },
+               events: { dataPointSelection: (e, ctx, cfg) => openCandle(top[cfg.dataPointIndex].code) } },
+      series: [{ name: '거래대금', data: top.map((t) => Math.round(t.value / 1e8)) }],
+      xaxis: { categories: top.map((t) => t.name || t.code),
+               labels: { formatter: (v) => `${App.num(v)}억` } },
+      plotOptions: { bar: { horizontal: true, barHeight: '70%', distributed: true } },
+      colors: top.map((t) => App.signColor(t.change_rate)),
+      legend: { show: false },
+      dataLabels: { enabled: false },
+      tooltip: {
+        y: { formatter: (v, o) => {
+          const t = top[o.dataPointIndex];
+          return `${App.num(v)}억 · 종가 ${App.num(t.close)}원 (${App.signed(t.change_rate, 2)}%)`;
+        } },
+      },
+    });
+
+    // (2) 등락률 분포 — 히스토그램. 하락 구간은 파랑, 상승 구간은 빨강.
+    const hist = summary.histogram;
+    App.draw(charts, 'chartHist', {
+      chart: { type: 'bar', height: 420, toolbar: { show: false } },
+      series: [{ name: '종목 수', data: hist.map((h) => h.count) }],
+      xaxis: { categories: hist.map((h) => h.label) },
+      plotOptions: { bar: { distributed: true, columnWidth: '75%' } },
+      // 앞 5칸은 하락, 6번째는 보합, 나머지는 상승
+      colors: hist.map((_, i) => (i < 5 ? App.color('down') : i === 5 ? App.color('muted') : App.color('up'))),
+      legend: { show: false },
+      dataLabels: { enabled: true, formatter: (v) => (v ? v : '') },
+    });
+
+    // (3) 시장별 등락 — 누적 막대 + 거래대금
+    const bm = summary.by_market;
+    App.draw(charts, 'chartMarket', {
+      chart: { type: 'bar', height: 300, stacked: true, toolbar: { show: false } },
+      series: [
+        { name: '상승', data: bm.map((m) => m.up) },
+        { name: '보합', data: bm.map((m) => m.flat) },
+        { name: '하락', data: bm.map((m) => m.down) },
+      ],
+      colors: [App.color('up'), App.color('muted'), App.color('down')],
+      xaxis: { categories: bm.map((m) => `${m.market} (거래대금 ${App.won(m.value)})`) },
+      plotOptions: { bar: { horizontal: true, barHeight: '50%' } },
+      dataLabels: { enabled: true },
+      legend: { position: 'top' },
+    });
+  }
+
+  // ==================================================
+  // 5. 캔들 차트 (종목 클릭)
+  // ==================================================
+  const RANGES = [
+    { label: '1주', days: 5 }, { label: '1개월', days: 20 }, { label: '3개월', days: 60 },
+    { label: '6개월', days: 120 }, { label: '1년', days: 250 },
+  ];
+
+  function renderRangeBar() {
+    $('rangeBar').innerHTML = RANGES.map((r) =>
+      `<button class="pill ${r.days === state.days ? 'on' : ''}" data-days="${r.days}">${r.label}</button>`
+    ).join('');
+  }
+
+  async function openCandle(code) {
+    state.code = code;
+    $('candleCard').hidden = false;
+    renderRangeBar();
+    $('candleTitle').textContent = '불러오는 중…';
+    // 화면 밖에 있으면 스크롤해서 보여 준다
+    $('candleCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    let data;
+    try {
+      data = await App.get(`/api/krx/stocks/${encodeURIComponent(code)}/ohlcv?days=${state.days}`);
+    } catch (error) {
+      $('candleTitle').textContent = `조회 실패: ${error.message}`;
+      return;
+    }
+
+    const last = data.candles[data.candles.length - 1];
+    $('candleTitle').textContent = `${data.name} (${data.code}) · ${data.market}`;
+    $('candlePrice').textContent = `${App.num(last.close)}원`;
+    $('candleDelta').textContent = `${App.signed(last.change)} (${App.signed(last.change_rate, 2)}%)`;
+    $('candleDelta').className = App.signClass(last.change_rate);
+
+    if (!window.ApexCharts) {
+      $('chartCandle').innerHTML = '<p class="empty">차트 라이브러리를 불러오지 못했습니다.</p>';
+      return;
+    }
+
+    // ApexCharts 의 datetime 축은 UTC 로 라벨을 찍는다.
+    // 날짜가 하루 밀리지 않도록 UTC 자정 타임스탬프로 만든다.
+    const t = (iso) => Date.parse(`${iso}T00:00:00Z`);
+    const ohlc = data.candles.map((c) => ({ x: t(c.date), y: [c.open, c.high, c.low, c.close] }));
+    const vol = data.candles.map((c) => ({ x: t(c.date), y: c.volume,
+                                           fillColor: App.signColor(c.change_rate) }));
+    const maSeries = data.moving_averages
+      .filter((ma) => ma.values.some((v) => v != null))
+      .map((ma) => ({
+        name: `MA${ma.period}`, type: 'line',
+        data: data.candles.map((c, i) => ({ x: t(c.date), y: ma.values[i] })),
+      }));
+
+    App.draw(charts, 'chartCandle', {
+      chart: {
+        id: 'candle', type: 'candlestick', height: 420,
+        toolbar: { autoSelected: 'pan', show: true },
+        zoom: { enabled: true },
+        animations: { enabled: false },
+      },
+      series: [{ name: '주가', type: 'candlestick', data: ohlc }, ...maSeries],
+      // TradingView 처럼 십자선을 따라 값이 보이게 한다
+      tooltip: { shared: true, custom: undefined, x: { format: 'yyyy-MM-dd' } },
+      xaxis: { type: 'datetime', crosshairs: { show: true, stroke: { dashArray: 3 } } },
+      yaxis: { tooltip: { enabled: true }, labels: { formatter: (v) => App.num(Math.round(v)) },
+               crosshairs: { show: true } },
+      stroke: { width: [1, 1.4, 1.4, 1.4] },
+      colors: [undefined, '#f59e0b', '#8b5cf6', '#0ea5e9'],
+      plotOptions: { candlestick: { colors: { upward: App.color('up'), downward: App.color('down') } } },
+      legend: { show: true, position: 'top' },
+    });
+
+    App.draw(charts, 'chartVolume', {
+      chart: {
+        id: 'volume', type: 'bar', height: 150, brush: { enabled: true, target: 'candle' },
+        selection: {
+          enabled: true,
+          // 처음에는 최근 절반 구간을 선택해 둔다
+          xaxis: { min: ohlc[Math.floor(ohlc.length / 2)]?.x, max: ohlc[ohlc.length - 1]?.x },
+        },
+        toolbar: { show: false }, animations: { enabled: false },
+      },
+      series: [{ name: '거래량', data: vol }],
+      xaxis: { type: 'datetime' },
+      yaxis: { labels: { formatter: (v) => `${App.num(Math.round(v / 10000))}만` }, tickAmount: 2 },
+      dataLabels: { enabled: false },
+      legend: { show: false },
+    });
+  }
+
+  // ==================================================
+  // 6. 이벤트
+  // ==================================================
+  $('reload').addEventListener('click', () => { state.page = 1; load(); });
+  $('date').addEventListener('change', (e) => { state.bas_dd = e.target.value; state.page = 1; load(); });
+  $('market').addEventListener('change', (e) => { state.market = e.target.value; state.page = 1; load(); });
+  $('sort').addEventListener('change', (e) => { state.sort = e.target.value; state.page = 1; load(); });
+  $('order').addEventListener('change', (e) => { state.order = e.target.value; state.page = 1; load(); });
+  // 검색은 타이핑이 멈춘 뒤 한 번만 호출한다 (글자마다 요청하지 않도록)
+  $('q').addEventListener('input', App.debounce((e) => { state.q = e.target.value; state.page = 1; load(); }, 300));
+
+  $('prev').addEventListener('click', () => { if (state.page > 1) { state.page--; load(); } });
+  $('next').addEventListener('click', () => { if (state.page < state.totalPages) { state.page++; load(); } });
+
+  // 표의 행을 클릭하면 그 종목의 캔들을 연다 (행마다 리스너를 달지 않고 위임 처리)
+  $('tbody').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-code]');
+    if (tr) openCandle(tr.dataset.code);
+  });
+
+  $('rangeBar').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-days]');
+    if (!btn) return;
+    state.days = Number(btn.dataset.days);
+    openCandle(state.code);
+  });
+
+  $('closeCandle').addEventListener('click', () => { $('candleCard').hidden = true; state.code = null; });
+
+  init();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>퀀트 분석 — My FastAPI Backend</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A7%AE%3C/text%3E%3C/svg%3E" />
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts@4/dist/apexcharts.min.js"></script>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <header class="page-head">
+    <div>
+      <h1>🧮 퀀트 분석</h1>
+      <p>캐시에 쌓인 <b>실제 KRX 일별 시세</b>로 스크리닝·포트폴리오·팩터를 계산한다.</p>
+    </div>
+    <nav class="nav" id="nav"></nav>
+  </header>
+
+  <div class="badges" id="badges"></div>
+
+  <!-- ── 1. 스크리닝 깔때기 ───────────────────── -->
+  <section class="card">
+    <h2>① 종목 스크리닝 깔때기</h2>
+    <p class="hint">
+      조건을 단계별로 걸어 후보를 좁힌다. KRX 일별매매정보에는 <b>재무제표가 없어서</b>
+      PER·PBR·ROE 대신 시가총액·거래대금·변동성·모멘텀·이동평균을 쓴다.
+    </p>
+    <div class="controls" style="margin-bottom:12px">
+      <label>관측 기간
+        <select id="funnelWindow">
+          <option value="20">20거래일 (1개월)</option>
+          <option value="60" selected>60거래일 (3개월)</option>
+          <option value="120">120거래일 (6개월)</option>
+          <option value="250">250거래일 (1년)</option>
+        </select>
+      </label>
+      <span class="status" id="funnelStatus"></span>
+    </div>
+    <div id="chartFunnel" class="chart"></div>
+    <h2 style="margin-top:16px">최종 편입 종목</h2>
+    <p class="hint">종합점수 = 모멘텀·안정성(변동성 역순)·유동성 백분위의 평균.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>#</th><th>종목코드</th><th>종목명</th><th>시장</th>
+          <th class="num">종가</th><th class="num">종합점수</th>
+          <th class="num">모멘텀</th><th class="num">변동성</th>
+          <th class="num">평균 거래대금</th><th class="num">시가총액</th>
+        </tr></thead>
+        <tbody id="funnelBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── 2. 효율적 투자선 ───────────────────── -->
+  <section class="card">
+    <h2>② 효율적 투자선 (몬테카를로)</h2>
+    <p class="hint">
+      무작위 비중 포트폴리오를 뿌려 위험–수익 평면을 그린다.
+      기대수익률·변동성·상관계수는 <b>실제 종가</b>에서 계산하고, 난수는 비중 추첨에만 쓴다.
+    </p>
+    <div class="controls" style="margin-bottom:12px">
+      <label>구성 종목 (쉼표로 구분한 종목코드)
+        <input id="frontierCodes" type="text" value="005930,000660,005380,035420,035720" style="min-width:280px" />
+      </label>
+      <label>표본 수
+        <select id="frontierSamples">
+          <option value="500">500</option>
+          <option value="1200" selected>1,200</option>
+          <option value="3000">3,000</option>
+        </select>
+      </label>
+      <label>관측 기간
+        <select id="frontierWindow">
+          <option value="120">120거래일</option>
+          <option value="250" selected>250거래일 (1년)</option>
+        </select>
+      </label>
+      <button id="frontierRun">계산</button>
+      <span class="status" id="frontierStatus"></span>
+    </div>
+    <div id="chartFrontier" class="chart"></div>
+    <div class="table-scroll" style="margin-top:12px">
+      <table>
+        <thead><tr>
+          <th>종목</th><th class="num">연 기대수익률</th><th class="num">연 변동성</th>
+        </tr></thead>
+        <tbody id="assetBody"></tbody>
+      </table>
+    </div>
+    <p class="hint" id="frontierNote" style="margin-top:12px"></p>
+  </section>
+
+  <!-- ── 3. 팩터 방사형 ───────────────────── -->
+  <section class="card">
+    <h2>③ 팩터 점수 (방사형)</h2>
+    <p class="hint">
+      각 점수는 <b>전 종목 대비 백분위(0~100)</b>다. 유동성 98 이면 거래대금이 상위 2% 라는 뜻이다.
+      가치·성장·수익성 같은 재무 팩터는 이 API 로 계산할 수 없어 가격·거래량 팩터로 대체했다.
+    </p>
+    <div class="controls" style="margin-bottom:12px">
+      <label>비교 종목 (쉼표로 구분)
+        <input id="radarCodes" type="text" value="005930,000660,035720" style="min-width:240px" />
+      </label>
+      <label>관측 기간
+        <select id="radarWindow">
+          <option value="20">20거래일</option>
+          <option value="60" selected>60거래일</option>
+          <option value="120">120거래일</option>
+        </select>
+      </label>
+      <button id="radarRun">비교</button>
+      <span class="status" id="radarStatus"></span>
+    </div>
+    <div class="grid-2">
+      <div id="chartRadar" class="chart"></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>종목</th><th class="num">종합</th><th class="num">모멘텀</th><th class="num">변동성</th><th class="num">회전율</th><th>20일선</th></tr></thead>
+          <tbody id="radarBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const charts = {};
+
+  App.renderNav('quant');
+
+  // ==================================================
+  // 공통 — 캐시 상태 배지
+  // ==================================================
+  async function loadBadges() {
+    try {
+      const s = await App.get('/api/krx/status');
+      const c = s.cache;
+      $('badges').innerHTML = `
+        <span class="badge ok">📊 실데이터 (KRX OpenAPI)<em>목업 아님 · krx_cache.db</em></span>
+        <span class="badge">💾 ${App.isoDate(c.first_date)} ~ ${App.isoDate(c.last_date)}
+          <em>${c.days}거래일 · 종목 ${App.num(c.codes)} · ${App.num(c.rows)}행</em></span>`;
+    } catch (error) {
+      $('badges').innerHTML = `<span class="badge warn">상태 조회 실패<em>${error.message}</em></span>`;
+    }
+  }
+
+  // ==================================================
+  // ① 스크리닝 깔때기
+  // ==================================================
+  async function loadFunnel() {
+    $('funnelStatus').textContent = '계산 중…';
+    let data;
+    try {
+      data = await App.get(`/api/screening/funnel?window=${$('funnelWindow').value}`);
+    } catch (error) {
+      $('funnelStatus').textContent = error.message;
+      return;
+    }
+    $('funnelStatus').textContent = `${data.as_of} 기준 · ${App.num(data.total)}종목에서 ${data.selected}종목`;
+
+    // 깔때기는 가로 막대로 그린다. 아래로 갈수록 짧아지는 모습이 곧 "좁혀지는 과정"이다.
+    App.draw(charts, 'chartFunnel', {
+      chart: { type: 'bar', height: 420, toolbar: { show: false } },
+      series: [{ name: '잔존 종목 수', data: data.steps.map((s) => s.count) }],
+      xaxis: { categories: data.steps.map((s) => `${s.step}. ${s.name}`) },
+      plotOptions: { bar: { horizontal: true, barHeight: '65%', distributed: true } },
+      // 단계가 진행될수록 색이 진해지도록 투명도를 조절한다
+      colors: data.steps.map((_, i) => App.color('accent')),
+      fill: { opacity: data.steps.map((_, i) => 0.35 + 0.65 * (i / (data.steps.length - 1))) },
+      legend: { show: false },
+      dataLabels: {
+        enabled: true,
+        formatter: (v, o) => {
+          const s = data.steps[o.dataPointIndex];
+          return `${App.num(v)}종목 (통과율 ${s.pass_rate}%)`;
+        },
+      },
+      tooltip: { y: { formatter: (v, o) => {
+        const s = data.steps[o.dataPointIndex];
+        return `${App.num(v)}종목 · 조건: ${s.criteria} · 탈락 ${App.num(s.dropped)}`;
+      } } },
+    });
+
+    $('funnelBody').innerHTML = data.picks.map((p, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td class="mono">${p.code}</td>
+        <td>${p.name}</td>
+        <td><span class="chip">${p.market}</span></td>
+        <td class="num mono">${App.num(p.close)}</td>
+        <td class="num mono"><b>${p.score}</b></td>
+        <td class="num mono ${App.signClass(p.momentum)}">${App.signed(p.momentum, 2)}%</td>
+        <td class="num mono">${App.num(p.volatility, 1)}%</td>
+        <td class="num mono">${App.won(p.avg_value)}</td>
+        <td class="num mono">${App.won(p.market_cap)}</td>
+      </tr>`).join('') || '<tr><td colspan="10" class="empty">통과 종목이 없습니다.</td></tr>';
+  }
+
+  // ==================================================
+  // ② 효율적 투자선
+  // ==================================================
+  async function loadFrontier() {
+    $('frontierStatus').textContent = '시뮬레이션 중…';
+    const codes = $('frontierCodes').value.split(',').map((c) => c.trim()).filter(Boolean);
+    const params = new URLSearchParams({
+      samples: $('frontierSamples').value, window: $('frontierWindow').value,
+    });
+    codes.forEach((c) => params.append('codes', c));   // 같은 이름을 반복해 배열로 보낸다
+
+    let data;
+    try {
+      data = await App.get(`/api/portfolio/frontier?${params}`);
+    } catch (error) {
+      $('frontierStatus').textContent = error.message;
+      return;
+    }
+    $('frontierStatus').textContent =
+      `${App.num(data.samples)}개 포트폴리오 · 일간 수익률 ${data.observations}개 사용`;
+
+    const pct = (v) => Number((v * 100).toFixed(2));
+
+    App.draw(charts, 'chartFrontier', {
+      chart: { type: 'scatter', height: 460, zoom: { enabled: true, type: 'xy' },
+               toolbar: { show: true }, animations: { enabled: false } },
+      series: [
+        { name: '무작위 포트폴리오',
+          data: data.portfolios.map((p) => ({ x: pct(p.volatility), y: pct(p['return']) })) },
+        { name: '효율적 투자선',
+          type: 'line',
+          data: data.frontier.map((p) => ({ x: pct(p.volatility), y: pct(p['return']) })) },
+        { name: '최대 샤프',
+          data: [{ x: pct(data.max_sharpe.volatility), y: pct(data.max_sharpe['return']) }] },
+        { name: '최소 분산',
+          data: [{ x: pct(data.min_variance.volatility), y: pct(data.min_variance['return']) }] },
+      ],
+      colors: [App.color('muted'), App.color('accent'), App.color('up'), App.color('down')],
+      markers: { size: [3, 0, 11, 11], strokeWidth: 0 },
+      stroke: { width: [0, 3, 0, 0], curve: 'smooth' },
+      xaxis: { title: { text: '연 변동성 (위험, %)' }, tickAmount: 8,
+               labels: { formatter: (v) => Number(v).toFixed(0) } },
+      yaxis: { title: { text: '연 기대수익률 (%)' },
+               labels: { formatter: (v) => Number(v).toFixed(0) } },
+      legend: { position: 'top' },
+      tooltip: { shared: false, intersect: true,
+                 y: { formatter: (v) => `${v}%` }, x: { formatter: (v) => `변동성 ${v}%` } },
+    });
+
+    $('assetBody').innerHTML = data.assets.map((a) => `
+      <tr>
+        <td>${a.name} <span class="mono muted">${a.code}</span></td>
+        <td class="num mono ${App.signClass(a.expected_return)}">${App.signed(a.expected_return * 100, 2)}%</td>
+        <td class="num mono">${App.num(a.volatility * 100, 2)}%</td>
+      </tr>`).join('');
+
+    $('frontierNote').innerHTML =
+      `무위험수익률 ${(data.risk_free_rate * 100).toFixed(1)}% (상수 — KRX API 미제공) · 기준일 ${data.as_of}<br>
+       ⚠️ 기대수익률은 <b>과거 ${data.window}거래일 실적을 단순 연율화</b>한 값이다.
+       상승장 구간을 담으면 비현실적으로 커질 수 있으며, 미래 수익률 예측이 아니다.`;
+  }
+
+  // ==================================================
+  // ③ 팩터 방사형
+  // ==================================================
+  async function loadRadar() {
+    $('radarStatus').textContent = '계산 중…';
+    const codes = $('radarCodes').value.split(',').map((c) => c.trim()).filter(Boolean);
+    const params = new URLSearchParams({ window: $('radarWindow').value });
+    codes.forEach((c) => params.append('codes', c));
+
+    let data;
+    try {
+      data = await App.get(`/api/factors/radar?${params}`);
+    } catch (error) {
+      $('radarStatus').textContent = error.message;
+      return;
+    }
+    $('radarStatus').textContent = data.note || '';
+
+    App.draw(charts, 'chartRadar', {
+      chart: { type: 'radar', height: 420, toolbar: { show: false } },
+      series: data.stocks.map((s) => ({ name: s.name || s.code, data: s.scores })),
+      xaxis: { categories: data.factors },
+      yaxis: { min: 0, max: data.max_score, tickAmount: 4 },
+      markers: { size: 3 },
+      fill: { opacity: 0.15 },
+      stroke: { width: 2 },
+      legend: { position: 'top' },
+      tooltip: { y: { formatter: (v) => `${v}점 (상위 ${(100 - v).toFixed(0)}%)` } },
+    });
+
+    $('radarBody').innerHTML = data.stocks.map((s) => `
+      <tr>
+        <td>${s.name} <span class="mono muted">${s.code}</span></td>
+        <td class="num mono"><b>${s.total}</b></td>
+        <td class="num mono ${App.signClass(s.raw.momentum)}">${App.signed(s.raw.momentum, 2)}%</td>
+        <td class="num mono">${App.num(s.raw.volatility, 1)}%</td>
+        <td class="num mono">${App.num(s.raw.turnover, 2)}%</td>
+        <td>${s.raw.above_ma20 ? '<span class="up">위</span>' : '<span class="down">아래</span>'}</td>
+      </tr>`).join('') || '<tr><td colspan="6" class="empty">데이터가 없습니다.</td></tr>';
+  }
+
+  // ==================================================
+  // 이벤트 · 초기 실행
+  // ==================================================
+  $('funnelWindow').addEventListener('change', loadFunnel);
+  $('frontierRun').addEventListener('click', loadFrontier);
+  $('radarRun').addEventListener('click', loadRadar);
+
+  loadBadges();
+  loadFunnel();
+  loadFrontier();
+  loadRadar();
+})();
+</script>
+</body>
+</html>

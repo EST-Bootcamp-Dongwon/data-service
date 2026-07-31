@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv-test/bin/python -c ' *)",
+      "Bash(awk '{print $5, $9}')",
+      "Bash(curl -sf http://127.0.0.1:8099/health)",
+      "Bash(curl -s __TRACKED_VAR__/api/krx/status)",
+      "Bash(curl -s -o /dev/null -w \"health: %{http_code}\\\\n\" http://127.0.0.1:8099/health)",
+      "Bash(git submodule *)",
+      "Bash(git -C lecture diff --ignore-all-space --stat)",
+      "Bash(git -C lecture checkout -- .)",
+      "Bash(curl -s -o /dev/null -w \"8099 health: %{http_code}\\\\n\" http://127.0.0.1:8099/health)",
+      "Bash(netstat -ltnp)",
+      "Bash(git add *)",
+      "Bash(grep -iE \"\\\\.key$|\\\\.env|\\\\.db$|\\\\.pdf$|\\\\.zip$\")"
+    ]
+  }
+}
