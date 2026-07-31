@@ -6,10 +6,10 @@
 | 항목 | 내용 |
 |------|------|
 | 프레임워크 | FastAPI 0.141 + Uvicorn 0.52 |
-| 데이터 출처 | **KRX OpenAPI** (유가증권·코스닥 일별매매정보) · **KOSIS OpenAPI** · **야후 파이낸스** |
+| 데이터 출처 | **KRX OpenAPI** (유가증권·코스닥 일별매매정보) · **KOSIS OpenAPI** · **야후 파이낸스** · **FRED** (미국 거시지표) |
 | 시세 저장소 | SQLite (`data/krx_cache.db`) — 약 232거래일 · 64만 행 · 96MB |
 | 사용자 저장소 | 메모리 리스트 (`app/repositories/user_store.py`) — **서버 재시작 시 초기화** |
-| 외부 라이브러리 | KRX·KOSIS·DB는 표준 라이브러리만. **야후 파이낸스 화면·스크립트만** `yfinance` · `matplotlib` |
+| 외부 라이브러리 | KRX·KOSIS·FRED·DB는 표준 라이브러리만. **주가 화면·스크립트만** `yfinance` · `matplotlib` |
 
 > ⚠️ 목업이 아니다. 화면에 보이는 시세·거래대금·시가총액은 전부 KRX가 준 실제 값이다.
 
@@ -53,20 +53,24 @@ api-test/
 │   │   ├── krx_router.py       KRX 시세 API   (/api/krx/...)
 │   │   ├── kosis_router.py     KOSIS 통계 API (/api/kosis/...)
 │   │   ├── yf_router.py        야후 시세 API  (/api/yf/...)
+│   │   ├── stock_router.py     종목 통합 조회 (/api/stock/...)
+│   │   ├── fred_router.py      FRED 거시지표  (/api/fred/...)
 │   │   ├── market_router.py    분석 API       (/api/...)
 │   │   └── page_router.py      화면(HTML) 라우트
 │   ├── services/           ← 서비스   : 비즈니스 로직
-│   │   └── market_data.py      스크리닝 · 투자선 · 팩터
+│   │   ├── market_data.py      스크리닝 · 투자선 · 팩터
+│   │   └── stock_service.py    티커 판별(국내/미국) · 주가+거시지표 융합
 │   ├── repositories/       ← 저장소   : 저장 · 조회
 │   │   ├── krx_store.py        KRX 시세 (SQLite)
 │   │   └── user_store.py       실습용 사용자 30명 (메모리 리스트)
 │   ├── clients/            ← 외부 연동 : 외부 API 호출 · 응답 정규화
 │   │   ├── krx_data.py         KRX OpenAPI
 │   │   ├── kosis_data.py       KOSIS OpenAPI + 차트용 변환
-│   │   └── yf_data.py          야후 파이낸스(yfinance) + 차트용 변환
+│   │   ├── yf_data.py          야후 파이낸스(yfinance) + 차트용 변환
+│   │   └── fred_data.py        FRED 미국 거시지표 + 날짜 정렬·상관계수
 │   └── core/               ← 공통 유틸 : 거래일 · KST · 인증키 · 문서
 │       ├── trading_calendar.py
-│       ├── secrets.py          KRX·KOSIS 인증키 로딩
+│       ├── secrets.py          KRX·KOSIS·FRED 인증키 로딩
 │       └── api_docs.py         Swagger(/docs) 설명 글
 ├── scripts/
 │   ├── fetch_krx.py        KRX 캐시를 채우는 CLI 수집 스크립트
@@ -74,7 +78,7 @@ api-test/
 │   └── kosis_rss.py        KOSIS 공지 크롤러 → RSS 2.0 변환
 ├── test.sh                 KOSIS 공지 범위 수집 실행 스크립트
 ├── static/
-│   ├── pages/              화면 7종 (index · kosis · krx · yf · quant · users · tetris)
+│   ├── pages/              화면 8종 (index · stock · kosis · krx · yf · quant · users · tetris)
 │   └── assets/             공통 app.css · app.js
 ├── data/
 │   ├── krx_cache.db        시세 캐시 (.gitignore 대상)
@@ -109,6 +113,26 @@ static/pages/*.html                  static/pages/kosis.html      static/pages/ 
 > `scripts/yf.py` 는 서버를 거치지 않고 **클라이언트 계층을 직접 호출**한다. 화면과 스크립트가 같은
 > `app/clients/yf_data.py` 를 쓰므로, 브라우저 차트와 터미널 차트의 값·Y축 눈금이 항상 일치한다.
 
+`/stock` 화면만 **서비스 계층에서 세 갈래를 합친다.** 티커를 판별하려면 KRX 캐시가 필요하고,
+거시지표를 겹치려면 FRED 가 필요하기 때문이다. 계층 방향은 그대로 지킨다(아래→위 import 없음).
+
+```
+야후 파이낸스              KRX 캐시(SQLite)              FRED
+    ↓ yfinance                 ↓ 시장구분·한글명            ↓ HTTP (api_key 쿼리)
+app/clients/yf_data.py    app/repositories/          app/clients/fred_data.py   ← 외부 연동·저장소
+                            krx_store.py               날짜 정렬 · 상관계수
+    └───────────────┬───────────┴──────────────┬──────────┘
+                    ↓                          ↓
+            app/services/stock_service.py                                       ← 서비스
+              ① 티커 판별  005930 → .KS / .KQ,  삼성전자 → 005930,  AAPL → 그대로
+              ② 시세 조회  야후 우선, 실패하면 KRX 캐시로 대체
+              ③ 지표 융합  주가 거래일에 맞춰 정렬 → 100 기준 환산 → 상관계수
+                    ↓
+            app/routers/stock_router.py   GET /api/stock/{ticker}                ← 컨트롤러
+                    ↓
+            static/pages/stock.html                                              ← 화면
+```
+
 > KOSIS는 **캐시를 두지 않는다.** 매번 다른 통계표를 실험하는 화면이라 미리 쌓아 둘 대상이
 > 정해지지 않기 때문이다. 반대로 KRX는 전 종목 시세라 대상이 고정되어 캐시가 이득이다.
 
@@ -118,9 +142,14 @@ static/pages/*.html                  static/pages/kosis.html      static/pages/ 
 | `app/clients/kosis_data.py` | 419 | KOSIS 호출·재시도, 평평한 응답 → 차트용 `series`/`categories` 변환 |
 | `app/routers/kosis_router.py` | 227 | KOSIS 실험 3단계의 DTO 와 엔드포인트 |
 | `app/clients/yf_data.py` | 274 | yfinance 호출, 가격 5종 정규화·Y축 범위 계산, 60초 메모리 캐시 |
+| `static/pages/stock.html` | 714 | 종목 통합 조회 화면 — 검색·차트·거시지표 오버레이·상관계수 |
+| `app/services/stock_service.py` | 444 | **티커 판별**(국내/미국) · 시세 조회 대체 경로 · 거시지표 융합 |
+| `app/clients/fred_data.py` | 398 | FRED 호출, 결측치 처리, 주가 날짜 정렬(계단식 보간), 상관계수 |
+| `app/routers/stock_router.py` | 168 | 종목 통합 조회 API 의 DTO 와 엔드포인트 |
+| `app/routers/fred_router.py` | 145 | FRED 거시지표 API 의 DTO 와 엔드포인트 |
 | `app/routers/yf_router.py` | 159 | 야후 시세 API 의 DTO 와 엔드포인트 |
 | `scripts/yf.py` | 202 | 야후 가격 지표를 matplotlib 막대+꺾은선으로 그리는 CLI 스크립트 |
-| `app/core/secrets.py` | 85 | KRX·KOSIS 인증키 로딩 (환경변수 → `.env` → `.key`) |
+| `app/core/secrets.py` | 85 | KRX·KOSIS·FRED 인증키 로딩 (환경변수 → `.env` → `.key`) |
 | `app/repositories/krx_store.py` | 349 | `data/krx_cache.db` 스키마·수집·조회. 병렬 수집과 쓰기 직렬화 |
 | `app/services/market_data.py` | 532 | 종목 지표 계산 → 스크리닝 깔때기 · 효율적 투자선 · 팩터 점수 |
 | `app/routers/market_router.py` | 316 | 분석 API 의 DTO 와 엔드포인트 |
@@ -132,7 +161,7 @@ static/pages/*.html                  static/pages/kosis.html      static/pages/ 
 | `app/repositories/user_store.py` | 67 | 실습용 사용자 30명을 메모리 리스트로 보관 |
 | `app/routers/page_router.py` | 67 | 화면(HTML) 라우트. 라이브러리가 없는 화면은 빼고 등록 |
 | `app/core/api_docs.py` | 113 | Swagger 태그 설명·API 개요 (동작에는 영향 없음) |
-| `main.py` | 131 | **앱 조립만** — 라우터 등록 · 정적 서빙 · CORS · `/health` |
+| `main.py` | 135 | **앱 조립만** — 라우터 등록 · 정적 서빙 · CORS · `/health` |
 
 > 루트에는 `main.py` 만 둔다. 강의에서 쓰는 `uvicorn main:app` 명령을 그대로 쓰기 위해서이고,
 > 나머지 실행 스크립트는 전부 `scripts/` 안에 있다. `main.py` 는 **앱을 조립하기만** 하고
@@ -149,8 +178,9 @@ source .venv/bin/activate            # Windows PowerShell: .venv\Scripts\Activat
 pip install -r requirements.txt      # 또는: pip install fastapi uvicorn yfinance matplotlib
 ```
 
-> `yfinance` · `matplotlib` 은 **야후 파이낸스 화면(`/yf`)과 스크립트(`scripts/yf.py`) 전용**이다.
+> `yfinance` · `matplotlib` 은 **주가 화면(`/stock` · `/yf`)과 스크립트(`scripts/yf.py`) 전용**이다.
 > 이 둘을 안 쓸 거면 `fastapi uvicorn` 만 있어도 나머지 화면은 전부 동작한다.
+> **FRED 거시지표는 새 라이브러리가 필요 없다** — 표준 라이브러리 `urllib` 로 직접 호출한다.
 
 > 우분투에서 `ensurepip is not available` 오류가 나면 `sudo apt install -y python3.12-venv` 를 먼저 설치한다.
 > `externally-managed-environment` 오류는 **가상환경 활성화를 안 한 것**이 원인이다.
@@ -196,6 +226,23 @@ export KOSIS_API_KEY='발급받은_인증키'   # 환경변수로 주는 방법
 
 두 키의 로딩 규칙은 `app/core/secrets.py` 한 곳에 모여 있다.
 KRX 키만 강의 원본 호환을 위해 **값만 한 줄** 적는 형식도 계속 지원한다.
+
+### FRED 인증키 설정
+
+미국 거시지표(`/stock` 화면의 겹쳐 보기, `/api/fred/...`)에 쓴다.
+[fredaccount.stlouisfed.org/apikeys](https://fredaccount.stlouisfed.org/apikeys) 에서 **무료로 즉시** 발급된다.
+
+```text
+# .key  — 키 세 개를 나란히 둘 수 있다
+KRX_API_KEY = 발급받은_KRX_인증키
+KOSIS_API_KEY = 발급받은_KOSIS_인증키
+FRED_API_KEY = 발급받은_FRED_인증키
+```
+
+- 키가 없으면 **`/api/fred/...` 만 `503`** 이고 나머지 화면·API 는 그대로 동작한다.
+  `/stock` 의 주가 조회도 FRED 키 없이 된다 (거시지표 겹쳐 보기만 안 된다).
+- 키가 제대로 읽혔는지는 `curl localhost:8000/api/fred/status` 로 확인한다.
+  **값은 절대 응답에 싣지 않고 길이와 출처만** 알려준다.
 
 ---
 
@@ -257,13 +304,14 @@ hostname -I            # 표시된 IP 로 http://서버_IP:8000/ 접속
 | 주소 | 파일 | 화면 |
 |------|------|------|
 | `/` | `static/pages/index.html` | **랜딩** — 화면 안내 · 서버/인증키/캐시 상태 |
+| `/stock` | `static/pages/stock.html` | **종목 통합 조회** — 국내·미국 주가 + FRED 거시지표 |
 | `/kosis` | `static/pages/kosis.html` | KOSIS 통계 실험실 |
 | `/krx` | `static/pages/krx.html` | KRX 일별 시세 |
 | `/yf` | `static/pages/yf.html` | 야후 파이낸스 시세 |
 | `/quant` | `static/pages/quant.html` | 퀀트 분석 |
 | `/users` | `static/pages/users.html` | 사용자 API 테스트 (CRUD) |
 | `/tetris` | `static/pages/tetris.html` | Canvas 테트리스 |
-| — | `static/assets/app.css` · `app.js` | 7개 화면 공통 스타일·유틸 |
+| — | `static/assets/app.css` · `app.js` | 8개 화면 공통 스타일·유틸 |
 
 > 화면 목록은 `static/assets/app.js` 의 `PAGES` 배열 **한 곳**에만 있다.
 > 새 화면을 추가하면 여기 한 줄만 넣으면 모든 화면의 내비게이션에 반영된다.
@@ -329,6 +377,51 @@ GET /search        itmId 는 메타에서 선택         + 데이터 표 + 원�
 - 상승 = **빨강**, 하락 = **파랑** (국내 증시 관행, 미국과 반대)
 - 검색어는 차트에도 반영된다 — 표와 차트가 같은 모집단을 본다
 - 날짜 선택 박스에는 **실제 데이터가 있는 거래일만** 담아, 휴장일을 골라 빈 화면을 보는 일이 없다
+
+### `/stock` — 종목 통합 조회 (국내·미국 + FRED) ★
+
+**엔드포인트 하나로 한국 주식과 미국 주식을 모두** 조회하고, 미국 거시지표를 같은 차트에 겹쳐 보는 화면.
+
+| 구성 | 내용 |
+|------|------|
+| 검색 | 종목코드(`005930`) · **한글 종목명**(`삼성전자`) · 미국 티커(`AAPL`) · 야후 티커(`005930.KS`) |
+| 기간 | 1개월 · 3개월 · **6개월**(기본) · 1년 |
+| 요약 | 종목명 · 시장 배지(🇰🇷/🇺🇸) · 현재가 · 전일 대비 · **데이터 출처** |
+| 요약 타일 | 구간 수익률 · 구간 최저/최고 종가 · 최근 거래량 · 거래일 수 · 52주 범위 |
+| 차트 ① | **일별 종가** 꺾은선 + 이동평균 5·20·60일 |
+| 차트 ② | **거래량** 막대 (상승일 빨강 · 하락일 파랑) |
+| 거시지표 | FRED 12종을 칩으로 켜고 끈다. 켜면 **시작 100 기준**으로 같은 그림에 얹힌다 |
+| 상관계수 | 주가와 각 지표의 **일간 변화율 상관계수** + 말로 푼 해석 |
+| 지표 검색 | FRED 80만 시리즈를 이름으로 검색해 차트에 바로 추가 |
+
+**티커 판별이 이 화면의 핵심이다.**
+
+- 야후에서 국내 종목은 코스피 `.KS` · 코스닥 `.KQ` 로 접미사가 갈리는데,
+  **접미사를 잘못 붙여도 야후는 오류를 내지 않고 엉뚱한 값을 준다.**
+  실제로 코스닥 종목 `247540`(에코프로비엠)을 `.KS` 로 물으면 하루 묵은 96,500원이,
+  `.KQ` 로 물으면 당일 103,500원이 온다. **사용자는 틀린 줄도 모른다.**
+- 그래서 `data/krx_cache.db` 에 쌓인 **시장 구분을 보고** 접미사를 정한다.
+  덤으로 한글 종목명 검색과 한글 이름 표시도 여기서 나온다.
+  (캐시가 비어 있으면 두 접미사를 모두 조회해 **최신 데이터가 있는 쪽**을 고른다.)
+- 야후 조회가 실패하면 국내 종목은 **KRX 캐시로 되돌아가** 차트를 그린다.
+  이때는 요약줄에 `출처: KRX 캐시` 라고 밝힌다.
+
+**거시지표를 겹칠 때 지킨 것 두 가지.**
+
+- 발표 주기가 다르다(금리는 일별, 물가·실업률은 월별). 주가 거래일에 맞추려고
+  **직전 발표치를 다음 발표 전까지 이어 쓴다**(계단식 보간).
+  뒤의 값을 끌어오면 **아직 발표되지 않은 값**을 쓰는 셈이라 미래 정보가 새어 들기 때문에,
+  항상 과거 방향으로만 채운다.
+- 금리 4.67% 와 주가 262,500원은 자릿수가 달라 그대로는 겹칠 수 없다.
+  둘 다 **시작을 100 으로 맞춰**(rebase) 같은 눈금에서 비교한다.
+- 상관계수는 가격 수준이 아니라 **일간 변화율**로 계산한다.
+  수준끼리 비교하면 둘 다 우상향한다는 이유만으로 상관이 높게 나오기 때문이다(허위 상관).
+
+화면 상태는 주소에 담기므로 **지금 보는 화면을 그대로 링크로 넘길 수 있다.**
+
+```text
+/stock?ticker=AAPL&months=3&macro=DGS10,VIXCLS
+```
 
 ### `/yf` — 야후 파이낸스 시세 ★
 
@@ -461,6 +554,41 @@ HTML5 `<canvas>` 2D 컨텍스트만으로 만든 게임. 외부 라이브러리 
 `quote` 응답의 `chart` 는 `categories`(한국어) · `categories_en`(영어) · `values` · `y_min` · `y_max` 로,
 ApexCharts(화면)와 matplotlib(`scripts/yf.py`)이 **같은 그림**을 그릴 수 있는 형태다.
 
+### 종목 통합 조회 — `/api/stock/...` ★
+
+| Method | Path | 설명 | 성공 |
+|--------|------|------|------|
+| GET | `/api/stock/samples` | 예시 종목 목록 (국내는 거래대금 상위) | 200 |
+| GET | `/api/stock/{ticker}` | **국내·미국 통합** 일별 종가 (기본 6개월) | 200 |
+| GET | `/api/stock/{ticker}?months=3` | 기간 지정 — `1` · `3` · `6` · `12` | 200 |
+| GET | `/api/stock/{ticker}?macro=DGS10,DEXKOUS` | FRED 거시지표를 주가 날짜에 맞춰 함께 반환 | 200 |
+
+`{ticker}` 는 **종목코드(`005930`) · 한글 종목명(`삼성전자`) · 미국 티커(`AAPL`) · 야후 티커(`005930.KS`)** 를 모두 받는다.
+응답의 `dates` · `prices` 두 배열이 차트에 그대로 들어가고, `moving_averages` 에 5·20·60일 이동평균이 함께 온다.
+
+- 알 수 없는 종목은 `404` — **"알 수 없는 종목입니다"** 로 시작하는 안내 문구를 준다.
+- 허용하지 않는 `months` 는 `422`, 야후 응답 실패는 `502`.
+- `macro` 로 넘긴 지표 중 **일부만 실패해도 주가 응답은 살린다.**
+  실패한 지표는 `macro[].ok = false` 와 `error` 로 표시된다 (화면 일부가 비는 편이 전체 실패보다 낫다).
+
+### FRED 거시지표 — `/api/fred/...`
+
+| Method | Path | 설명 | 성공 |
+|--------|------|------|------|
+| GET | `/api/fred/indicators` | 주가와 겹쳐 보기 좋은 **큐레이션 12종** | 200 |
+| GET | `/api/fred/series/{series_id}` | 지표 시계열 (`?start=`·`?end=` 로 구간 지정) | 200 |
+| GET | `/api/fred/search?q=unemployment` | FRED 80만 시리즈 이름 검색 (인기순) | 200 |
+| GET | `/api/fred/status` | 인증키 상태 진단 (**값은 노출하지 않는다**) | 200 |
+
+큐레이션 12종: 미 국채 10년·2년 금리, 장단기 금리차, 연방기금금리, VIX,
+**원/달러 환율**, 달러 지수, S&P 500, 나스닥, 기대 인플레이션, 미국 CPI, 미국 실업률.
+
+- 인증키가 없으면 `503` (다른 기능은 영향 없음).
+- 없는 시리즈 ID 는 `404`, ID 형식이 FRED 규칙에 안 맞으면 `422`, 그 밖의 실패는 `502`.
+  FRED 는 이 셋을 **전부 HTTP 400** 으로 주기 때문에, `app/clients/fred_data.py` 가
+  응답 본문의 `error_message` 를 보고 갈라 준다.
+- 결측치(FRED 가 `"."` 로 주는 미발표·휴장 구간)는 빼고 내려주므로 차트에 구멍이 나지 않는다.
+
 ### 시장 분석 — `/api/...`
 
 | Method | Path | 설명 | 성공 |
@@ -525,6 +653,20 @@ ApexCharts(화면)와 matplotlib(`scripts/yf.py`)이 **같은 그림**을 그릴
 ## 10. 동작 확인 예시
 
 ```bash
+# 0) 종목 통합 조회 — 입력이 무엇이든 알아서 판별한다
+curl "http://127.0.0.1:8000/api/stock/005930"                    # 국내 코스피 → 005930.KS
+curl "http://127.0.0.1:8000/api/stock/247540"                    # 국내 코스닥 → 247540.KQ (자동)
+curl -G http://127.0.0.1:8000/api/stock/삼성전자                  # 한글 종목명 → 005930.KS
+curl "http://127.0.0.1:8000/api/stock/AAPL?months=3"             # 미국 · 3개월
+curl "http://127.0.0.1:8000/api/stock/ZZZZ999"                   # → 404 "알 수 없는 종목입니다"
+
+# 0-1) FRED 거시지표 융합 · 단독 조회
+curl "http://127.0.0.1:8000/api/stock/005930?macro=DGS10,DEXKOUS"  # 주가+금리+환율+상관계수
+curl http://127.0.0.1:8000/api/fred/status                         # 인증키 상태 (값은 안 나온다)
+curl http://127.0.0.1:8000/api/fred/indicators                     # 큐레이션 12종
+curl "http://127.0.0.1:8000/api/fred/series/DGS10?start=2026-01-01"
+curl "http://127.0.0.1:8000/api/fred/search?q=unemployment&limit=5"
+
 # 1) 서버·인증키·캐시 상태
 curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:8000/api/krx/status
@@ -613,6 +755,15 @@ WSL과 Windows 호스트 간 네트워크가 분리돼 있을 수 있다.
 - **ApexCharts를 CDN에서 로드** — 오프라인이면 차트 자리에 안내 문구가 뜬다.
 - **지표 계산 최초 3.4초** — 전 종목 × 60거래일을 훑는다. 이후에는 캐싱되어 0.1초 미만이다.
 - **ETF·채권·선물옵션 미사용** — API 승인은 받았지만 이 저장소는 주식만 쓴다.
+- **`/yf` 화면은 6자리 코드에 `.KS` 를 고정으로 붙인다** — 코스닥 종목을 코드만으로 넣으면
+  엉뚱한 값이 나올 수 있다(야후가 오류 대신 다른 값을 준다). 이 화면에서는 `.KQ` 를 직접 붙여야 한다.
+  **`/stock` 화면은 KRX 시장 구분을 보고 접미사를 정하므로 이 문제가 없다.**
+- **종목명 검색은 KRX 캐시에 의존한다** — `python3 scripts/fetch_krx.py` 를 한 번도 안 돌렸으면
+  `삼성전자` 같은 한글 입력이 `404` 다. 종목코드·티커 입력은 캐시 없이도 동작한다.
+- **FRED 는 미국 지표만 있다** — 원/달러 환율(`DEXKOUS`)도 **미국 쪽 집계**라 한국 공휴일과
+  달력이 어긋나고, 발표가 하루이틀 늦다. 국내 종목에 겹칠 때는 이 시차를 감안해서 본다.
+- **월별 지표의 상관계수는 참고용** — CPI·실업률은 한 달간 값이 그대로여서 일간 변화율이
+  대부분 0 이 된다. 그래서 상관계수가 0 근처로 눌린다. 화면에도 그렇게 안내한다.
 
 ### 성능 메모
 
@@ -627,6 +778,12 @@ WSL과 Windows 호스트 간 네트워크가 분리돼 있을 수 있다.
 - **사용자도 DB로** — 시세는 이미 SQLite를 쓴다. `app/repositories/user_store.py` 를 같은 방식으로 옮기고 `Depends(get_db)` 로 주입
 - **자동 수집** — cron 또는 GitHub Actions로 장 마감 후 `scripts/fetch_krx.py --days 1` 실행
 - **ETF·지수 확장** — `etp/etf_bydd_trd` · `idx/kospi_dd_trd` 를 `MARKET_APIS` 에 추가하면 같은 구조로 붙는다
+- **`/yf` 화면도 통합 판별 쓰기** — `app/services/stock_service.py` 의 `resolve()` 를 `yf_data.normalize_ticker()`
+  대신 쓰면 `/yf` 의 코스닥 접미사 문제도 사라진다
+- **종목 간 비교** — 지금은 한 번에 한 종목이다. `?compare=000660` 처럼 종목을 하나 더 받아
+  같은 100 기준 축에 겹치면 상대 강도를 볼 수 있다
+- **거시지표 시차 분석** — 금리가 오른 뒤 **며칠 후** 주가가 반응하는지 보려면
+  상관계수를 시차별(lag 1~10일)로 계산해 가장 높은 시차를 찾으면 된다
 - **배포** — Docker(`python:3.12-slim`) 또는 Render/Fly.io/Cloud Run
 
 ---
