@@ -68,6 +68,12 @@
           받은 시세는 SQLite에 캐시해 두고 읽는다.</div>
         <div class="tags"><span class="chip">SQLite 캐시</span><span class="chip">캔들차트</span></div>
       </a>
+      <a class="link-card primary" href="/yf">
+        <div class="t">💹 야후 파이낸스 시세</div>
+        <div class="d"><b>전일종가 · 시가 · 저가 · 고가 · 현재가</b>를 막대+꺾은선으로 겹쳐 그린다.
+          국내·해외 종목 모두 되고, 터미널 스크립트 <code>yf.py</code>와 같은 API·같은 계산을 쓴다.</div>
+        <div class="tags"><span class="chip">yfinance</span><span class="chip">인증키 불필요</span><span class="chip">matplotlib 연동</span></div>
+      </a>
       <a class="link-card primary" href="/quant">
         <div class="t">🧮 퀀트 분석</div>
         <div class="d">스크리닝 깔때기 · 효율적 투자선 · 팩터 방사형.
@@ -105,22 +111,22 @@
   <section class="card">
     <h2>데이터가 흐르는 방향</h2>
     <p class="hint">아래 계층은 위 계층을 import 하지 않는다. 이 방향만 지키면 순환 import가 생기지 않는다.</p>
-<pre class="flow">  KRX OpenAPI            KOSIS OpenAPI
-        │                       │
-  <b>app/clients/</b>            <b>app/clients/</b>          ← 외부 연동 (HTTP 호출 · 응답 정규화)
-   krx_data.py            kosis_data.py
-        │                       │
-  <b>app/repositories/</b>              │                ← 저장소 (SQLite 캐시)
-   krx_store.py                  │
-        │                       │
-  <b>app/services/</b>                  │                ← 서비스 (스크리닝 · 투자선 · 팩터)
-   market_data.py                │
-        │                       │
-  <b>app/routers/</b>            <b>app/routers/</b>          ← 컨트롤러 (DTO · 엔드포인트)
-   krx_router.py          kosis_router.py
-        │                       │
-  <b>static/pages/</b>           <b>static/pages/</b>         ← 화면 (받은 값을 그리기만)
-   krx.html · quant.html   kosis.html</pre>
+<pre class="flow">  KRX OpenAPI            KOSIS OpenAPI          야후 파이낸스
+        │                       │                      │
+  <b>app/clients/</b>            <b>app/clients/</b>           <b>app/clients/</b>     ← 외부 연동 (HTTP 호출 · 응답 정규화)
+   krx_data.py            kosis_data.py           yf_data.py ──┐
+        │                       │                      │       │
+  <b>app/repositories/</b>              │                      │       │  ← 저장소 (SQLite 캐시)
+   krx_store.py                  │                      │       │
+        │                       │                      │       │
+  <b>app/services/</b>                  │                      │       │  ← 서비스 (스크리닝 · 투자선 · 팩터)
+   market_data.py                │                      │       │
+        │                       │                      │       │
+  <b>app/routers/</b>            <b>app/routers/</b>           <b>app/routers/</b>      │  ← 컨트롤러 (DTO · 엔드포인트)
+   krx_router.py          kosis_router.py         yf_router.py  │
+        │                       │                      │       │
+  <b>static/pages/</b>           <b>static/pages/</b>          <b>static/pages/</b>     <b>yf.py</b>  ← 화면 · 스크립트
+   krx.html · quant.html   kosis.html              yf.html    (matplotlib)</pre>
   </section>
 </div>
 

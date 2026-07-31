@@ -142,6 +142,7 @@ window.App = (() => {
     { key: 'home', href: '/', label: '홈' },
     { key: 'kosis', href: '/kosis', label: 'KOSIS 통계' },
     { key: 'krx', href: '/krx', label: 'KRX 일별 시세' },
+    { key: 'yf', href: '/yf', label: '야후 파이낸스' },
     { key: 'quant', href: '/quant', label: '퀀트 분석' },
     { key: 'users', href: '/users', label: '사용자 API' },
     { key: 'tetris', href: '/tetris', label: '테트리스' },

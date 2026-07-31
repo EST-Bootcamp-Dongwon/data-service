@@ -25,6 +25,15 @@ from app.routers.market_router import router as market_router   # 분석 API (/a
 from app.routers.krx_router import router as krx_router         # KRX 일별 시세 API (/api/krx/...)
 from app.routers.kosis_router import router as kosis_router     # KOSIS 통계 API (/api/kosis/...)
 
+# 야후 파이낸스 API 는 외부 라이브러리(yfinance)를 쓰는 유일한 기능이다.
+# 설치돼 있지 않아도 나머지 화면·API 는 그대로 뜨도록 import 실패를 흡수한다.
+# (설치: pip install yfinance matplotlib)
+try:
+    from app.routers.yf_router import router as yf_router       # 야후 파이낸스 시세 API (/api/yf/...)
+except ModuleNotFoundError as error:
+    yf_router = None
+    print(f"[안내] 야후 파이낸스 기능을 끕니다 — {error}. 쓰려면 `pip install yfinance` 하세요.")
+
 # --------------------------------------------------
 # API 문서(Swagger) 메타데이터
 # --------------------------------------------------
@@ -56,6 +65,15 @@ TAGS_METADATA = [
             "응답은 화면이 바로 그릴 수 있도록 `chart.series`·`chart.categories` 형태로 변환해 준다. "
             "호출 코드는 `app/clients/kosis_data.py`, 화면은 `/kosis` 에 있다. "
             "**인증키는 응답 어디에도 노출되지 않는다.**"
+        ),
+    },
+    {
+        "name": "야후 파이낸스 시세",
+        "description": (
+            "**yfinance** 로 종목 하나의 당일 가격 지표(전일종가·시가·저가·고가·현재가)와 "
+            "기간별 일봉을 조회한다. **인증키가 필요 없다.** "
+            "호출 코드는 `app/clients/yf_data.py`, 화면은 `/yf`, "
+            "같은 값을 터미널에서 그리는 스크립트는 루트의 `yf.py` 다."
         ),
     },
     {
@@ -93,6 +111,7 @@ KRX OpenAPI → clients(호출·정규화) → repositories(SQLite 캐시) → s
 | --- | --- |
 | [`/`](/) | 홈 · 사용자 API 테스트 |
 | [`/krx`](/krx) | KRX 일별 시세 — 전 종목 표, 거래대금·등락률 차트, 종목별 캔들 |
+| [`/yf`](/yf) | 야후 파이낸스 시세 — 당일 가격 움직임(막대+꺾은선), 기간별 캔들 |
 | [`/quant`](/quant) | 퀀트 분석 — 스크리닝 깔때기, 효율적 투자선, 팩터 방사형 |
 | [`/tetris`](/tetris) | Canvas 테트리스 |
 
@@ -151,6 +170,8 @@ app.add_middleware(
 # 경로가 더 구체적인 KRX 라우터를 먼저 등록해 `/api/krx/...` 가 올바르게 매칭되게 한다.
 app.include_router(krx_router)
 app.include_router(kosis_router)
+if yf_router is not None:                # yfinance 가 없으면 이 라우터만 빠진다
+    app.include_router(yf_router)
 app.include_router(market_router)
 
 
@@ -162,6 +183,7 @@ app.include_router(market_router)
 #   /users   → static/pages/users.html   사용자 CRUD API 테스트
 #   /krx     → static/pages/krx.html     KRX 일별 시세
 #   /kosis   → static/pages/kosis.html   KOSIS 통계 실험실
+#   /yf      → static/pages/yf.html      야후 파이낸스 시세 (yf.py 와 같은 차트)
 #   /quant   → static/pages/quant.html   퀀트 분석 (스크리닝·투자선·팩터)
 #   /tetris  → static/pages/tetris.html  Canvas 테트리스
 PAGES = {
@@ -169,6 +191,7 @@ PAGES = {
     "/users": "users.html",
     "/krx": "krx.html",
     "/kosis": "kosis.html",
+    "/yf": "yf.html",
     "/quant": "quant.html",
     "/tetris": "tetris.html",
     "/ui": "index.html",       # 기존 링크 호환용
@@ -186,6 +209,10 @@ def _page(filename: str):
         return FileResponse(PAGES_DIR / filename)
     return handler
 
+
+# yfinance 가 없어 API 를 못 붙였으면 화면도 빼 둔다. (열어 봐야 조회가 전부 실패한다)
+if yf_router is None:
+    PAGES.pop("/yf", None)
 
 # 반복문으로 라우트를 한 번에 등록한다.
 # 데코레이터(@app.get) 대신 app.get(...)(함수) 형태로 직접 호출하는 방식이다.

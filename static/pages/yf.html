@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>야후 파이낸스 시세 — 당일 가격 움직임</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%92%B9%3C/text%3E%3C/svg%3E" />
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts@4/dist/apexcharts.min.js"></script>
+  <link rel="stylesheet" href="/static/assets/app.css" />
+  <style>
+    /* 이 화면에서만 쓰는 규칙 */
+
+    /* 종목 요약 머리말 — 종목명 · 현재가 · 등락을 한 줄에 */
+    .quote-head {
+      display: flex; flex-wrap: wrap; gap: 14px 20px;
+      align-items: baseline; justify-content: space-between; margin-bottom: 4px;
+    }
+    .quote-name { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .quote-price { display: flex; align-items: baseline; gap: 10px; font-family: var(--mono); }
+    .quote-price .now { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+    .quote-price .cur { font-size: 13px; color: var(--muted); }
+    .quote-price .chg { font-size: 15px; font-weight: 600; }
+
+    /* 장 상태 배지 — 장중이면 초록 점이 깜빡인다 */
+    .state-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+    .state-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .state-chip.live .state-dot { background: var(--ok); animation: pulse 1.6s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+
+    /* 예시 종목 버튼 */
+    .examples { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+    .examples button { padding: 3px 10px; font-size: 12px; }
+
+    /* 5개 가격 지표를 막대 차트 옆에 표로도 보여 준다 */
+    .price-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-top: 12px; }
+    .price-item { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+    .price-item .k { font-size: 12px; color: var(--muted); }
+    .price-item .v { font-family: var(--mono); font-size: 15px; font-weight: 600; }
+
+    /* "243,000 ~ 266,500" 처럼 값이 두 개 들어가는 타일은 글씨를 줄여 한 줄에 담는다 */
+    .tile-value.range { font-size: 16px; }
+
+    .err {
+      font-size: 13px; padding: 10px 12px; border-radius: 8px; margin-bottom: 12px;
+      background: var(--error-soft); border: 1px solid var(--error); color: var(--text);
+    }
+
+    /* 스크립트 안내 블록 */
+    .cmd {
+      font-family: var(--mono); font-size: 12px; line-height: 1.9;
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 12px; overflow-x: auto; white-space: pre; margin: 0;
+    }
+    .cmd b { color: var(--accent); font-weight: 600; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page-head">
+    <div>
+      <h1>💹 야후 파이낸스 시세</h1>
+      <p>한 종목의 <b>전일종가 · 시가 · 저가 · 고가 · 현재가</b>를 받아 막대와 꺾은선을 겹쳐 그린다.
+         터미널 스크립트 <code>python3 yf.py</code>와 <b>같은 API·같은 계산</b>을 쓰므로 두 그림의 값이 항상 일치한다.</p>
+    </div>
+    <nav class="nav" id="nav"></nav>
+  </header>
+
+  <div class="badges" id="badges"></div>
+
+  <!-- ── 조회 조건 ─────────────────────────────── -->
+  <section class="card">
+    <h2>종목 조회 <span class="chip">GET /api/yf/quote</span></h2>
+    <p class="hint">
+      야후 티커를 넣는다. 국내 종목은 <b>코스피 <code>.KS</code></b> · <b>코스닥 <code>.KQ</code></b> 를 붙이고,
+      숫자 6자리만 넣으면 <code>.KS</code> 를 자동으로 붙여 준다.
+    </p>
+    <div class="controls">
+      <label>티커
+        <input id="ticker" type="search" value="005930.KS" placeholder="005930.KS" autocomplete="off" style="min-width:180px" />
+      </label>
+      <button id="btnLoad">조회</button>
+      <span class="status" id="status">조회 버튼을 눌러 주세요</span>
+    </div>
+    <div class="examples">
+      <span class="hint" style="margin:0">예시:</span>
+      <button class="ghost" data-ex="005930.KS">삼성전자</button>
+      <button class="ghost" data-ex="000660.KS">SK하이닉스</button>
+      <button class="ghost" data-ex="035420.KS">NAVER</button>
+      <button class="ghost" data-ex="247540.KQ">에코프로비엠</button>
+      <button class="ghost" data-ex="AAPL">Apple</button>
+      <button class="ghost" data-ex="NVDA">NVIDIA</button>
+      <button class="ghost" data-ex="^KS11">코스피 지수</button>
+    </div>
+  </section>
+
+  <div id="err"></div>
+
+  <!-- ── 종목 요약 ─────────────────────────────── -->
+  <section class="card" id="summaryCard" hidden>
+    <div class="quote-head">
+      <div>
+        <div class="quote-name" id="quoteName">-</div>
+        <div class="state-chip" id="quoteState"><span class="state-dot"></span><span id="quoteStateText">-</span></div>
+      </div>
+      <div class="quote-price">
+        <span class="now" id="quoteNow">-</span>
+        <span class="cur" id="quoteCur"></span>
+        <span class="chg" id="quoteChg"></span>
+      </div>
+    </div>
+  </section>
+
+  <div class="tiles" id="tiles"></div>
+
+  <!-- ── 당일 가격 움직임 (yf.py 와 같은 그림) ────────── -->
+  <section class="card">
+    <h2>당일 가격 움직임 <span class="muted">— 막대 + 꺾은선</span></h2>
+    <p class="hint">
+      Y축은 0이 아니라 <b>실제 값 구간 ±1%</b>로 좁혀 두었다. 0부터 그리면 다섯 값이 다 비슷해 보여 변화가 묻힌다.
+      범위 계산(<code>y_min</code>·<code>y_max</code>)은 서버가 해서 내려주므로 터미널 차트와 눈금이 같다.
+    </p>
+    <div class="chart" id="chartMovement" style="min-height:380px">
+      <p class="empty">조회하면 여기에 차트가 그려집니다.</p>
+    </div>
+    <div class="price-list" id="priceList"></div>
+  </section>
+
+  <!-- ── 기간별 일봉 ───────────────────────────── -->
+  <section class="card">
+    <h2>기간별 일봉 <span class="chip">GET /api/yf/history</span></h2>
+    <p class="hint">
+      캔들은 국내 증시 관행대로 <b class="up">상승 빨강</b> · <b class="down">하락 파랑</b>으로 그린다.
+      아래 거래량 막대를 드래그하면 위 캔들 구간이 따라 움직인다.
+    </p>
+    <div class="controls" style="margin-bottom:12px">
+      <div class="pillbar" id="periodBar"></div>
+      <span class="status" id="historyStatus"></span>
+    </div>
+    <div class="chart" id="chartCandle" style="min-height:380px">
+      <p class="empty">조회하면 여기에 캔들 차트가 그려집니다.</p>
+    </div>
+    <div class="chart small" id="chartVolume"></div>
+  </section>
+
+  <!-- ── 터미널에서 같은 차트 그리기 ─────────────────── -->
+  <section class="card">
+    <h2>터미널에서 같은 차트 그리기</h2>
+    <p class="hint">
+      루트의 <code>yf.py</code>가 이 화면과 같은 <code>app/clients/yf_data.py</code>를 써서 matplotlib으로 그린다.
+      GUI가 없는 환경(WSL·서버)이면 창 대신 <code>data/yf/</code>에 PNG로 저장한다.
+    </p>
+<pre class="cmd"><b>python3 yf.py</b>                        # 삼성전자(005930.KS)
+<b>python3 yf.py 000660.KS</b>              # 종목 지정
+<b>python3 yf.py 005930</b>                 # 숫자 6자리면 .KS 자동
+<b>python3 yf.py AAPL --save chart.png</b>  # 창 대신 PNG 저장
+<b>python3 yf.py --english</b>              # 한글 폰트가 없을 때</pre>
+  </section>
+
+  <!-- ── API 응답 원문 ─────────────────────────── -->
+  <section class="card">
+    <h2>API 응답 원문 <span class="muted">— 화면이 실제로 받은 값</span></h2>
+    <p class="hint">화면은 이 JSON을 그리기만 한다. 계산(등락률·Y축 범위·구간 수익률)은 전부 서버에서 끝난다.</p>
+    <pre class="out" id="raw">아직 조회하지 않았습니다.</pre>
+  </section>
+</div>
+
+<script src="/static/assets/app.js"></script>
+<script>
+(() => {
+  'use strict';
+  App.renderNav('yf');
+
+  const $ = (id) => document.getElementById(id);
+  const charts = {};                       // ApexCharts 인스턴스 보관 (다시 그릴 때 파괴용)
+
+  // 화면 상태 — 지금 보고 있는 티커와 기간
+  const state = { ticker: '005930.KS', period: '3mo', currency: 'KRW' };
+
+  /** HTML 특수문자를 이스케이프한다. */
+  function esc(v) {
+    return String(v ?? '').replace(/[&<>"]/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  }
+
+  /** 통화에 맞춰 가격을 적는다. 원·엔은 정수, 나머지는 소수 둘째 자리까지. */
+  function price(v, currency = state.currency) {
+    if (v == null) return '-';
+    const digits = (currency === 'KRW' || currency === 'JPY') ? 0 : 2;
+    return App.num(v, digits);
+  }
+
+  /** 시가총액·거래량처럼 큰 수는 조·억으로 줄여 쓴다 (원화일 때만). */
+  function big(v, currency) {
+    if (v == null) return '-';
+    return currency === 'KRW' ? App.won(v) : App.num(Math.round(v));
+  }
+
+  // ==================================================
+  // 1. 당일 가격 지표 — 요약 · 타일 · 막대+꺾은선 차트
+  // ==================================================
+  async function loadQuote() {
+    const ticker = $('ticker').value.trim();
+    if (!ticker) { showError('티커를 입력해 주세요.'); return; }
+
+    $('btnLoad').disabled = true;
+    $('status').textContent = '야후 파이낸스 조회 중…';
+    showError('');
+
+    try {
+      const q = await App.get(`/api/yf/quote?ticker=${encodeURIComponent(ticker)}`);
+      state.ticker = q.ticker;
+      state.currency = q.currency;
+      $('ticker').value = q.ticker;                    // 서버가 정규화한 티커로 되돌려 준다
+
+      renderSummary(q);
+      renderTiles(q);
+      drawMovement(q);
+      $('raw').textContent = JSON.stringify(q, null, 2);
+      $('status').textContent = `조회 완료 — ${q.fetched_at} · ${q.elapsed_ms}ms`;
+
+      loadHistory();                                   // 같은 종목의 일봉도 이어서 그린다
+    } catch (error) {
+      showError(error.message);
+      $('status').textContent = '조회 실패';
+      $('summaryCard').hidden = true;
+      $('tiles').innerHTML = '';
+    }
+    $('btnLoad').disabled = false;
+  }
+
+  /** 상단 요약 — 종목명 · 현재가 · 등락 · 장 상태 */
+  function renderSummary(q) {
+    $('summaryCard').hidden = false;
+
+    $('quoteName').innerHTML = `${esc(q.name)}
+      <span class="chip">${esc(q.ticker)}</span>
+      ${q.exchange ? `<span class="chip">${esc(q.exchange)}</span>` : ''}
+      ${q.quote_type ? `<span class="chip">${esc(q.quote_type)}</span>` : ''}`;
+
+    // 장 상태(marketState): REGULAR 면 장중이라 초록 점을 깜빡인다
+    const live = q.market_state === 'REGULAR';
+    // 야후의 marketState 값. 미국장은 개장 전후로 PREPRE·POSTPOST 까지 온다.
+    const stateText = {
+      REGULAR: '장중', CLOSED: '장마감',
+      PRE: '장전 시간외', PREPRE: '장전 (거래 전)',
+      POST: '장후 시간외', POSTPOST: '장후 (거래 종료)',
+    };
+    $('quoteState').className = `state-chip${live ? ' live' : ''}`;
+    $('quoteStateText').textContent =
+      `${stateText[q.market_state] || q.market_state || '상태 미상'} · ${q.fetched_at} 기준`;
+
+    const cls = App.signClass(q.change.rate);
+    $('quoteNow').textContent = price(q.prices.current, q.currency);
+    $('quoteNow').className = `now ${cls}`;
+    $('quoteCur').textContent = q.currency || '';
+    $('quoteChg').className = `chg ${cls}`;
+    $('quoteChg').textContent = q.change.diff == null ? ''
+      : `${App.signed(q.change.diff, q.currency === 'KRW' ? 0 : 2)} (${App.signed(q.change.rate, 2)}%)`;
+  }
+
+  /** 요약 타일 — 거래량 · 시가총액 · 52주 범위 */
+  function renderTiles(q) {
+    const tiles = [
+      { label: '전일종가', value: price(q.prices.prev_close, q.currency), sub: q.currency },
+      { label: '당일 범위', value: `${price(q.prices.day_low, q.currency)} ~ ${price(q.prices.day_high, q.currency)}`, sub: '저가 ~ 고가', range: true },
+      { label: '거래량', value: App.num(q.volume), sub: '주' },
+      { label: '시가총액', value: big(q.market_cap, q.currency), sub: q.currency },
+      { label: '52주 범위', value: `${price(q.week52_low, q.currency)} ~ ${price(q.week52_high, q.currency)}`, sub: '최저 ~ 최고', range: true },
+    ];
+    $('tiles').innerHTML = tiles.map((t) => `
+      <div class="tile">
+        <div class="tile-label">${esc(t.label)}</div>
+        <div class="tile-value${t.range ? ' range' : ''}">${esc(t.value)}</div>
+        <div class="tile-sub">${esc(t.sub)}</div>
+      </div>`).join('');
+  }
+
+  /**
+   * 당일 가격 움직임 차트.
+   * `yf.py` 의 matplotlib 그림과 같은 구성이다 — 연파랑 막대 위에 빨간 꺾은선을 겹치고,
+   * Y축은 서버가 계산해 준 `y_min`~`y_max` 로 좁힌다.
+   */
+  function drawMovement(q) {
+    const c = q.chart;
+    const values = c.values;      // 값을 못 받은 항목은 null — ApexCharts 가 그 자리를 비워 둔다
+
+    App.draw(charts, 'chartMovement', {
+      chart: { type: 'line', height: 380, toolbar: { show: false }, animations: { enabled: true } },
+      series: [
+        { name: '가격 (막대)', type: 'column', data: values },
+        { name: '가격 (선)', type: 'line', data: values },
+      ],
+      // 막대는 연파랑(투명도 0.5), 선은 빨강 — yf.py 의 색과 같게 맞춘다
+      colors: ['#4A90E2', '#D0021B'],
+      fill: { opacity: [0.5, 1] },
+      stroke: { width: [0, 2.5], curve: 'straight' },
+      markers: { size: [0, 6], strokeWidth: 0, hover: { size: 8 } },
+      plotOptions: { bar: { columnWidth: '55%', borderRadius: 3 } },
+      dataLabels: {
+        // 막대 계열에는 라벨을 끄고 꺾은선 위에만 값을 적는다 (겹쳐서 두 번 나오지 않도록)
+        enabled: true,
+        enabledOnSeries: [1],
+        offsetY: -10,
+        formatter: (v) => (v == null ? '-' : price(v)),
+        style: { fontSize: '12px', fontWeight: 700, colors: [App.color('text')] },
+        background: { enabled: false },
+      },
+      xaxis: { categories: c.categories },
+      yaxis: {
+        min: c.y_min, max: c.y_max,
+        labels: { formatter: (v) => price(v) },
+        title: { text: `가격 (${q.currency || '-'})`, style: { fontWeight: 500 } },
+      },
+      tooltip: { shared: true, y: { formatter: (v) => `${price(v)} ${q.currency}` } },
+      legend: { show: true, position: 'top', horizontalAlign: 'left' },
+      grid: { borderColor: App.color('border'), strokeDashArray: 3 },
+    });
+
+    // 차트 아래 값 목록 — 차트를 못 읽는 상황에서도 숫자를 그대로 확인할 수 있게 한다
+    $('priceList').innerHTML = c.categories.map((label, i) => `
+      <div class="price-item">
+        <div class="k">${esc(label)}</div>
+        <div class="v">${price(c.values[i], q.currency)}</div>
+      </div>`).join('');
+  }
+
+  // ==================================================
+  // 2. 기간별 일봉 — 캔들 + 거래량
+  // ==================================================
+  async function loadHistory() {
+    $('historyStatus').textContent = '일봉 조회 중…';
+    try {
+      const h = await App.get(
+        `/api/yf/history?ticker=${encodeURIComponent(state.ticker)}&period=${state.period}`);
+      drawHistory(h);
+      const rate = h.change_rate == null ? '' : ` · 구간 ${App.signed(h.change_rate, 2)}%`;
+      $('historyStatus').textContent = `${h.period_label} ${h.count}거래일${rate} · ${h.elapsed_ms}ms`;
+    } catch (error) {
+      $('historyStatus').textContent = `일봉 조회 실패: ${error.message}`;
+    }
+  }
+
+  function drawHistory(h) {
+    // ApexCharts 캔들은 {x: 날짜, y: [시,고,저,종]} 형태를 받는다
+    const ohlc = h.rows.map((r) => ({
+      x: new Date(r.date), y: [r.open, r.high, r.low, r.close],
+    }));
+    const vol = h.rows.map((r) => ({ x: new Date(r.date), y: r.volume }));
+
+    App.draw(charts, 'chartCandle', {
+      chart: {
+        id: 'yfCandle', type: 'candlestick', height: 380,
+        toolbar: { autoSelected: 'pan', show: true }, zoom: { enabled: true },
+        animations: { enabled: false },
+      },
+      series: [{ name: '주가', data: ohlc }],
+      xaxis: { type: 'datetime', crosshairs: { show: true, stroke: { dashArray: 3 } } },
+      yaxis: { tooltip: { enabled: true }, labels: { formatter: (v) => price(v) } },
+      tooltip: { shared: true, x: { format: 'yyyy-MM-dd' } },
+      // 국내 관행: 상승 빨강 · 하락 파랑 (app.css 의 --up · --down 을 그대로 쓴다)
+      plotOptions: { candlestick: { colors: { upward: App.color('up'), downward: App.color('down') } } },
+      legend: { show: false },
+    });
+
+    App.draw(charts, 'chartVolume', {
+      chart: {
+        id: 'yfVolume', type: 'bar', height: 150,
+        // brush: 이 차트에서 드래그한 구간이 위 캔들 차트에 그대로 적용된다
+        brush: { enabled: true, target: 'yfCandle' },
+        selection: {
+          enabled: true,
+          // 처음에는 최근 절반 구간을 선택해 둔다
+          xaxis: { min: vol[Math.floor(vol.length / 2)]?.x?.getTime(), max: vol[vol.length - 1]?.x?.getTime() },
+        },
+        toolbar: { show: false }, animations: { enabled: false },
+      },
+      series: [{ name: '거래량', data: vol }],
+      colors: [App.color('accent')],
+      xaxis: { type: 'datetime' },
+      yaxis: { labels: { formatter: (v) => `${App.num(Math.round(v / 10000))}만` }, tickAmount: 2 },
+      dataLabels: { enabled: false },
+      legend: { show: false },
+    });
+  }
+
+  // ==================================================
+  // 3. 화면 조작
+  // ==================================================
+  function showError(message) {
+    $('err').innerHTML = message ? `<div class="err">⚠️ ${esc(message)}</div>` : '';
+  }
+
+  /** 기간 버튼을 서버가 준 목록으로 만든다 (구간이 늘면 화면은 고치지 않아도 된다). */
+  async function buildPeriodBar() {
+    try {
+      const periods = await App.get('/api/yf/periods');
+      $('periodBar').innerHTML = periods.map((p) =>
+        `<button class="pill ${p.code === state.period ? 'on' : ''}" data-p="${esc(p.code)}">${esc(p.label)}</button>`
+      ).join('');
+    } catch {
+      $('periodBar').innerHTML = '<span class="hint" style="margin:0">기간 목록을 불러오지 못했습니다.</span>';
+    }
+  }
+
+  // 기간 버튼 — 클릭한 버튼만 활성으로 바꾸고 일봉을 다시 부른다 (이벤트 위임)
+  $('periodBar').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-p]');
+    if (!btn) return;
+    state.period = btn.dataset.p;
+    [...btn.parentNode.children].forEach((b) => b.classList.toggle('on', b === btn));
+    loadHistory();
+  });
+
+  // 예시 버튼 — 티커를 채우고 바로 조회한다
+  document.querySelectorAll('.examples button[data-ex]').forEach((btn) => {
+    btn.addEventListener('click', () => { $('ticker').value = btn.dataset.ex; loadQuote(); });
+  });
+
+  $('btnLoad').addEventListener('click', loadQuote);
+  $('ticker').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadQuote(); });
+
+  // 상단 배지 — 서버 상태
+  (async () => {
+    try {
+      await App.get('/health');
+      $('badges').innerHTML = '<span class="badge ok">✅ 서버<em>정상 동작 중</em></span>'
+        + '<span class="badge">🌐 데이터<em>야후 파이낸스 (yfinance) · 인증키 불필요</em></span>'
+        + '<span class="badge">⏱️ 캐시<em>같은 티커는 60초간 서버 메모리 캐시</em></span>';
+    } catch {
+      $('badges').innerHTML = '<span class="badge warn">⚠️ 서버<em>응답 없음</em></span>';
+    }
+  })();
+
+  // 첫 진입 시 삼성전자를 자동으로 그려 둔다 (빈 화면으로 시작하지 않도록)
+  buildPeriodBar().then(loadQuote);
+})();
+</script>
+</body>
+</html>
