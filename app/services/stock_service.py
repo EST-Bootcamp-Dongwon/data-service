@@ -20,15 +20,22 @@
 
 `data/krx_cache.db` 에는 2,800여 종목의 **시장 구분과 한글 종목명**이 들어 있으므로,
 여기서 시장을 확인하고 접미사를 정한다. 덤으로 `삼성전자` 같은 **한글 이름 검색**도 된다.
-캐시가 비어 있으면(아직 `scripts/fetch_krx.py` 를 안 돌린 경우) 두 접미사를 모두 조회해
-**더 최근 데이터가 있는 쪽**을 고른다.
+
+DB 가 없는 환경(Codespaces·배포 서버)을 위한 대비
+------------------------------------------------
+그 96MB DB 는 저장소에 올릴 수 없다(`.gitignore` 대상). 그래서 판별에 꼭 필요한 셋만
+— 종목코드·종목명·시장 구분 — 뽑아 둔 **`data/stock_master.json`(98KB)** 을 함께 올린다.
+찾는 순서는 **DB → 종목 마스터** 이고, 둘 다 없으면 두 접미사를 모두 조회해
+**더 최근 데이터가 있는 쪽**을 고른다(느리지만 동작은 한다).
 """
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from app.clients import fred_data as fred
@@ -54,6 +61,11 @@ MA_WINDOWS = (5, 20, 60)
 # 티커 해석 결과를 기억해 둔다. 같은 종목을 다시 물을 때 캐시 조회를 반복하지 않는다.
 _resolve_memo: Dict[str, dict] = {}
 
+# 종목 마스터 (DB 가 없을 때 쓰는 대체 자료). 처음 찾을 때 한 번만 읽어 둔다.
+# (parents[0]=services, [1]=app, [2]=프로젝트 루트)
+MASTER_PATH = Path(__file__).resolve().parents[2] / "data" / "stock_master.json"
+_master: Optional[Dict[str, dict]] = None      # {"by_code": {...}, "by_name": {...}}
+
 
 class StockError(Exception):
     """종목 조회 실패. `status` 는 라우터가 그대로 HTTP 상태 코드로 쓴다."""
@@ -70,10 +82,55 @@ def _now_kst() -> str:
 # ==================================================
 # 1. 티커 해석 — 무엇을 입력했는가
 # ==================================================
-def _lookup_krx(code_or_name: str) -> Optional[dict]:
-    """KRX 캐시에서 종목코드 또는 한글 종목명으로 종목 하나를 찾는다.
+def _load_master() -> Dict[str, dict]:
+    """`data/stock_master.json` 을 읽어 코드·이름 두 방향으로 색인해 둔다.
 
-    캐시가 비어 있거나 DB 를 못 읽어도 조회 전체가 실패하면 안 되므로,
+    파일이 없어도 조회 전체가 실패하면 안 되므로, 없으면 빈 색인을 돌려주고
+    호출한 쪽이 접미사 탐색(`_probe_suffix`)으로 넘어가게 한다.
+    """
+    global _master
+    if _master is not None:
+        return _master
+
+    by_code: Dict[str, dict] = {}
+    by_name: Dict[str, dict] = {}
+    try:
+        raw = json.loads(MASTER_PATH.read_text(encoding="utf-8"))
+        for code, (name, market) in raw.items():
+            item = {"code": code, "name": name, "market": market}
+            by_code[code] = item
+            # 같은 이름이 여러 개면 먼저 나온(코드가 작은) 쪽을 남긴다.
+            # 우선주("삼성전자우")는 이름이 달라 본주와 겹치지 않는다.
+            by_name.setdefault(name, item)
+    except (OSError, ValueError):
+        pass          # 파일이 없거나 깨졌으면 빈 색인으로 둔다
+
+    _master = {"by_code": by_code, "by_name": by_name}
+    return _master
+
+
+def _lookup_master(needle: str) -> Optional[dict]:
+    """종목 마스터에서 종목코드 또는 한글 종목명으로 찾는다. (DB 가 없을 때의 대체 경로)"""
+    master = _load_master()
+    hit = master["by_code"].get(needle) or master["by_name"].get(needle)
+    if hit:
+        return dict(hit)
+
+    # 앞부분만 일치하는 이름도 받아 준다 ("에코프로비" → "에코프로비엠")
+    for name, item in master["by_name"].items():
+        if name.startswith(needle):
+            return dict(item)
+    return None
+
+
+def _lookup_krx(code_or_name: str) -> Optional[dict]:
+    """종목코드 또는 한글 종목명으로 종목 하나를 찾는다.
+
+    찾는 순서는 **KRX 캐시(DB) → 종목 마스터(JSON)** 다.
+    DB 가 더 최신이고 거래대금까지 있어 이름이 겹칠 때 대표 종목을 고를 수 있으므로 먼저 본다.
+    DB 가 없는 환경(Codespaces·배포 서버)에서는 마스터가 같은 일을 한다.
+
+    어느 쪽도 못 읽어도 조회 전체가 실패하면 안 되므로,
     예외는 삼키고 `None` 을 돌려준다 (야후 단독으로도 동작해야 한다).
     """
     needle = code_or_name.strip()
@@ -97,9 +154,12 @@ def _lookup_krx(code_or_name: str) -> Optional[dict]:
                     row = conn.execute(
                         "SELECT code, name, market FROM daily_price WHERE name LIKE ? "
                         "ORDER BY bas_dd DESC, value DESC LIMIT 1", (f"{needle}%",)).fetchone()
-        return dict(row) if row else None
+        if row:
+            return dict(row)
     except Exception:
-        return None      # 캐시를 못 읽어도 야후 경로로 계속 간다
+        pass             # 캐시를 못 읽어도 마스터·야후 경로로 계속 간다
+
+    return _lookup_master(needle)
 
 
 def _probe_suffix(code: str) -> str:
@@ -150,8 +210,7 @@ def resolve(ticker: str) -> dict:
         if not krx:
             raise StockError(
                 f"알 수 없는 종목입니다. '{raw}' 라는 이름의 국내 종목을 찾지 못했습니다. "
-                "종목코드 6자리로 입력해 보세요. "
-                "(종목명 검색은 `python3 scripts/fetch_krx.py` 로 시세를 받아 둔 뒤 동작합니다)",
+                "종목코드 6자리(005930)로 입력해 보세요.",
                 status=404)
         code = krx["code"]
         suffix = MARKET_SUFFIX.get(krx.get("market") or "", ".KS")
@@ -432,8 +491,17 @@ def sample_tickers(limit: int = 6) -> List[dict]:
         for row in store.universe()[:limit]:
             korean.append({"ticker": row["code"], "label": row["name"], "market": "KR"})
     except Exception:
-        korean = [{"ticker": "005930", "label": "삼성전자", "market": "KR"},
-                  {"ticker": "000660", "label": "SK하이닉스", "market": "KR"}]
+        pass
+
+    if not korean:
+        # DB 가 없으면 거래대금 순위를 알 수 없다. 잘 알려진 종목을 코드로 지정하고
+        # 이름만 종목 마스터에서 채운다 (코스닥 종목을 하나 섞어 접미사 판별을 보여 준다).
+        master = _load_master()["by_code"]
+        for code in ("005930", "000660", "035420", "005380", "247540", "196170"):
+            item = master.get(code)
+            korean.append({"ticker": code,
+                           "label": (item or {}).get("name") or code,
+                           "market": "KR"})
 
     american = [
         {"ticker": "AAPL", "label": "Apple", "market": "US"},
