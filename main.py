@@ -23,6 +23,7 @@ import random
 # 차트 데이터 API 묶음(/api/...)을 가져온다. router 라는 이름이 흔해서 별칭을 붙인다.
 from app.routers.market_router import router as market_router   # 분석 API (/api/...)
 from app.routers.krx_router import router as krx_router         # KRX 일별 시세 API (/api/krx/...)
+from app.routers.kosis_router import router as kosis_router     # KOSIS 통계 API (/api/kosis/...)
 
 # --------------------------------------------------
 # API 문서(Swagger) 메타데이터
@@ -46,6 +47,15 @@ TAGS_METADATA = [
             "한국거래소 OpenAPI의 **유가증권·코스닥 일별매매정보**를 조회한다. "
             "받은 데이터는 `data/krx_cache.db`(SQLite)에 쌓아 두고 여기서 읽는다. "
             "호출 코드는 `app/clients/krx_data.py`, 저장은 `app/repositories/krx_store.py` 에 있다."
+        ),
+    },
+    {
+        "name": "KOSIS 통계 실험실",
+        "description": (
+            "국가통계포털(KOSIS) OpenAPI를 **검색 → 파라미터 조립 → 호출** 3단계로 실험한다. "
+            "응답은 화면이 바로 그릴 수 있도록 `chart.series`·`chart.categories` 형태로 변환해 준다. "
+            "호출 코드는 `app/clients/kosis_data.py`, 화면은 `/kosis` 에 있다. "
+            "**인증키는 응답 어디에도 노출되지 않는다.**"
         ),
     },
     {
@@ -140,6 +150,7 @@ app.add_middleware(
 # include_router 를 호출하는 순간 router 에 정의된 모든 경로가 app 에 붙는다.
 # 경로가 더 구체적인 KRX 라우터를 먼저 등록해 `/api/krx/...` 가 올바르게 매칭되게 한다.
 app.include_router(krx_router)
+app.include_router(kosis_router)
 app.include_router(market_router)
 
 
@@ -147,13 +158,17 @@ app.include_router(market_router)
 # 화면 라우트
 # --------------------------------------------------
 # 화면은 기능별로 파일을 나눠 두었다. 파일명만 봐도 무슨 화면인지 알 수 있어 수정이 쉽다.
-#   /        → static/pages/index.html   홈 · 사용자 API 테스트
+#   /        → static/pages/index.html   랜딩 (화면 안내 · 상태 요약)
+#   /users   → static/pages/users.html   사용자 CRUD API 테스트
 #   /krx     → static/pages/krx.html     KRX 일별 시세
+#   /kosis   → static/pages/kosis.html   KOSIS 통계 실험실
 #   /quant   → static/pages/quant.html   퀀트 분석 (스크리닝·투자선·팩터)
 #   /tetris  → static/pages/tetris.html  Canvas 테트리스
 PAGES = {
     "/": "index.html",
+    "/users": "users.html",
     "/krx": "krx.html",
+    "/kosis": "kosis.html",
     "/quant": "quant.html",
     "/tetris": "tetris.html",
     "/ui": "index.html",       # 기존 링크 호환용

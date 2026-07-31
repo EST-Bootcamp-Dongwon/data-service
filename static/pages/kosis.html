@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KOSIS 통계 실험실 — 검색 · 조립 · 호출</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E" />
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts@4/dist/apexcharts.min.js"></script>
+  <link rel="stylesheet" href="/static/assets/app.css" />
+  <style>
+    /* 이 화면에서만 쓰는 규칙 */
+    .step-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .step-no {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 24px; border-radius: 50%; flex: 0 0 auto;
+      background: var(--accent); color: #fff; font-size: 13px; font-weight: 700;
+    }
+    .step-head.done .step-no { background: var(--ok); }
+    .step-head .state { margin-left: auto; font-size: 12px; color: var(--muted); }
+
+    .field { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 4px; }
+    .field input, .field select { min-width: 130px; }
+    .field.wide input { min-width: 260px; }
+    /* `display:flex` 가 브라우저 기본 `[hidden] { display:none }` 을 이겨 버리므로 직접 눌러 준다.
+       (이게 없으면 hidden 을 걸어도 입력칸이 계속 보인다) */
+    .field[hidden] { display: none; }
+
+    /* 데이터 표는 수백 행이 될 수 있다. 페이지가 끝없이 길어지지 않도록 스크롤 상자에 담는다. */
+    .rows-scroll { max-height: 420px; overflow: auto; }
+    .rows-scroll thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+
+    /* 요청 URL 미리보기 — 길어서 줄바꿈을 허용한다 */
+    .url-box {
+      font-family: var(--mono); font-size: 11px; line-height: 1.6;
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px 10px; word-break: break-all; color: var(--muted);
+    }
+    .url-box b { color: var(--text); font-weight: 600; }
+    .url-box + .url-box { margin-top: 6px; }
+
+    /* 검색 결과 표 — 행을 클릭해 통계표를 고른다 */
+    #tblResults tbody tr { cursor: pointer; }
+    #tblResults tbody tr.on { background: var(--accent-soft); }
+    .path { font-size: 11px; color: var(--muted); }
+
+    .warn-box {
+      font-size: 12px; padding: 8px 10px; border-radius: 8px; margin-bottom: 12px;
+      background: var(--error-soft); border: 1px solid var(--warn); color: var(--text);
+    }
+    .examples { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+    .examples button { padding: 3px 10px; font-size: 12px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page-head">
+    <div>
+      <h1>📊 KOSIS 통계 실험실</h1>
+      <p>국가통계포털 OpenAPI를 <b>검색 → 파라미터 조립 → 호출</b> 3단계로 직접 실험한다. 결과는 ApexCharts로 그린다.</p>
+    </div>
+    <nav class="nav" id="nav"></nav>
+  </header>
+
+  <div class="badges" id="badges"></div>
+
+  <!-- ── 1단계 : 통계표 찾기 ───────────────────────── -->
+  <section class="card">
+    <h2 class="step-head" id="head1">
+      <span class="step-no">1</span> 통계표 찾기
+      <span class="chip">GET /api/kosis/search</span>
+      <span class="state" id="state1">검색어를 입력하세요</span>
+    </h2>
+    <p class="hint">
+      KOSIS는 통계표마다 <code>orgId</code>(기관) + <code>tblId</code>(통계표) 두 코드로 식별한다.
+      먼저 이름으로 검색해 이 두 코드를 얻는다.
+    </p>
+    <div class="controls" style="margin-bottom:10px">
+      <label class="field wide">검색어
+        <input id="q" type="search" placeholder="예: 소비자물가, 인구, 취업자" autocomplete="off" />
+      </label>
+      <label class="field">개수
+        <input id="size" type="number" value="10" min="1" max="100" style="min-width:80px" />
+      </label>
+      <button id="btnSearch">검색</button>
+    </div>
+    <div class="examples">
+      <span class="hint" style="margin:0">예시:</span>
+      <button class="ghost" data-ex="소비자물가">소비자물가</button>
+      <button class="ghost" data-ex="주민등록인구">주민등록인구</button>
+      <button class="ghost" data-ex="취업자">취업자</button>
+      <button class="ghost" data-ex="주택매매가격">주택매매가격</button>
+    </div>
+    <div class="table-scroll rows-scroll" style="margin-top:12px">
+      <table id="tblResults">
+        <thead><tr><th>통계표</th><th>기관</th><th>수록 기간</th><th class="num">코드</th></tr></thead>
+        <tbody><tr><td colspan="4" class="empty">검색어를 입력하고 「검색」을 눌러 주세요.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── 2단계 : 파라미터 조립 ─────────────────────── -->
+  <section class="card">
+    <h2 class="step-head" id="head2">
+      <span class="step-no">2</span> 파라미터 조립
+      <span class="chip">GET /api/kosis/meta</span>
+      <span class="state" id="state2">통계표를 먼저 고르세요</span>
+    </h2>
+    <p class="hint">
+      항목(<code>itmId</code>)은 위에서 고른 통계표의 메타에서 자동으로 채운다.
+      기간은 <b>최근 N개</b> 또는 <b>시작~종료</b> 중 하나로 지정한다.
+    </p>
+    <div class="controls" style="margin-bottom:12px">
+      <label class="field">orgId (기관)
+        <input id="orgId" type="text" value="101" autocomplete="off" style="min-width:90px" />
+      </label>
+      <label class="field wide">tblId (통계표)
+        <input id="tblId" type="text" placeholder="DT_1J22042" autocomplete="off" />
+      </label>
+      <label class="field">itmId (항목)
+        <select id="itmId"><option value="ALL">ALL — 전체</option></select>
+      </label>
+      <label class="field">objL1 (분류1)
+        <input id="objL1" type="text" value="ALL" autocomplete="off" style="min-width:90px" />
+      </label>
+      <label class="field">prdSe (주기)
+        <select id="prdSe"></select>
+      </label>
+    </div>
+    <div class="controls" style="margin-bottom:12px">
+      <div class="field">기간 지정 방식
+        <div class="pillbar" id="periodMode">
+          <button class="pill on" data-mode="recent">최근 N개</button>
+          <button class="pill" data-mode="range">시작 ~ 종료</button>
+        </div>
+      </div>
+      <label class="field" id="fieldRecent">개수 (newEstPrdCnt)
+        <input id="periodCount" type="number" value="12" min="1" max="100" style="min-width:100px" />
+      </label>
+      <label class="field" id="fieldStart" hidden>시작 (startPrdDe)
+        <input id="startPeriod" type="text" placeholder="202401" autocomplete="off" style="min-width:110px" />
+      </label>
+      <label class="field" id="fieldEnd" hidden>종료 (endPrdDe)
+        <input id="endPeriod" type="text" placeholder="202406" autocomplete="off" style="min-width:110px" />
+      </label>
+      <label class="field">차트 최대 계열
+        <input id="maxSeries" type="number" value="12" min="1" max="50" style="min-width:100px" />
+      </label>
+      <button id="btnRun">호출하기</button>
+    </div>
+
+    <p class="hint" style="margin-bottom:6px">이번에 나갈 요청 — <b>인증키는 서버에만 있고 아래 어디에도 나오지 않는다.</b></p>
+    <div class="url-box"><b>내 서버</b> <span id="urlOurs">-</span></div>
+    <div class="url-box"><b>KOSIS </b> <span id="urlKosis">호출하면 실제로 나간 주소가 표시된다 (apiKey 제외)</span></div>
+  </section>
+
+  <!-- ── 3단계 : 결과 ─────────────────────────────── -->
+  <section class="card">
+    <h2 class="step-head" id="head3">
+      <span class="step-no">3</span> 결과 · 시각화
+      <span class="chip">GET /api/kosis/data</span>
+      <span class="state" id="state3">아직 호출하지 않았습니다</span>
+    </h2>
+
+    <div id="warn"></div>
+    <div class="tiles" id="tiles"></div>
+
+    <div class="controls" style="margin-bottom:12px">
+      <div class="field">차트 종류
+        <div class="pillbar" id="chartMode">
+          <button class="pill on" data-type="line">꺾은선</button>
+          <button class="pill" data-type="area">영역</button>
+          <button class="pill" data-type="bar">막대</button>
+          <button class="pill" data-type="donut">도넛 (마지막 기간)</button>
+        </div>
+      </div>
+    </div>
+    <div class="chart" id="chart" style="min-height:380px">
+      <p class="empty">「호출하기」를 누르면 여기에 차트가 그려집니다.</p>
+    </div>
+
+    <h3 style="margin:20px 0 8px;font-size:15px">데이터</h3>
+    <p class="hint" id="rowNote">호출 결과가 표로 표시된다.</p>
+    <div class="table-scroll rows-scroll">
+      <table id="tblRows">
+        <thead><tr><th>기간</th><th>분류</th><th>항목</th><th class="num">값</th><th>단위</th></tr></thead>
+        <tbody><tr><td colspan="5" class="empty">아직 데이터가 없습니다.</td></tr></tbody>
+      </table>
+    </div>
+
+    <div style="margin-top:12px">
+      <button class="ghost" id="btnRaw">원본 JSON 보기</button>
+      <pre class="out" id="raw" hidden></pre>
+    </div>
+  </section>
+</div>
+
+<script src="/static/assets/app.js"></script>
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  App.renderNav('kosis');
+
+  const charts = {};          // 생성한 ApexCharts 인스턴스 보관 (다시 그릴 때 파괴용)
+  let last = null;            // 마지막 /api/kosis/data 응답
+  let chartType = 'line';     // 현재 차트 종류
+  let periodMode = 'recent';  // 기간 지정 방식
+
+  /** HTML 특수문자를 이스케이프한다. 통계표명에 <, & 가 들어갈 수 있다. */
+  function esc(v) {
+    return String(v ?? '').replace(/[&<>"]/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  }
+
+  /** 단계 머리말의 상태 문구를 바꾼다. done 이면 번호가 초록으로 변한다. */
+  function setState(step, text, done) {
+    $(`state${step}`).textContent = text;
+    $(`head${step}`).classList.toggle('done', !!done);
+  }
+
+  // ==================================================
+  // 0. 인증키 상태 — 키가 없으면 여기서 바로 알려 준다
+  // ==================================================
+  (async () => {
+    try {
+      const s = await App.get('/api/kosis/status');
+      $('badges').innerHTML = `
+        <span class="badge ${s.key_loaded ? 'ok' : 'warn'}">${s.key_loaded ? '✅' : '⚠️'} KOSIS 인증키
+          <em>${s.key_loaded ? `${esc(s.key_source)} · ${s.key_length}자` : '없음 — .key 에 KOSIS_API_KEY 를 넣으세요'}</em></span>
+        <span class="badge">🌐 엔드포인트<em>${esc(s.base_url)}</em></span>`;
+
+      // 주기 선택지를 서버가 알려준 목록으로 채운다 (화면에 코드를 하드코딩하지 않는다)
+      $('prdSe').innerHTML = s.period_types
+        .map((p) => `<option value="${p.code}"${p.code === 'M' ? ' selected' : ''}>${p.code} — ${esc(p.name)}</option>`)
+        .join('');
+      updateUrlPreview();
+    } catch (error) {
+      $('badges').innerHTML = `<span class="badge warn">인증키 상태 확인 실패<em>${esc(error.message)}</em></span>`;
+    }
+  })();
+
+  // ==================================================
+  // 1단계 — 통계표 검색
+  // ==================================================
+  let tables = [];
+
+  async function search() {
+    const q = $('q').value.trim();
+    if (!q) { setState(1, '검색어를 입력하세요'); return; }
+
+    $('btnSearch').disabled = true;
+    setState(1, '검색 중…');
+    try {
+      const size = Number($('size').value) || 10;
+      tables = await App.get(`/api/kosis/search?q=${encodeURIComponent(q)}&size=${size}`);
+      drawResults();
+      setState(1, `${tables.length}건 — 행을 눌러 고르세요`, tables.length > 0);
+    } catch (error) {
+      tables = [];
+      $('tblResults').querySelector('tbody').innerHTML =
+        `<tr><td colspan="4" class="empty">검색 실패: ${esc(error.message)}</td></tr>`;
+      setState(1, '검색 실패');
+    }
+    $('btnSearch').disabled = false;
+  }
+
+  function drawResults() {
+    const tbody = $('tblResults').querySelector('tbody');
+    if (!tables.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">검색 결과가 없습니다.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = tables.map((t, i) => `
+      <tr data-i="${i}">
+        <td><div>${esc(t.tbl_name)}</div><div class="path">${esc(t.path)}</div></td>
+        <td>${esc(t.org_name)}</td>
+        <td class="mono">${esc(t.start_period)} ~ ${esc(t.end_period)}</td>
+        <td class="num mono">${esc(t.org_id)} / ${esc(t.tbl_id)}</td>
+      </tr>`).join('');
+  }
+
+  // 행을 클릭하면 2단계 폼을 채우고 메타를 불러온다 (행마다 리스너를 달지 않고 위임 처리)
+  $('tblResults').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-i]');
+    if (!tr) return;
+    [...tr.parentNode.children].forEach((row) => row.classList.remove('on'));
+    tr.classList.add('on');
+
+    const t = tables[Number(tr.dataset.i)];
+    $('orgId').value = t.org_id;
+    $('tblId').value = t.tbl_id;
+    loadMeta();
+  });
+
+  // ==================================================
+  // 2단계 — 메타로 항목 선택지 채우기
+  // ==================================================
+  async function loadMeta() {
+    const orgId = $('orgId').value.trim();
+    const tblId = $('tblId').value.trim();
+    if (!orgId || !tblId) { setState(2, '통계표를 먼저 고르세요'); return; }
+
+    setState(2, '메타 불러오는 중…');
+    updateUrlPreview();
+    try {
+      const m = await App.get(`/api/kosis/meta?org_id=${encodeURIComponent(orgId)}&tbl_id=${encodeURIComponent(tblId)}`);
+
+      // 항목 목록 — 전체(ALL)를 맨 앞에 두고 메타에서 받은 항목을 잇는다
+      $('itmId').innerHTML = '<option value="ALL">ALL — 전체</option>' + m.items
+        .map((it) => `<option value="${esc(it.id)}">${esc(it.id)} — ${esc(it.name)}${it.unit ? ` (${esc(it.unit)})` : ''}</option>`)
+        .join('');
+
+      // 수록 주기가 하나뿐이면 그 주기를 자동으로 골라 준다 (월 통계에 연 주기를 넣는 실수 방지)
+      const period = m.periods[0];
+      if (period) {
+        const code = Object.entries({ 년: 'Y', 반기: 'H', 분기: 'Q', 월: 'M', 일: 'D' })
+          .find(([name]) => name === period.period_type);
+        if (code) $('prdSe').value = code[1];
+      }
+
+      const range = period ? ` · 수록 ${esc(period.start_period)}~${esc(period.end_period)}` : '';
+      setState(2, `항목 ${m.items.length}개${range}`, true);
+      updateUrlPreview();
+    } catch (error) {
+      setState(2, `메타 실패: ${error.message}`);
+    }
+  }
+
+  /** 현재 폼 값으로 쿼리스트링을 만든다. 미리보기와 실제 호출이 같은 값을 쓰도록 한 곳에서 만든다. */
+  function buildQuery() {
+    const params = new URLSearchParams({
+      org_id: $('orgId').value.trim(),
+      tbl_id: $('tblId').value.trim(),
+      itm_id: $('itmId').value || 'ALL',
+      obj_l1: $('objL1').value.trim() || 'ALL',
+      prd_se: $('prdSe').value || 'M',
+      max_series: $('maxSeries').value || 12,
+    });
+    if (periodMode === 'range') {
+      params.set('start_period', $('startPeriod').value.trim());
+      params.set('end_period', $('endPeriod').value.trim());
+    } else {
+      params.set('period_count', $('periodCount').value || 12);
+    }
+    return params.toString();
+  }
+
+  function updateUrlPreview() {
+    $('urlOurs').textContent = `/api/kosis/data?${buildQuery()}`;
+  }
+
+  // 기간 지정 방식 전환
+  $('periodMode').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-mode]');
+    if (!btn) return;
+    periodMode = btn.dataset.mode;
+    [...$('periodMode').children].forEach((b) => b.classList.toggle('on', b === btn));
+    $('fieldRecent').hidden = periodMode !== 'recent';
+    $('fieldStart').hidden = periodMode !== 'range';
+    $('fieldEnd').hidden = periodMode !== 'range';
+    updateUrlPreview();
+  });
+
+  // ==================================================
+  // 3단계 — 호출 · 표 · 차트
+  // ==================================================
+  async function run() {
+    const query = buildQuery();
+    if (!$('tblId').value.trim()) { setState(3, 'tblId 를 먼저 지정하세요'); return; }
+
+    $('btnRun').disabled = true;
+    setState(3, '호출 중…');
+    $('chart').innerHTML = '<p class="empty">불러오는 중…</p>';
+    try {
+      last = await App.get(`/api/kosis/data?${query}`);
+      $('urlKosis').textContent = last.meta.request_url;
+      drawTiles();
+      drawWarn();
+      drawRows();
+      drawChart();
+      $('raw').textContent = JSON.stringify(last, null, 2);
+      setState(3, `${App.num(last.meta.returned_rows)}행 · ${last.meta.elapsed_ms}ms`, true);
+    } catch (error) {
+      last = null;
+      $('chart').innerHTML = `<p class="empty">호출 실패: ${esc(error.message)}</p>`;
+      $('tiles').innerHTML = '';
+      $('warn').innerHTML = '';
+      setState(3, '호출 실패');
+    }
+    $('btnRun').disabled = false;
+  }
+
+  function drawTiles() {
+    const t = last.table, m = last.meta;
+    const tiles = [
+      ['통계표', esc(t.tbl_name) || '-'],
+      ['주기 · 단위', `${esc(t.period_type_name)}${t.unit ? ` · ${esc(t.unit)}` : ''}`],
+      ['응답 시간', `${m.elapsed_ms} ms`],
+      ['행 / 계열', `${App.num(m.returned_rows)} / ${App.num(m.total_series)}`],
+      ['자료 갱신일', esc(t.last_updated) || '-'],
+    ];
+    $('tiles').innerHTML = tiles.map(([k, v]) =>
+      `<div class="tile"><div class="tile-label">${k}</div><div class="tile-value" style="font-size:14px">${v}</div></div>`).join('');
+  }
+
+  /** 서버가 잘라낸 것이 있으면 반드시 알려 준다 (조용히 자르면 전부 본 것으로 오해한다). */
+  function drawWarn() {
+    const m = last.meta;
+    const notes = [];
+    if (m.series_truncated > 0) {
+      notes.push(`계열이 ${App.num(m.total_series)}개라 최근 값이 큰 순으로 <b>${App.num(last.chart.series.length)}개만</b> 그렸습니다 (${App.num(m.series_truncated)}개 생략). 「차트 최대 계열」을 늘리거나 「분류1(objL1)」을 좁히면 더 볼 수 있습니다.`);
+    }
+    if (m.row_truncated > 0) {
+      notes.push(`행이 많아 ${App.num(m.row_truncated)}행을 잘랐습니다.`);
+    }
+    $('warn').innerHTML = notes.length ? `<div class="warn-box">⚠️ ${notes.join('<br>')}</div>` : '';
+  }
+
+  const MAX_TABLE_ROWS = 300;   // 표는 눈으로 확인하는 용도라 앞부분만 그린다
+
+  function drawRows() {
+    const rows = last.rows.slice(0, MAX_TABLE_ROWS);
+    const tbody = $('tblRows').querySelector('tbody');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">데이터가 없습니다.</td></tr>';
+      $('rowNote').textContent = '';
+      return;
+    }
+    tbody.innerHTML = rows.map((r) => `
+      <tr>
+        <td class="mono">${esc(r.period_label)}</td>
+        <td>${esc(r.group_label) || '-'}</td>
+        <td>${esc(r.item) || '-'}</td>
+        <td class="num mono">${r.value == null ? '-' : App.num(r.value, Number.isInteger(r.value) ? 0 : 2)}</td>
+        <td class="muted">${esc(r.unit) || '-'}</td>
+      </tr>`).join('');
+    $('rowNote').textContent = last.rows.length > MAX_TABLE_ROWS
+      ? `전체 ${App.num(last.rows.length)}행 중 앞 ${MAX_TABLE_ROWS}행만 표시합니다. (전체는 「원본 JSON 보기」에서 확인)`
+      : `전체 ${App.num(last.rows.length)}행`;
+  }
+
+  function drawChart() {
+    if (!window.ApexCharts) {
+      $('chart').innerHTML = '<p class="empty">차트 라이브러리를 불러오지 못했습니다 (오프라인).</p>';
+      return;
+    }
+    const c = last.chart;
+    if (!c.series.length) {
+      $('chart').innerHTML = '<p class="empty">그릴 수 있는 값이 없습니다.</p>';
+      return;
+    }
+    const unit = c.unit ? ` ${c.unit}` : '';
+    const fmt = (v) => (v == null ? '-' : `${App.num(v, Number.isInteger(v) ? 0 : 2)}${unit}`);
+
+    // 도넛은 "마지막 기간의 계열별 구성비"를 본다. 시계열과 축이 달라 옵션을 따로 만든다.
+    if (chartType === 'donut') {
+      const lastIndex = c.categories.length - 1;
+      const points = c.series
+        .map((s) => ({ name: s.name, value: s.data[lastIndex] }))
+        .filter((p) => p.value != null && p.value > 0);
+
+      if (!points.length) {
+        $('chart').innerHTML = '<p class="empty">마지막 기간에 양수 값이 없어 도넛으로 그릴 수 없습니다. 다른 차트를 골라 주세요.</p>';
+        return;
+      }
+      App.draw(charts, 'chart', {
+        chart: { type: 'donut', height: 380 },
+        series: points.map((p) => p.value),
+        labels: points.map((p) => p.name),
+        legend: { position: 'bottom' },
+        dataLabels: { enabled: true, formatter: (p) => `${p.toFixed(1)}%` },
+        title: { text: `${c.categories[lastIndex] || ''} 기준 구성`, style: { fontSize: '13px' } },
+        tooltip: { y: { formatter: fmt } },
+      });
+      return;
+    }
+
+    App.draw(charts, 'chart', {
+      chart: { type: chartType === 'area' ? 'area' : chartType, height: 380, toolbar: { show: true } },
+      series: c.series,
+      xaxis: { categories: c.categories, labels: { rotate: -45, hideOverlappingLabels: true } },
+      yaxis: { labels: { formatter: (v) => App.num(v, Number.isInteger(v) ? 0 : 2) },
+               title: { text: c.unit || '' } },
+      stroke: { curve: 'smooth', width: chartType === 'bar' ? 0 : 2 },
+      fill: chartType === 'area' ? { type: 'gradient', gradient: { opacityFrom: 0.4, opacityTo: 0.05 } } : {},
+      dataLabels: { enabled: false },
+      markers: { size: c.categories.length <= 20 ? 3 : 0 },
+      legend: { position: 'bottom' },
+      // 막대는 ApexCharts 가 intersect(막대 하나만 표시)를 켜므로 shared 와 함께 쓸 수 없다.
+      // 둘을 같이 주면 예외가 나면서 차트가 아예 그려지지 않는다.
+      tooltip: {
+        shared: chartType !== 'bar',
+        intersect: chartType === 'bar',
+        y: { formatter: fmt },
+      },
+    });
+  }
+
+  // 차트 종류 전환 — 이미 받아 둔 데이터로 다시 그리기만 한다 (재호출하지 않는다)
+  $('chartMode').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-type]');
+    if (!btn) return;
+    chartType = btn.dataset.type;
+    [...$('chartMode').children].forEach((b) => b.classList.toggle('on', b === btn));
+    if (last) drawChart();
+  });
+
+  // ── 이벤트 바인딩 ───────────────────────
+  $('btnSearch').addEventListener('click', search);
+  $('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') search(); });
+  $('btnRun').addEventListener('click', run);
+  $('tblId').addEventListener('change', loadMeta);
+  $('btnRaw').addEventListener('click', () => {
+    $('raw').hidden = !$('raw').hidden;
+    $('btnRaw').textContent = $('raw').hidden ? '원본 JSON 보기' : '원본 JSON 숨기기';
+  });
+
+  // 폼을 건드릴 때마다 요청 URL 미리보기를 갱신한다
+  ['orgId', 'tblId', 'itmId', 'objL1', 'prdSe', 'periodCount', 'startPeriod', 'endPeriod', 'maxSeries']
+    .forEach((id) => $(id).addEventListener('input', updateUrlPreview));
+
+  // 예시 검색어 버튼
+  document.querySelectorAll('button[data-ex]').forEach((btn) => {
+    btn.addEventListener('click', () => { $('q').value = btn.dataset.ex; search(); });
+  });
+
+  // 처음 들어왔을 때 바로 눈에 보이는 것이 있도록 예시 하나를 미리 띄운다
+  $('q').value = '소비자물가';
+  search();
+})();
+</script>
+</body>
+</html>

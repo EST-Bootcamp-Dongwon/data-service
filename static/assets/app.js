@@ -139,9 +139,11 @@ window.App = (() => {
 
   // 화면 목록 — 새 화면을 추가하면 여기에만 한 줄 넣으면 모든 화면의 메뉴에 반영된다.
   const PAGES = [
-    { key: 'home', href: '/', label: '홈 · 사용자 API' },
+    { key: 'home', href: '/', label: '홈' },
+    { key: 'kosis', href: '/kosis', label: 'KOSIS 통계' },
     { key: 'krx', href: '/krx', label: 'KRX 일별 시세' },
     { key: 'quant', href: '/quant', label: '퀀트 분석' },
+    { key: 'users', href: '/users', label: '사용자 API' },
     { key: 'tetris', href: '/tetris', label: '테트리스' },
     { key: 'docs', href: '/docs', label: 'API 문서' },
   ];

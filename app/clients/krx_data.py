@@ -23,20 +23,19 @@ FastAPI 에 의존하지 않는 순수 함수 모음이라 단독으로 실행·
 from __future__ import annotations
 
 import json                                              # KRX 응답 파싱
-import os                                                # 환경변수 조회
-import re                                                # 날짜 형식 검증 · .key 파싱
+import re                                                # 날짜 형식 검증
 from pathlib import Path                                 # 파일 경로
 from typing import Dict, List, Optional, Tuple
 from urllib.error import HTTPError, URLError             # 네트워크 오류 종류
 from urllib.parse import urlencode                       # 쿼리스트링 생성
 from urllib.request import Request, urlopen              # HTTP 요청 (표준 라이브러리)
 
+from app.core import secrets                             # 인증키 로딩 (공통)
+
 # 이 파일은 app/clients/ 안에 있으므로 parents[2] 가 프로젝트 루트다.
 # (parents[0]=clients, parents[1]=app, parents[2]=프로젝트 루트)
 # 인증키는 강의 원본과 같이 프로젝트 루트에 두므로 루트를 기준으로 찾는다.
 BASE_DIR = Path(__file__).resolve().parents[2]           # 프로젝트 루트 (실행 위치와 무관)
-KEY_FILE = BASE_DIR / ".key"                             # 강의 원본과 같은 이름
-ENV_FILE = BASE_DIR / ".env"                             # dotenv 형식도 지원
 KRX_BASE_URL = "https://data-dbg.krx.co.kr/svc/apis"     # KRX OpenAPI 기본 주소
 DATE_PATTERN = re.compile(r"^\d{8}$")                    # YYYYMMDD 8자리
 REQUEST_TIMEOUT = 20                                     # KRX 응답 대기 시간(초)
@@ -55,49 +54,17 @@ KEY_NAMES = ("KRX_API_KEY", "KRX_AUTH_KEY")
 # ==================================================
 # 1. 인증키 로딩
 # ==================================================
-def _parse_key_text(text: str) -> str:
-    """`.key` / `.env` 내용에서 인증키 값만 뽑아낸다.
-
-    아래 세 가지 형태를 모두 받아들인다.
-        발급받은_인증키                 (강의 원본 방식 — 값만 한 줄)
-        KRX_API_KEY = 발급받은_인증키   (등호 양쪽 공백 허용)
-        KRX_AUTH_KEY="발급받은_인증키"  (따옴표 허용)
-    """
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):     # 빈 줄과 주석은 건너뛴다
-            continue
-        if "=" in line:
-            name, _, value = line.partition("=")
-            # 이름이 우리가 찾는 키가 아니면 무시한다 (.env 에 다른 설정이 섞여 있을 수 있다)
-            if name.strip().upper() not in KEY_NAMES:
-                continue
-            value = value.strip().strip("\"'")   # 앞뒤 공백·따옴표 제거
-        else:
-            value = line                          # 등호가 없으면 줄 전체가 키다
-        if value:
-            return value
-    return ""
-
-
 def load_krx_key() -> Tuple[str, str]:
     """인증키와 그 출처를 함께 돌려준다. 못 찾으면 `("", "none")`.
 
     우선순위: 환경변수 → `.env` → `.key`
     (배포 환경에서는 환경변수를, 로컬에서는 파일을 쓰는 흔한 구성이다.)
+
+    실제 파싱은 `app/core/secrets.py` 가 한다. KOSIS 키도 같은 규칙으로 읽으므로
+    공통 모듈로 빼 두었다. `allow_bare=True` 는 강의 원본처럼 `.key` 에 값만
+    한 줄 적어 둔 경우를 계속 지원하기 위한 것이다.
     """
-    for name in KEY_NAMES:
-        value = os.getenv(name, "").strip()
-        if value:
-            return value, f"환경변수 {name}"
-
-    for path, label in ((ENV_FILE, ".env"), (KEY_FILE, ".key")):
-        if path.exists():
-            key = _parse_key_text(path.read_text(encoding="utf-8"))
-            if key:
-                return key, label
-
-    return "", "none"
+    return secrets.load_key(KEY_NAMES, allow_bare=True)
 
 
 # ==================================================

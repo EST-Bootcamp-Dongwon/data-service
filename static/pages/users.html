@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>사용자 API 테스트 — FastAPI CRUD</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/assets/app.css" />
+  <style>
+    /* 이 화면에서만 쓰는 규칙 */
+    .endpoint { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+    .field { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 4px; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .dot.ok { background: var(--ok); }
+    .dot.bad { background: var(--error); }
+    pre.out.err { border-color: var(--error); background: var(--error-soft); }
+    /* 방금 만든 사용자를 잠깐 강조한다 */
+    tr.new-row { background: var(--accent-soft); }
+    tbody tr { cursor: default; }
+    tbody tr:hover { background: transparent; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page-head">
+    <div>
+      <h1>👤 사용자 API 테스트</h1>
+      <p>FastAPI의 <b>요청 검증 · 상태 코드 · CRUD</b>를 눈으로 확인하는 화면. 모든 응답을 상태 코드와 함께 그대로 보여준다.</p>
+    </div>
+    <nav class="nav" id="nav"></nav>
+  </header>
+
+  <!-- 1) 헬스 체크 -->
+  <section class="card">
+    <h2 class="endpoint">
+      <span class="method get">GET</span><span class="path">/health</span>
+      <span class="muted">서버 상태 확인</span>
+      <span style="margin-left:auto"><span class="dot" id="healthDot"></span> <span class="muted" id="healthText">확인 전</span></span>
+    </h2>
+    <p class="hint">서버가 살아있는지 확인하는 가장 단순한 엔드포인트. 배포 후 점검용으로 흔히 둔다.</p>
+    <button id="btnHealth">다시 확인</button>
+    <pre class="out" id="outHealth"></pre>
+  </section>
+
+  <!-- 2) 사용자 목록 -->
+  <section class="card">
+    <h2 class="endpoint">
+      <span class="method get">GET</span><span class="path">/users</span>
+      <span class="muted">사용자 전체 목록</span>
+      <span style="margin-left:auto" id="pillUsers"></span>
+    </h2>
+    <p class="hint">서버 시작 시 만들어지는 Mock 30명. <b>메모리 저장이라 서버를 끄면 사라진다.</b></p>
+    <div class="row" style="margin-bottom:12px">
+      <button id="btnUsers">목록 불러오기</button>
+      <label class="field">검색
+        <input id="filter" type="search" placeholder="예: user1, hong@" autocomplete="off" />
+      </label>
+    </div>
+    <div class="tiles" id="stats"></div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th class="num">ID</th><th>username</th><th>email</th><th class="num">age</th><th></th></tr></thead>
+        <tbody id="tbody"><tr><td colspan="5" class="empty">「목록 불러오기」를 눌러 주세요.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 3) 단건 조회 -->
+  <section class="card">
+    <h2 class="endpoint">
+      <span class="method get">GET</span><span class="path">/users/{user_id}</span>
+      <span class="muted">사용자 단건 조회</span>
+      <span style="margin-left:auto" id="pillOne"></span>
+    </h2>
+    <p class="hint">없는 ID는 <code>404</code>, 정수가 아니면 <code>422</code>가 나온다. (FastAPI 자동 검증)</p>
+    <div class="row">
+      <label class="field">user_id
+        <input id="userId" type="text" value="1" autocomplete="off" style="min-width:110px" />
+      </label>
+      <button id="btnOne">조회</button>
+      <button class="ghost" id="btn404">없는 ID(999) → 404</button>
+      <button class="ghost" id="btn422">문자열(abc) → 422</button>
+    </div>
+    <pre class="out" id="outOne"></pre>
+  </section>
+
+  <!-- 4) 사용자 생성 -->
+  <section class="card">
+    <h2 class="endpoint">
+      <span class="method post">POST</span><span class="path">/users</span>
+      <span class="muted">사용자 생성</span>
+      <span style="margin-left:auto" id="pillCreate"></span>
+    </h2>
+    <p class="hint">성공하면 <code>201 Created</code>와 생성된 1명을 돌려준다. <code>id</code>는 서버가 자동 부여하므로 보내지 않는다.</p>
+    <div class="row">
+      <label class="field">username *
+        <input id="username" type="text" placeholder="hong" autocomplete="off" />
+      </label>
+      <label class="field">email *
+        <input id="email" type="text" placeholder="hong@example.com" autocomplete="off" />
+      </label>
+      <label class="field">age (선택)
+        <input id="age" type="number" placeholder="30" style="min-width:100px" autocomplete="off" />
+      </label>
+      <button id="btnCreate">생성</button>
+    </div>
+    <pre class="out" id="outCreate"></pre>
+  </section>
+</div>
+
+<script src="/static/assets/app.js"></script>
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  App.renderNav('users');
+
+  /** HTML 특수문자를 이스케이프한다. 사용자가 넣은 값을 그대로 innerHTML 에 넣으면 위험하다. */
+  function esc(v) {
+    return String(v ?? '').replace(/[&<>"]/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  }
+
+  /**
+   * fetch 를 직접 써서 **상태 코드까지** 화면에 보여준다.
+   * (App.get 은 실패 시 예외를 던지므로, 404·422 를 눈으로 확인하려는 이 화면에는 맞지 않는다.)
+   */
+  async function call(path, options = {}) {
+    try {
+      const res = await fetch(App.API_BASE + path, options);
+      const text = await res.text();
+      let body;
+      try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+      return { ok: res.ok, status: res.status, body };
+    } catch (error) {
+      // 네트워크 자체가 실패한 경우 (서버 미실행 · CORS 차단 등)
+      return { ok: false, status: 0, body: { detail: `요청 실패: ${error.message}` } };
+    }
+  }
+
+  function render(el, result) {
+    el.classList.toggle('err', !result.ok);
+    el.textContent = JSON.stringify(result.body, null, 2);
+  }
+
+  function pill(el, result) {
+    const label = result.status === 0 ? 'ERR' : result.status;
+    el.innerHTML = `<span class="chip" style="border-color:${result.ok ? 'var(--ok)' : 'var(--error)'}">${label}</span>`;
+  }
+
+  // ── 1) 헬스 체크 ───────────────────────
+  async function checkHealth() {
+    $('btnHealth').disabled = true;
+    $('healthText').textContent = '확인 중…';
+    $('healthDot').className = 'dot';
+
+    const result = await call('/health');
+    $('healthDot').className = `dot ${result.ok ? 'ok' : 'bad'}`;
+    $('healthText').textContent = result.ok
+      ? '200 정상'
+      : result.status === 0 ? '서버 응답 없음' : `${result.status} 오류`;
+    render($('outHealth'), result);
+    $('btnHealth').disabled = false;
+  }
+
+  // ── 2) 목록 조회 + 화면 필터 ─────────────
+  let users = [];        // 마지막으로 받아온 목록
+
+  async function loadUsers() {
+    $('btnUsers').disabled = true;
+    const result = await call('/users');
+    pill($('pillUsers'), result);
+
+    if (!result.ok || !Array.isArray(result.body)) {
+      users = [];
+      drawTable([], '목록을 불러오지 못했습니다. 서버가 켜져 있는지 확인하세요.');
+      drawStats([]);
+    } else {
+      users = result.body;
+      applyFilter();
+    }
+    $('btnUsers').disabled = false;
+  }
+
+  function applyFilter() {
+    const q = $('filter').value.trim().toLowerCase();
+    const rows = q
+      ? users.filter((u) =>
+          String(u.id).includes(q) ||
+          (u.username || '').toLowerCase().includes(q) ||
+          (u.email || '').toLowerCase().includes(q))
+      : users;
+
+    drawTable(rows, q ? `"${q}" 와 일치하는 사용자가 없습니다.` : '사용자가 없습니다.');
+    drawStats(rows);
+  }
+
+  function drawStats(rows) {
+    // age 가 null 인 사용자는 평균 계산에서 제외한다
+    const ages = rows.map((u) => u.age).filter((a) => typeof a === 'number');
+    const avg = ages.length ? (ages.reduce((s, a) => s + a, 0) / ages.length).toFixed(1) : '-';
+    const tiles = [
+      ['표시 중', `${rows.length}명`],
+      ['전체', `${users.length}명`],
+      ['평균 나이', avg],
+      ['최소 / 최대', ages.length ? `${Math.min(...ages)} / ${Math.max(...ages)}` : '-'],
+    ];
+    $('stats').innerHTML = tiles.map(([k, v]) =>
+      `<div class="tile"><div class="tile-label">${k}</div><div class="tile-value">${v}</div></div>`).join('');
+  }
+
+  function drawTable(rows, emptyMessage) {
+    const tbody = $('tbody');
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="5" class="empty">${esc(emptyMessage)}</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = rows.map((u) => `
+      <tr${u.__isNew ? ' class="new-row"' : ''}>
+        <td class="num mono">${esc(u.id)}</td>
+        <td>${esc(u.username)}</td>
+        <td class="mono">${esc(u.email)}</td>
+        <td class="num mono">${u.age ?? '-'}</td>
+        <td><button class="ghost" data-id="${esc(u.id)}" style="padding:2px 8px;font-size:11px">단건 조회</button></td>
+      </tr>`).join('');
+  }
+
+  // 표의 "단건 조회" 버튼 (행마다 리스너를 달지 않고 위임 처리)
+  $('tbody').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-id]');
+    if (!btn) return;
+    $('userId').value = btn.dataset.id;
+    getOne();
+  });
+
+  // ── 3) 단건 조회 ───────────────────────
+  async function getOne(forced) {
+    const id = forced ?? $('userId').value.trim();
+    if (!id) {
+      $('outOne').classList.add('err');
+      $('outOne').textContent = 'user_id 를 입력하세요.';
+      return;
+    }
+    const result = await call(`/users/${encodeURIComponent(id)}`);
+    pill($('pillOne'), result);
+    render($('outOne'), result);
+  }
+
+  // ── 4) 사용자 생성 ──────────────────────
+  async function createUser() {
+    const ageRaw = $('age').value.trim();
+    // age 는 선택 필드 — 비우면 null 로 보낸다
+    const payload = {
+      username: $('username').value.trim(),
+      email: $('email').value.trim(),
+      age: ageRaw === '' ? null : Number(ageRaw),
+    };
+
+    $('btnCreate').disabled = true;
+    const result = await call('/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    pill($('pillCreate'), result);
+    render($('outCreate'), result);
+
+    // 생성에 성공하면 목록을 다시 불러와 방금 만든 사용자를 강조한다
+    if (result.status === 201 && result.body && result.body.id != null) {
+      const newId = result.body.id;
+      await loadUsers();
+      const created = users.find((u) => u.id === newId);
+      if (created) {
+        created.__isNew = true;
+        applyFilter();
+        delete created.__isNew;
+      }
+      $('username').value = '';
+      $('email').value = '';
+      $('age').value = '';
+    }
+    $('btnCreate').disabled = false;
+  }
+
+  // ── 이벤트 바인딩 ───────────────────────
+  $('btnHealth').addEventListener('click', checkHealth);
+  $('btnUsers').addEventListener('click', loadUsers);
+  $('filter').addEventListener('input', applyFilter);
+  $('btnOne').addEventListener('click', () => getOne());
+  $('btn404').addEventListener('click', () => getOne('999'));
+  $('btn422').addEventListener('click', () => getOne('abc'));
+  $('btnCreate').addEventListener('click', createUser);
+
+  checkHealth();
+  loadUsers();
+})();
+</script>
+</body>
+</html>

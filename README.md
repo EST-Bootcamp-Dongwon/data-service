@@ -50,21 +50,24 @@ api-test/
 ├── app/
 │   ├── routers/            ← 컨트롤러 : 요청 검증 · DTO · 엔드포인트
 │   │   ├── krx_router.py       KRX 시세 API   (/api/krx/...)
+│   │   ├── kosis_router.py     KOSIS 통계 API (/api/kosis/...)
 │   │   └── market_router.py    분석 API       (/api/...)
 │   ├── services/           ← 서비스   : 비즈니스 로직
 │   │   └── market_data.py      스크리닝 · 투자선 · 팩터
 │   ├── repositories/       ← 저장소   : SQLite 저장 · 조회
 │   │   └── krx_store.py
-│   ├── clients/            ← 외부 연동 : KRX HTTP 호출 · 응답 정규화
-│   │   └── krx_data.py
-│   └── core/               ← 공통 유틸 : 거래일 · KST
-│       └── trading_calendar.py
+│   ├── clients/            ← 외부 연동 : 외부 API 호출 · 응답 정규화
+│   │   ├── krx_data.py         KRX OpenAPI
+│   │   └── kosis_data.py       KOSIS OpenAPI + 차트용 변환
+│   └── core/               ← 공통 유틸 : 거래일 · KST · 인증키
+│       ├── trading_calendar.py
+│       └── secrets.py          KRX·KOSIS 인증키 로딩
 ├── scripts/
 │   ├── fetch_krx.py        캐시를 채우는 CLI 수집 스크립트
 │   └── kosis_rss.py        KOSIS 공지 크롤러 → RSS 2.0 변환
 ├── test.sh                 KOSIS 공지 범위 수집 실행 스크립트
 ├── static/
-│   ├── pages/              화면 4종 (index · krx · quant · tetris)
+│   ├── pages/              화면 6종 (index · kosis · krx · quant · users · tetris)
 │   └── assets/             공통 app.css · app.js
 ├── data/
 │   ├── krx_cache.db        시세 캐시 (.gitignore 대상)
@@ -77,22 +80,31 @@ api-test/
 이 방향만 지키면 순환 import 가 생기지 않는다.
 
 ```
-KRX OpenAPI
-    ↓  HTTP (AUTH_KEY 헤더)
-app/clients/krx_data.py         호출 + 응답 정규화          ← 외부 연동
-    ↓
-app/repositories/krx_store.py   SQLite 저장 · 조회           ← 저장소(Repository)
-    ↓
-app/services/market_data.py     스크리닝 · 포트폴리오 · 팩터   ← 서비스(Service)
-    ↓
-app/routers/*.py                DTO + 엔드포인트             ← 컨트롤러(Controller)
-    ↓
-static/pages/*.html             화면 (받은 값을 그리기만)
+KRX OpenAPI                          KOSIS OpenAPI
+    ↓  HTTP (AUTH_KEY 헤더)              ↓  HTTP (apiKey 쿼리)
+app/clients/krx_data.py              app/clients/kosis_data.py    ← 외부 연동
+  호출 + 응답 정규화                    호출 + 차트용 변환
+    ↓                                    │
+app/repositories/krx_store.py            │                        ← 저장소(Repository)
+  SQLite 저장 · 조회                     │
+    ↓                                    │
+app/services/market_data.py              │                        ← 서비스(Service)
+  스크리닝 · 포트폴리오 · 팩터            │
+    ↓                                    ↓
+app/routers/*.py                     app/routers/kosis_router.py  ← 컨트롤러(Controller)
+    ↓                                    ↓
+static/pages/*.html                  static/pages/kosis.html      ← 화면 (그리기만)
 ```
+
+> KOSIS는 **캐시를 두지 않는다.** 매번 다른 통계표를 실험하는 화면이라 미리 쌓아 둘 대상이
+> 정해지지 않기 때문이다. 반대로 KRX는 전 종목 시세라 대상이 고정되어 캐시가 이득이다.
 
 | 파일 | 줄 수 | 역할 |
 |------|------|------|
-| `app/clients/krx_data.py` | 371 | KRX HTTP 호출, 인증키 로딩, 대문자 축약 필드 → snake_case 정규화, 집계·정렬 |
+| `app/clients/krx_data.py` | 338 | KRX HTTP 호출, 대문자 축약 필드 → snake_case 정규화, 집계·정렬 |
+| `app/clients/kosis_data.py` | 419 | KOSIS 호출·재시도, 평평한 응답 → 차트용 `series`/`categories` 변환 |
+| `app/routers/kosis_router.py` | 227 | KOSIS 실험 3단계의 DTO 와 엔드포인트 |
+| `app/core/secrets.py` | 85 | KRX·KOSIS 인증키 로딩 (환경변수 → `.env` → `.key`) |
 | `app/repositories/krx_store.py` | 349 | `data/krx_cache.db` 스키마·수집·조회. 병렬 수집과 쓰기 직렬화 |
 | `app/services/market_data.py` | 532 | 종목 지표 계산 → 스크리닝 깔때기 · 효율적 투자선 · 팩터 점수 |
 | `app/routers/market_router.py` | 316 | 분석 API 의 DTO 와 엔드포인트 |
@@ -100,7 +112,7 @@ static/pages/*.html             화면 (받은 값을 그리기만)
 | `app/core/trading_calendar.py` | 61 | 거래일·KST 유틸 (순환 import 방지용 공통 모듈) |
 | `scripts/fetch_krx.py` | 92 | 캐시를 채우는 CLI 수집 스크립트 |
 | `scripts/kosis_rss.py` | 439 | KOSIS 공지 크롤링 → RSS 2.0 변환 (표준 라이브러리만 사용) |
-| `main.py` | 413 | FastAPI 앱, 사용자 CRUD, 화면 라우트 |
+| `main.py` | 429 | FastAPI 앱, 사용자 CRUD, 화면 라우트 |
 
 > `main.py` 만 루트에 남겨 뒀다. 강의에서 쓰는 `uvicorn main:app` 명령을 그대로 쓰기 위해서다.
 > DB·인증키 경로는 파일 위치를 기준으로 계산하므로, 어느 폴더에서 실행해도 같은 파일을 찾는다.
@@ -142,6 +154,23 @@ export KRX_API_KEY='발급받은_인증키'    # 환경변수로 주는 방법
 
 `.key` · `.env` 는 `.gitignore` 에 있으므로 GitHub에 올라가지 않는다.
 **인증키 값은 API 응답에도 절대 담기지 않는다** — `GET /api/krx/status` 는 길이만 알려준다.
+
+### KOSIS 인증키 설정
+
+[kosis.kr/openapi](https://kosis.kr/openapi) 에서 발급받는다. KRX 키와 **같은 `.key` 파일에 나란히** 둘 수 있다.
+
+```text
+# .key  — 두 키를 함께 둔다 (이름이 붙은 줄만 인정하므로 서로 섞이지 않는다)
+KRX_API_KEY = 발급받은_KRX_인증키
+KOSIS_API_KEY = 발급받은_KOSIS_인증키
+```
+
+```bash
+export KOSIS_API_KEY='발급받은_인증키'   # 환경변수로 주는 방법
+```
+
+두 키의 로딩 규칙은 `app/core/secrets.py` 한 곳에 모여 있다.
+KRX 키만 강의 원본 호환을 위해 **값만 한 줄** 적는 형식도 계속 지원한다.
 
 ---
 
@@ -201,20 +230,60 @@ hostname -I            # 표시된 IP 로 http://서버_IP:8000/ 접속
 
 | 주소 | 파일 | 화면 |
 |------|------|------|
-| `/` | `static/pages/index.html` | 홈 · 사용자 API 테스트 |
+| `/` | `static/pages/index.html` | **랜딩** — 화면 안내 · 서버/인증키/캐시 상태 |
+| `/kosis` | `static/pages/kosis.html` | KOSIS 통계 실험실 |
 | `/krx` | `static/pages/krx.html` | KRX 일별 시세 |
 | `/quant` | `static/pages/quant.html` | 퀀트 분석 |
+| `/users` | `static/pages/users.html` | 사용자 API 테스트 (CRUD) |
 | `/tetris` | `static/pages/tetris.html` | Canvas 테트리스 |
-| — | `static/assets/app.css` · `app.js` | 4개 화면 공통 스타일·유틸 |
+| — | `static/assets/app.css` · `app.js` | 6개 화면 공통 스타일·유틸 |
 
-### `/` — 홈 · 사용자 API 테스트
+> 화면 목록은 `static/assets/app.js` 의 `PAGES` 배열 **한 곳**에만 있다.
+> 새 화면을 추가하면 여기 한 줄만 넣으면 모든 화면의 내비게이션에 반영된다.
 
-FastAPI의 기본기를 눌러보는 화면. 상단에 인증키·캐시 상태 배지가 뜬다.
+### `/` — 랜딩
+
+어디로 갈지 고르는 화면. 상단 배지로 **서버 · KRX 인증키 · 시세 캐시 · KOSIS 인증키** 상태를 한눈에 보여준다.
+세 상태 요청은 서로 무관하므로 `Promise.allSettled` 로 한꺼번에 보내고, **하나가 실패해도 나머지는 표시**한다.
+
+### `/users` — 사용자 API 테스트
+
+FastAPI의 기본기를 눌러보는 화면.
 
 - `GET /health` — 서버 상태 (초록/빨강 점으로 표시)
 - `GET /users` — Mock 30명 조회, 화면 내 검색, 평균 나이 등 통계 타일
 - `GET /users/{id}` — 단건 조회 + **`404`·`422` 를 일부러 내보는 버튼**
 - `POST /users` — 생성 후 목록 자동 갱신, 방금 만든 행을 강조
+
+### `/kosis` — KOSIS 통계 실험실 ★
+
+국가통계포털 OpenAPI를 **직접 실험하는** 화면. 어떤 통계표든 골라 바로 시각화한다.
+KRX처럼 미리 정해둔 지표를 보여주는 게 아니라, **파라미터를 조립해 호출해 보는** 것이 목적이다.
+
+```
+1단계 찾기          2단계 조립                     3단계 호출·시각화
+검색어 입력    →    orgId · tblId 자동 채움   →    ApexCharts (꺾은선/영역/막대/도넛)
+GET /search        itmId 는 메타에서 선택         + 데이터 표 + 원본 JSON
+                   prdSe · 기간 · 최대 계열       GET /data
+                   GET /meta
+```
+
+| 단계 | 하는 일 |
+|------|---------|
+| **1. 통계표 찾기** | 이름으로 검색해 `orgId`(기관) + `tblId`(통계표) 두 코드를 얻는다. 행을 클릭하면 2단계가 자동으로 채워진다 |
+| **2. 파라미터 조립** | 항목(`itmId`)은 통계표 메타에서 받아 **선택지로 채운다**. 기간은 *최근 N개* 또는 *시작~종료* 중 하나. 나갈 요청 URL을 실시간으로 보여준다 |
+| **3. 결과·시각화** | 응답 시간·행 수·계열 수·갱신일 타일 + 차트 4종 전환 + 표 + 원본 JSON |
+
+설계에서 중요한 점 세 가지.
+
+- **인증키는 서버 밖으로 나가지 않는다.** 화면에 보여주는 KOSIS 요청 URL에서도 `apiKey` 를 뺀다.
+  브라우저는 언제나 내 서버(`/api/kosis/...`)만 부른다.
+- **차트 변환은 서버가 한다.** KOSIS 응답은 (기간 × 분류 × 항목)이 한 줄씩 평평하게 늘어선 형태라
+  그대로는 그릴 수 없다. `app/clients/kosis_data.py` 의 `build_chart()` 가
+  `categories`(가로축) + `series`(계열)로 뒤집어 준다. 화면은 받은 값을 그리기만 한다.
+- **자른 것은 반드시 알린다.** 지역별 통계처럼 계열이 250개가 넘으면 차트가 읽히지 않으므로
+  최근 값이 큰 순으로 남기고, **몇 개를 생략했는지 화면에 경고로 표시**한다.
+  조용히 자르면 전부 본 것으로 오해하게 된다.
 
 ### `/krx` — KRX 일별 시세
 
@@ -296,6 +365,23 @@ HTML5 `<canvas>` 2D 컨텍스트만으로 만든 게임. 외부 라이브러리 
 
 `GET /api/krx/stocks` 파라미터: `bas_dd`(YYYYMMDD) · `market`(KOSPI·KOSDAQ) · `q`(검색) ·
 `sort`(value·volume·change_rate·close·market_cap·code·name) · `order`(desc·asc) · `page` · `size`
+
+### KOSIS 통계 — `/api/kosis/...`
+
+| Method | Path | 설명 | 성공 |
+|--------|------|------|------|
+| GET | `/api/kosis/status` | 인증키 상태 (**키 값은 노출 안 함**) | 200 |
+| GET | `/api/kosis/search?q=소비자물가&size=10` | 1단계 — 통계표 검색 | 200 |
+| GET | `/api/kosis/meta?org_id=101&tbl_id=DT_1J22042` | 2단계 — 항목(ITM)·기간(PRD) 메타 | 200 |
+| GET | `/api/kosis/data?org_id=101&tbl_id=DT_1J22042&itm_id=T03&prd_se=M&period_count=12` | 3단계 — 수치 + 차트 데이터 | 200 |
+
+`GET /api/kosis/data` 파라미터:
+`org_id`(기관) · `tbl_id`(통계표) · `itm_id`(항목, 기본 `ALL`) · `obj_l1`(분류1, 기본 `ALL`) ·
+`prd_se`(주기 Y·H·Q·M·D) · `period_count`(최근 N개) 또는 `start_period`+`end_period` ·
+`max_series`(차트 최대 계열, 기본 12)
+
+응답의 `chart.series` · `chart.categories` 는 **ApexCharts에 그대로 넣을 수 있는 형태**이고,
+`meta` 에는 응답 시간·전체 행 수·잘라낸 계열 수와 **`apiKey` 를 뺀 실제 KOSIS 요청 URL** 이 들어 있다.
 
 ### 시장 분석 — `/api/...`
 
@@ -385,6 +471,13 @@ curl http://127.0.0.1:8000/users/999          # → 404
 curl -X POST http://127.0.0.1:8000/users \
   -H "Content-Type: application/json" \
   -d '{"username":"hong","email":"hong@example.com","age":30}'
+
+# 7) KOSIS 실험 3단계 — 화면이 하는 일을 그대로 따라간다
+curl http://127.0.0.1:8000/api/kosis/status                    # 인증키 확인
+curl -G http://127.0.0.1:8000/api/kosis/search \
+  --data-urlencode "q=소비자물가" --data "size=3"               # 1단계: tblId 얻기
+curl "http://127.0.0.1:8000/api/kosis/meta?org_id=101&tbl_id=DT_1J22042"   # 2단계: itmId 후보
+curl "http://127.0.0.1:8000/api/kosis/data?org_id=101&tbl_id=DT_1J22042&itm_id=T03&prd_se=M&period_count=12"
 ```
 
 ---
