@@ -96,7 +96,10 @@ def _load_master() -> Dict[str, dict]:
     by_name: Dict[str, dict] = {}
     try:
         raw = json.loads(MASTER_PATH.read_text(encoding="utf-8"))
-        for code, (name, market) in raw.items():
+        # 값은 [종목명, 시장, 시총순위] — 순위는 자동완성 정렬용이라 여기서는 안 쓴다.
+        # 원소 개수가 늘어도 깨지지 않도록 앞 두 개만 꺼낸다.
+        for code, value in raw.items():
+            name, market = (list(value) + ["", ""])[:2]
             item = {"code": code, "name": name, "market": market}
             by_code[code] = item
             # 같은 이름이 여러 개면 먼저 나온(코드가 작은) 쪽을 남긴다.

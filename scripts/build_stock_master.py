@@ -42,11 +42,14 @@ def build() -> dict:
     검색 결과가 엉뚱해진다. "지금 거래되는 종목" 만 담는 편이 맞다.
     """
     with store.connect() as conn:
+        # 시가총액이 큰 순으로 뽑는다. 이 순서가 곧 "유명한 정도"의 근사값이라
+        # 자동완성에서 무엇을 먼저 보여줄지 정하는 데 쓴다.
+        # (삼성을 치면 삼성화재보다 삼성전자가 먼저 나와야 한다.)
         rows = conn.execute(
             """
-            SELECT code, name, market FROM daily_price
+            SELECT code, name, market, market_cap FROM daily_price
             WHERE bas_dd = (SELECT MAX(bas_dd) FROM daily_price)
-            ORDER BY code
+            ORDER BY COALESCE(market_cap, 0) DESC, code
             """
         ).fetchall()
 
@@ -55,8 +58,13 @@ def build() -> dict:
             "시세 캐시가 비어 있습니다. 먼저 `python3 scripts/fetch_krx.py` 를 실행하세요."
         )
 
-    # {종목코드: [종목명, 시장]} — 배열로 두면 키 이름이 반복되지 않아 파일이 작아진다
-    return {row["code"]: [row["name"], row["market"]] for row in rows}
+    # {종목코드: [종목명, 시장, 시총순위]}
+    # 배열로 두면 키 이름이 반복되지 않아 파일이 작아진다.
+    # 시총순위는 1부터. 금액을 그대로 담으면 파일이 커지고, 순위만 있으면 정렬에 충분하다.
+    return {
+        row["code"]: [row["name"], row["market"], rank]
+        for rank, row in enumerate(rows, start=1)
+    }
 
 
 def main() -> None:
@@ -72,7 +80,8 @@ def main() -> None:
         data = json.loads(MASTER_PATH.read_text(encoding="utf-8"))
         size_kb = MASTER_PATH.stat().st_size / 1024
         markets: dict = {}
-        for _name, market in data.values():
+        for value in data.values():
+            market = value[1]
             markets[market] = markets.get(market, 0) + 1
         print(f"✅ {MASTER_PATH.relative_to(BASE_DIR)} — {len(data):,}종목 · {size_kb:.0f}KB")
         print(f"   시장별: {markets}")

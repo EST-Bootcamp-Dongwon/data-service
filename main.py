@@ -18,6 +18,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 # 파일 경로 계산용
 from pathlib import Path
+# 시작·종료 시 한 번씩 실행할 작업을 정의하는 데 쓴다
+from contextlib import asynccontextmanager
 
 # /docs 에 표시할 설명 글 (분량이 길어 별도 파일로 뺐다)
 from app.core.api_docs import API_DESCRIPTION, TAGS_METADATA
@@ -28,7 +30,11 @@ from app.routers.krx_router import router as krx_router         # KRX 일별 시
 from app.routers.kosis_router import router as kosis_router     # KOSIS 통계   (/api/kosis/...)
 from app.routers.market_router import router as market_router   # 분석 API     (/api/...)
 from app.routers.fred_router import router as fred_router       # FRED 거시지표 (/api/fred/...)
+from app.routers.search_router import router as search_router   # 종목 자동완성  (/api/search)
 from app.routers import page_router                             # 화면 (HTML)
+
+# 자동완성 색인 — 서버가 뜰 때 메모리에 올려 둔다 (아래 lifespan 참고)
+from app.services import search_service
 
 # 야후 파이낸스를 쓰는 두 기능(야후 시세·종목 통합 조회)은 외부 라이브러리(yfinance)에 기댄다.
 # 설치돼 있지 않아도 나머지 화면·API 는 그대로 뜨도록 import 실패를 흡수한다.
@@ -42,10 +48,33 @@ except ModuleNotFoundError as error:
 
 
 # --------------------------------------------------
+# 시작 시 준비 작업
+# --------------------------------------------------
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """서버가 뜰 때 한 번 실행된다.
+
+    자동완성(`/api/search`)은 입력할 때마다 호출되므로 파일을 그때그때 읽으면 느리다.
+    종목 목록(국내 2,764 + 미국 12,650)을 **여기서 메모리에 한 번만** 올려 두고,
+    이후 검색은 메모리만 훑는다.
+
+    마스터 파일이 없어도 서버는 떠야 하므로 실패는 로그만 남기고 넘어간다.
+    (그 경우 첫 검색 때 다시 시도한다 — `get_index()` 가 지연 로딩도 함께 지원한다.)
+    """
+    try:
+        count = search_service.warm_up()
+        print(f"[준비] 자동완성 색인 {count:,}종목을 메모리에 올렸습니다.")
+    except Exception as error:      # 파일 손상 등 — 서버 기동을 막지는 않는다
+        print(f"[안내] 자동완성 색인 준비 실패 — {error}")
+    yield                            # 여기서부터 요청을 받는다
+
+
+# --------------------------------------------------
 # 앱 생성
 # --------------------------------------------------
 # 여기에 넘긴 값들은 전부 /docs 문서에 반영된다.
 app = FastAPI(
+    lifespan=lifespan,               # 위에서 정의한 시작 준비 작업
     title="My FastAPI Backend",          # 문서 최상단 제목
     description=API_DESCRIPTION,         # 제목 아래 마크다운 설명
     version="1.0.0",                     # API 버전 (문서 표시용)
@@ -85,6 +114,7 @@ app.include_router(user_router)
 app.include_router(krx_router)
 app.include_router(kosis_router)
 app.include_router(fred_router)
+app.include_router(search_router)
 if yf_router is not None:                # yfinance 가 없으면 이 두 라우터만 빠진다
     app.include_router(yf_router)
     app.include_router(stock_router)
