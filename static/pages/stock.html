@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>종목 통합 조회 — 국내·미국 주가 + FRED 거시지표</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%8E%3C/text%3E%3C/svg%3E" />
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts@4/dist/apexcharts.min.js"></script>
+  <link rel="stylesheet" href="/static/assets/app.css" />
+  <style>
+    /* 이 화면에서만 쓰는 규칙 */
+
+    /* 검색줄 — 입력창을 넓게 잡고 버튼을 옆에 붙인다 */
+    .searchbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .searchbar input {
+      flex: 1 1 260px; min-width: 200px;
+      font-size: 16px; padding: 9px 12px;   /* 모바일에서 확대되지 않도록 16px 이상 */
+    }
+    .searchbar button { padding: 9px 20px; font-size: 14px; }
+
+    /* 예시 종목 버튼 */
+    .examples { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+    .examples button { padding: 3px 10px; font-size: 12px; }
+    .examples .sep { width: 1px; height: 16px; background: var(--border); margin: 0 4px; }
+
+    /* 종목 요약 머리말 */
+    .quote-head {
+      display: flex; flex-wrap: wrap; gap: 14px 20px;
+      align-items: baseline; justify-content: space-between;
+    }
+    .quote-name { font-size: 19px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .quote-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .quote-price { display: flex; align-items: baseline; gap: 10px; font-family: var(--mono); }
+    .quote-price .now { font-size: 30px; font-weight: 700; letter-spacing: -0.5px; }
+    .quote-price .cur { font-size: 13px; color: var(--muted); }
+    .quote-price .chg { font-size: 15px; font-weight: 600; }
+
+    /* 시장 구분 배지 — 한국은 파랑, 미국은 보라 계열로 눈에 띄게 */
+    .flag { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); }
+    .flag.kr { border-color: var(--accent); color: var(--accent); }
+    .flag.us { border-color: #8b5cf6; color: #8b5cf6; }
+
+    /* 거시지표 선택 칩 */
+    .macro-groups { display: flex; flex-direction: column; gap: 10px; }
+    .macro-group { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .macro-group > .g { font-size: 12px; color: var(--muted); min-width: 44px; }
+    .macro-chip {
+      font-size: 12px; padding: 4px 11px; border-radius: 999px; cursor: pointer;
+      background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+    }
+    .macro-chip:hover { border-color: var(--accent); }
+    .macro-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+    /* 상관계수 표의 막대 — 0을 가운데 두고 좌우로 뻗는다 */
+    .corr-bar { position: relative; height: 8px; background: var(--surface-2); border-radius: 4px; min-width: 90px; }
+    .corr-bar i { position: absolute; top: 0; height: 8px; border-radius: 4px; }
+    .corr-bar .zero { position: absolute; left: 50%; top: -3px; width: 1px; height: 14px; background: var(--border); }
+
+    .err {
+      font-size: 13px; padding: 11px 13px; border-radius: 8px; margin-bottom: 12px;
+      background: var(--error-soft); border: 1px solid var(--error); color: var(--text);
+      line-height: 1.6;
+    }
+    .cmd {
+      font-family: var(--mono); font-size: 12px; line-height: 1.9;
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 12px; overflow-x: auto; white-space: pre; margin: 0;
+    }
+    .cmd b { color: var(--accent); font-weight: 600; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page-head">
+    <div>
+      <h1>🔎 종목 통합 조회</h1>
+      <p><b>엔드포인트 하나</b>로 한국 주식과 미국 주식을 모두 조회한다.
+         <code>005930</code>·<code>삼성전자</code>·<code>AAPL</code> 무엇을 넣어도 서버가 알아서 판별하고,
+         원하면 <b>FRED 거시지표</b>를 같은 차트에 겹쳐 볼 수 있다.</p>
+    </div>
+    <nav class="nav" id="nav"></nav>
+  </header>
+
+  <div class="badges" id="badges"></div>
+
+  <!-- ── 검색 ─────────────────────────────────── -->
+  <section class="card">
+    <h2>종목 검색 <span class="chip">GET /api/stock/{ticker}</span></h2>
+    <p class="hint">
+      국내는 <b>종목코드 6자리</b>(<code>005930</code>)나 <b>한글 종목명</b>(<code>삼성전자</code>),
+      미국은 <b>티커</b>(<code>AAPL</code>)를 넣는다.
+      코스피·코스닥 접미사(<code>.KS</code>·<code>.KQ</code>)는 서버가 KRX 시장 구분을 보고 알아서 붙인다.
+    </p>
+    <div class="searchbar">
+      <input id="ticker" type="search" value="005930" placeholder="005930 · 삼성전자 · AAPL" autocomplete="off" />
+      <button id="btnSearch">검색</button>
+    </div>
+    <div class="examples" id="examples">
+      <span class="hint" style="margin:0">예시:</span>
+    </div>
+    <div class="controls" style="margin-top:12px">
+      <span class="hint" style="margin:0">기간</span>
+      <div class="pillbar" id="periodBar">
+        <button class="pill" data-m="1">1개월</button>
+        <button class="pill" data-m="3">3개월</button>
+        <button class="pill on" data-m="6">6개월</button>
+        <button class="pill" data-m="12">1년</button>
+      </div>
+      <span class="status" id="status">검색 버튼을 눌러 주세요</span>
+    </div>
+  </section>
+
+  <div id="err"></div>
+
+  <!-- ── 종목 요약 ─────────────────────────────── -->
+  <section class="card" id="summaryCard" hidden>
+    <div class="quote-head">
+      <div>
+        <div class="quote-name" id="quoteName">-</div>
+        <div class="quote-sub" id="quoteSub"></div>
+      </div>
+      <div class="quote-price">
+        <span class="now" id="quoteNow">-</span>
+        <span class="cur" id="quoteCur"></span>
+        <span class="chg" id="quoteChg"></span>
+      </div>
+    </div>
+  </section>
+
+  <div class="tiles" id="tiles"></div>
+
+  <!-- ── 주가 차트 ─────────────────────────────── -->
+  <section class="card">
+    <h2>일별 종가 <span class="muted" id="chartTitle"></span></h2>
+    <p class="hint">
+      종가 꺾은선에 <b>이동평균 5·20·60일</b>을 겹쳐 그린다.
+      아래 거시지표를 켜면 <b>시작을 100으로 맞춘 값</b>으로 같은 그림에 얹는다
+      (금리 4.67%와 주가 262,500원은 자릿수가 달라 그대로는 겹칠 수 없다).
+    </p>
+    <div class="chart" id="chartPrice" style="min-height:420px">
+      <p class="empty">검색하면 여기에 차트가 그려집니다.</p>
+    </div>
+    <div class="chart small" id="chartVolume"></div>
+  </section>
+
+  <!-- ── FRED 거시지표 ─────────────────────────── -->
+  <section class="card">
+    <h2>미국 거시지표 겹쳐 보기 <span class="chip">FRED</span></h2>
+    <p class="hint">
+      미국 연준(FRED)의 금리·환율·물가 데이터를 주가 <b>거래일에 맞춰</b> 붙인다.
+      발표 주기가 다르므로(금리는 일별, 물가는 월별) <b>직전 발표치를 다음 발표 전까지 이어 쓴다</b>.
+      아직 발표되지 않은 값을 끌어오면 미래 정보가 새어 들기 때문에 항상 과거 방향으로만 채운다.
+    </p>
+    <div class="macro-groups" id="macroChips">
+      <span class="hint" style="margin:0">지표 목록을 불러오는 중…</span>
+    </div>
+
+    <div id="corrWrap" hidden style="margin-top:16px">
+      <h2 style="font-size:15px">주가와의 상관계수 <span class="muted">— 일간 변화율 기준</span></h2>
+      <p class="hint">
+        가격 수준끼리 비교하면 둘 다 우상향한다는 이유만으로 상관이 높게 나온다(허위 상관).
+        그래서 <b>하루하루의 변화율</b>로 바꿔서 계산한다. <b>+1</b>에 가까우면 같이 오르고,
+        <b>-1</b>에 가까우면 반대로 움직인다는 뜻이다.
+        <b>월별 지표</b>는 값이 한 달간 그대로여서 상관계수가 0에 가깝게 나오니 참고만 한다.
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>지표</th><th>최근값</th><th>발표주기</th><th style="width:120px">상관계수</th><th></th><th>해석</th></tr>
+          </thead>
+          <tbody id="corrBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── FRED 지표 검색 ────────────────────────── -->
+  <section class="card">
+    <h2>FRED 지표 검색 <span class="chip">GET /api/fred/search</span></h2>
+    <p class="hint">
+      위 목록은 주가와 같이 보기 좋은 것만 골라 둔 것이다. FRED 에는 시리즈가 <b>80만 개</b> 있으므로,
+      필요한 지표는 영어로 검색해서 <b>시리즈 ID</b>를 찾은 뒤 클릭하면 차트에 바로 얹힌다.
+    </p>
+    <div class="controls">
+      <input id="fredQuery" type="search" placeholder="unemployment · oil price · housing" autocomplete="off" style="min-width:220px" />
+      <button id="btnFredSearch" class="ghost">검색</button>
+      <span class="status" id="fredStatus"></span>
+    </div>
+    <div class="table-scroll" style="margin-top:12px">
+      <table>
+        <thead><tr><th>ID</th><th>제목</th><th>단위</th><th>주기</th><th></th></tr></thead>
+        <tbody id="fredBody"><tr><td class="empty" colspan="5">검색어를 입력해 주세요.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── API 응답 원문 ─────────────────────────── -->
+  <section class="card">
+    <h2>API 응답 원문 <span class="muted">— 화면이 실제로 받은 값</span></h2>
+    <p class="hint">
+      화면은 이 JSON을 그리기만 한다. 티커 판별·이동평균·날짜 정렬·상관계수는 전부 서버에서 끝난다.
+      배열이 길어 <code>dates</code>·<code>prices</code>는 앞뒤 3개만 줄여서 보여 준다.
+    </p>
+    <pre class="out" id="raw">아직 검색하지 않았습니다.</pre>
+  </section>
+
+  <!-- ── 터미널에서 확인하기 ───────────────────── -->
+  <section class="card">
+    <h2>터미널에서 같은 API 호출하기</h2>
+<pre class="cmd"><b>curl 'http://127.0.0.1:8000/api/stock/005930'</b>                        # 국내 (코스피)
+<b>curl 'http://127.0.0.1:8000/api/stock/247540'</b>                        # 국내 (코스닥 → .KQ 자동)
+<b>curl 'http://127.0.0.1:8000/api/stock/AAPL?months=3'</b>                 # 미국 · 3개월
+<b>curl 'http://127.0.0.1:8000/api/stock/005930?macro=DGS10,DEXKOUS'</b>    # 거시지표 융합
+<b>curl 'http://127.0.0.1:8000/api/fred/series/DGS10'</b>                   # FRED 단독 조회</pre>
+    <p class="hint" style="margin-bottom:0">
+      화면도 같은 방식으로 주소에 상태를 담는다. 지금 보고 있는 화면의 주소를 그대로 복사해 넘기면 된다 —
+      <code>/stock?ticker=AAPL&amp;months=3&amp;macro=DGS10,VIXCLS</code>
+    </p>
+  </section>
+</div>
+
+<script src="/static/assets/app.js"></script>
+<script>
+(() => {
+  'use strict';
+  App.renderNav('stock');
+
+  const $ = (id) => document.getElementById(id);
+  const charts = {};                        // ApexCharts 인스턴스 보관 (다시 그릴 때 파괴용)
+
+  // 화면 상태 — 지금 보고 있는 종목·기간·켜 둔 거시지표
+  const state = {
+    ticker: '005930',
+    months: 6,
+    currency: 'KRW',
+    macro: new Set(),                       // 선택한 FRED 시리즈 ID
+    last: null,                             // 마지막 응답 (지표만 바꿀 때 재사용)
+  };
+
+  /** HTML 특수문자를 이스케이프한다. */
+  function esc(v) {
+    return String(v ?? '').replace(/[&<>"]/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  }
+
+  /** 통화에 맞춰 가격을 적는다. 원·엔은 정수, 나머지는 소수 둘째 자리까지. */
+  function price(v, currency = state.currency) {
+    if (v == null) return '-';
+    const digits = (currency === 'KRW' || currency === 'JPY') ? 0 : 2;
+    return App.num(v, digits);
+  }
+
+  // ==================================================
+  // 1. 종목 검색
+  // ==================================================
+  async function search() {
+    const input = $('ticker').value.trim();
+    if (!input) { showError('종목 코드나 티커를 입력해 주세요.'); return; }
+
+    state.ticker = input;
+    $('btnSearch').disabled = true;
+    $('status').textContent = '조회 중…';
+    showError('');
+
+    // 선택한 거시지표를 쿼리스트링으로 함께 넘긴다 (한 번의 요청으로 주가+지표를 받는다)
+    const macro = [...state.macro].join(',');
+    const query = `months=${state.months}${macro ? `&macro=${encodeURIComponent(macro)}` : ''}`;
+
+    try {
+      const data = await App.get(`/api/stock/${encodeURIComponent(input)}?${query}`);
+      state.last = data;
+      state.currency = data.currency;
+      // 서버가 해석한 값으로 입력창을 되돌려 준다 ("삼성전자" → 그대로 두되 티커는 배지로 보여 준다)
+      render(data);
+      syncQueryString();                  // 지금 화면을 그대로 링크로 넘길 수 있게 주소를 맞춘다
+      $('status').textContent =
+        `조회 완료 — ${data.count}거래일 · ${data.fetched_at} · ${data.elapsed_ms}ms`;
+    } catch (error) {
+      // 잘못된 티커는 서버가 404 와 함께 안내 문구를 준다. 그대로 보여 준다.
+      showError(error.message);
+      $('status').textContent = '조회 실패';
+      $('summaryCard').hidden = true;
+      $('tiles').innerHTML = '';
+      $('corrWrap').hidden = true;
+      state.last = null;
+    }
+    $('btnSearch').disabled = false;
+  }
+
+  function render(data) {
+    renderSummary(data);
+    renderTiles(data);
+    drawPrice(data);
+    drawVolume(data);
+    renderCorrelation(data);
+    renderRaw(data);
+  }
+
+  /** 상단 요약 — 종목명 · 현재가 · 등락 */
+  function renderSummary(d) {
+    $('summaryCard').hidden = false;
+
+    const flag = d.market === 'KR'
+      ? '<span class="flag kr">🇰🇷 한국</span>'
+      : '<span class="flag us">🇺🇸 미국·해외</span>';
+
+    $('quoteName').innerHTML = `${esc(d.name)} ${flag}
+      <span class="chip">${esc(d.ticker)}</span>
+      ${d.market_detail ? `<span class="chip">${esc(d.market_detail)}</span>` : ''}`;
+
+    // 출처를 밝혀 둔다 — 야후가 막혔을 때 KRX 캐시로 그린 그림인지 구분할 수 있어야 한다
+    const source = d.source === 'krx-cache'
+      ? 'KRX 캐시(data/krx_cache.db) — 야후 파이낸스 조회에 실패해 저장해 둔 시세로 그렸습니다'
+      : '야후 파이낸스 (yfinance)';
+    const en = d.name_en ? ` · ${esc(d.name_en)}` : '';
+    $('quoteSub').textContent = `출처: ${source}${en} · ${d.months}개월 · 입력 "${d.input}"`;
+
+    const cls = App.signClass(d.change.rate);
+    $('quoteNow').textContent = price(d.current, d.currency);
+    $('quoteNow').className = `now ${cls}`;
+    $('quoteCur').textContent = d.currency || '';
+    $('quoteChg').className = `chg ${cls}`;
+    $('quoteChg').textContent = d.change.diff == null ? ''
+      : `${App.signed(d.change.diff, d.currency === 'KRW' ? 0 : 2)} (${App.signed(d.change.rate, 2)}%)`;
+  }
+
+  /** 요약 타일 — 구간 수익률 · 최저/최고 · 거래량 등 */
+  function renderTiles(d) {
+    const rateCls = App.signClass(d.period_change_rate);
+    const tiles = [
+      { label: `${d.months}개월 수익률`, value: `${App.signed(d.period_change_rate, 2)}%`,
+        sub: `${d.dates[0]} 이후`, cls: rateCls },
+      { label: '구간 최저 종가', value: price(d.period_low, d.currency), sub: d.currency },
+      { label: '구간 최고 종가', value: price(d.period_high, d.currency), sub: d.currency },
+      { label: '최근 거래량', value: App.num(d.volume), sub: '주' },
+      { label: '거래일 수', value: App.num(d.count), sub: '일' },
+    ];
+    // 52주 범위·시가총액은 야후로 조회했을 때만 값이 있다
+    if (d.week52_low != null && d.week52_high != null) {
+      tiles.push({ label: '52주 범위',
+        value: `${price(d.week52_low, d.currency)} ~ ${price(d.week52_high, d.currency)}`,
+        sub: '최저 ~ 최고', small: true });
+    }
+
+    $('tiles').innerHTML = tiles.map((t) => `
+      <div class="tile">
+        <div class="tile-label">${esc(t.label)}</div>
+        <div class="tile-value ${t.cls || ''}" ${t.small ? 'style="font-size:15px"' : ''}>${esc(t.value)}</div>
+        <div class="tile-sub">${esc(t.sub)}</div>
+      </div>`).join('');
+  }
+
+  /**
+   * 주가 차트 — 종가 + 이동평균 + (선택) 거시지표.
+   * 거시지표는 단위가 달라 그대로 겹칠 수 없으므로 **보조 Y축 + 시작 100 기준(rebased)** 으로 얹는다.
+   * 주가도 같은 축에서 비교되도록 함께 100 기준으로 바꾼다.
+   */
+  function drawPrice(d) {
+    const macro = (d.macro || []).filter((m) => m.ok);
+    const hasMacro = macro.length > 0;
+
+    $('chartTitle').textContent = hasMacro
+      ? `— ${d.name} 와 거시지표 ${macro.length}종 (시작 100 기준)`
+      : `— ${d.name} · ${d.months}개월`;
+
+    // 거시지표를 켜면 전부 100 기준으로 바꿔 같은 눈금에서 비교한다.
+    // 끄면 실제 가격 그대로 그려 금액을 읽을 수 있게 한다.
+    const base = d.prices.find((p) => p != null) || 1;
+    const toBase = (arr) => arr.map((v) => (v == null ? null : +(v / base * 100).toFixed(3)));
+
+    const series = [{
+      name: hasMacro ? `${d.name} (100 기준)` : d.name,
+      type: 'line',
+      data: hasMacro ? toBase(d.prices) : d.prices,
+    }];
+    const colors = [App.color('accent')];
+    const widths = [2.4];
+    const dashes = [0];
+
+    // 이동평균 — 거시지표를 켜면 선이 너무 많아지므로 20일 하나만 남긴다
+    const maList = hasMacro
+      ? d.moving_averages.filter((m) => m.period === 20)
+      : d.moving_averages;
+    const maColors = { 5: '#f59e0b', 20: '#10b981', 60: '#8b5cf6' };
+    maList.forEach((ma) => {
+      series.push({ name: `${ma.period}일 이동평균`, type: 'line',
+                    data: hasMacro ? toBase(ma.values) : ma.values });
+      colors.push(maColors[ma.period] || App.color('muted'));
+      widths.push(1.3);
+      dashes.push(0);
+    });
+
+    // 거시지표 — 점선으로 그려 주가와 구분한다
+    const macroColors = ['#ef4444', '#0ea5e9', '#a855f7', '#f97316', '#14b8a6', '#eab308'];
+    macro.forEach((m, i) => {
+      series.push({ name: `${m.label} (100 기준)`, type: 'line', data: m.rebased });
+      colors.push(macroColors[i % macroColors.length]);
+      widths.push(1.8);
+      dashes.push(5);
+    });
+
+    App.draw(charts, 'chartPrice', {
+      chart: { id: 'stockPrice', type: 'line', height: 420,
+               toolbar: { show: true, autoSelected: 'zoom' }, zoom: { enabled: true },
+               animations: { enabled: false } },
+      series,
+      colors,
+      stroke: { width: widths, dashArray: dashes, curve: 'straight' },
+      dataLabels: { enabled: false },
+      markers: { size: 0, hover: { size: 5 } },
+      xaxis: {
+        categories: d.dates,
+        type: 'category',
+        // 거래일이 120개가 넘어 라벨을 다 쓰면 겹친다. 8개만 띄운다.
+        tickAmount: 8,
+        labels: { rotate: 0, hideOverlappingLabels: true },
+      },
+      yaxis: {
+        labels: { formatter: (v) => (hasMacro ? App.num(v, 1) : price(v, d.currency)) },
+        title: { text: hasMacro ? '시작일 = 100' : `종가 (${d.currency})`,
+                 style: { fontWeight: 500 } },
+      },
+      tooltip: {
+        shared: true, intersect: false,
+        x: { show: true },
+        y: {
+          // 100 기준으로 그렸어도 툴팁에는 실제 값을 보여 줘야 읽을 수 있다
+          formatter: (v, opts) => {
+            if (v == null) return '-';
+            const idx = opts.seriesIndex;
+            const point = opts.dataPointIndex;
+            if (!hasMacro) return `${price(v, d.currency)} ${d.currency}`;
+            if (idx === 0) return `${price(d.prices[point], d.currency)} ${d.currency} (${App.num(v, 1)})`;
+            const macroIdx = idx - 1 - maList.length;
+            if (macroIdx >= 0 && macro[macroIdx]) {
+              const real = macro[macroIdx].values[point];
+              return `${App.num(real, 2)} ${macro[macroIdx].unit} (${App.num(v, 1)})`;
+            }
+            return App.num(v, 1);
+          },
+        },
+      },
+      legend: { show: true, position: 'top', horizontalAlign: 'left' },
+      grid: { borderColor: App.color('border'), strokeDashArray: 3 },
+    });
+  }
+
+  /** 거래량 막대 — 상승일 빨강 · 하락일 파랑 (국내 증시 관행) */
+  function drawVolume(d) {
+    const data = d.volumes.map((v, i) => {
+      const prev = i > 0 ? d.prices[i - 1] : null;
+      const up = prev == null ? 0 : d.prices[i] - prev;
+      return { x: d.dates[i], y: v, fillColor: App.signColor(up) };
+    });
+
+    App.draw(charts, 'chartVolume', {
+      chart: { type: 'bar', height: 150, toolbar: { show: false }, animations: { enabled: false } },
+      series: [{ name: '거래량', data }],
+      // rotate: 0 — 기본값(-45°)이면 날짜가 기울어져 겹친다. 위 주가 차트와 눈금을 맞춘다.
+      xaxis: { type: 'category', tickAmount: 8,
+               labels: { rotate: 0, hideOverlappingLabels: true } },
+      yaxis: {
+        // 국내는 '만 주', 해외는 백만 주 단위가 읽기 편하다
+        labels: { formatter: (v) => (d.currency === 'KRW'
+          ? `${App.num(Math.round(v / 10000))}만` : `${App.num(v / 1e6, 1)}M`) },
+        tickAmount: 2,
+      },
+      plotOptions: { bar: { columnWidth: '70%' } },
+      dataLabels: { enabled: false },
+      legend: { show: false },
+      tooltip: { y: { formatter: (v) => `${App.num(v)} 주` } },
+    });
+  }
+
+  // ==================================================
+  // 2. 상관계수 표
+  // ==================================================
+  function renderCorrelation(d) {
+    const macro = d.macro || [];
+    if (!macro.length) { $('corrWrap').hidden = true; return; }
+    $('corrWrap').hidden = false;
+
+    $('corrBody').innerHTML = macro.map((m) => {
+      if (!m.ok) {
+        return `<tr><td>${esc(m.series_id)}</td>
+                <td colspan="5" class="down">조회 실패 — ${esc(m.error)}</td></tr>`;
+      }
+      const c = m.correlation;
+      const cls = App.signClass(c);
+      // 막대는 가운데(0)에서 좌우로 뻗는다. 폭은 |상관계수| 에 비례한다.
+      const pct = c == null ? 0 : Math.min(Math.abs(c), 1) * 50;
+      const bar = c == null ? ''
+        : `<i style="${c >= 0 ? 'left:50%' : `right:50%`};width:${pct}%;
+             background:${c >= 0 ? App.color('up') : App.color('down')}"></i>`;
+
+      return `<tr>
+        <td><b>${esc(m.label)}</b><br /><span class="muted" style="font-size:11px">${esc(m.series_id)}</span></td>
+        <td class="mono">${App.num(m.latest, 2)} ${esc(m.unit)}<br /><span class="muted" style="font-size:11px">${esc(m.latest_date)}</span></td>
+        <td>${esc(m.frequency)}</td>
+        <td class="mono ${cls}"><b>${c == null ? '-' : (c > 0 ? '+' : '') + c.toFixed(3)}</b></td>
+        <td><div class="corr-bar"><span class="zero"></span>${bar}</div></td>
+        <td class="muted" style="font-size:12px">${esc(interpret(c, m))}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  /** 상관계수를 말로 풀어 준다. 숫자만 보면 감이 안 오기 때문이다. */
+  function interpret(c, m) {
+    if (c == null) return '계산할 표본이 부족합니다.';
+    if (m.frequency && m.frequency.startsWith('Month')) {
+      return '월별 지표라 하루 단위 상관은 참고만 하세요.';
+    }
+    const abs = Math.abs(c);
+    const dir = c > 0 ? '같은 방향' : '반대 방향';
+    if (abs < 0.1) return '사실상 무관하게 움직였습니다.';
+    if (abs < 0.3) return `약하게 ${dir}으로 움직였습니다.`;
+    if (abs < 0.5) return `뚜렷하게 ${dir}으로 움직였습니다.`;
+    return `강하게 ${dir}으로 움직였습니다.`;
+  }
+
+  /** 배열이 길어 그대로 찍으면 화면을 덮는다. 앞뒤 3개만 남겨 줄인다. */
+  function renderRaw(d) {
+    const shrink = (arr) => (Array.isArray(arr) && arr.length > 8)
+      ? [...arr.slice(0, 3), `… (${arr.length - 6}개 생략)`, ...arr.slice(-3)] : arr;
+    const copy = { ...d };
+    ['dates', 'prices', 'opens', 'highs', 'lows', 'volumes'].forEach((k) => { copy[k] = shrink(copy[k]); });
+    copy.moving_averages = (d.moving_averages || []).map((m) => ({ ...m, values: shrink(m.values) }));
+    copy.macro = (d.macro || []).map((m) => ({ ...m, values: shrink(m.values), rebased: shrink(m.rebased) }));
+    $('raw').textContent = JSON.stringify(copy, null, 2);
+  }
+
+  // ==================================================
+  // 3. 거시지표 선택 칩
+  // ==================================================
+  async function buildMacroChips() {
+    try {
+      const list = await App.get('/api/fred/indicators');
+      // 분류별로 묶어 한 줄씩 보여 준다
+      const groups = {};
+      list.forEach((i) => { (groups[i.group] ||= []).push(i); });
+
+      $('macroChips').innerHTML = Object.entries(groups).map(([group, items]) => `
+        <div class="macro-group">
+          <span class="g">${esc(group)}</span>
+          ${items.map((i) => `
+            <button class="macro-chip" data-id="${esc(i.id)}" title="${esc(i.note)}">${esc(i.label)}</button>
+          `).join('')}
+        </div>`).join('');
+    } catch (error) {
+      $('macroChips').innerHTML =
+        `<span class="hint" style="margin:0">지표 목록을 불러오지 못했습니다 — ${esc(error.message)}</span>`;
+    }
+  }
+
+  // 칩 클릭 — 켜고 끄고 바로 다시 조회한다 (이벤트 위임)
+  $('macroChips').addEventListener('click', (e) => {
+    const btn = e.target.closest('.macro-chip');
+    if (!btn) return;
+    const id = btn.dataset.id;
+    if (state.macro.has(id)) state.macro.delete(id);
+    else state.macro.add(id);
+    btn.classList.toggle('on', state.macro.has(id));
+    if (state.last) search();          // 이미 종목을 보고 있으면 지표만 바꿔 다시 그린다
+  });
+
+  // ==================================================
+  // 4. FRED 지표 검색
+  // ==================================================
+  async function searchFred() {
+    const q = $('fredQuery').value.trim();
+    if (!q) { $('fredStatus').textContent = '검색어를 입력해 주세요.'; return; }
+    $('fredStatus').textContent = '검색 중…';
+    try {
+      const res = await App.get(`/api/fred/search?q=${encodeURIComponent(q)}&limit=15`);
+      $('fredStatus').textContent = `${res.count}건`;
+      $('fredBody').innerHTML = res.rows.length ? res.rows.map((r) => `
+        <tr>
+          <td class="mono">${esc(r.series_id)}</td>
+          <td>${esc(r.title)}</td>
+          <td>${esc(r.unit)}</td>
+          <td>${esc(r.frequency)}</td>
+          <td><button class="ghost" data-add="${esc(r.series_id)}" style="padding:2px 9px;font-size:12px">차트에 추가</button></td>
+        </tr>`).join('')
+        : '<tr><td class="empty" colspan="5">결과가 없습니다.</td></tr>';
+    } catch (error) {
+      $('fredStatus').textContent = `검색 실패: ${error.message}`;
+    }
+  }
+
+  // 검색 결과의 "차트에 추가" — 큐레이션 목록에 없는 지표도 바로 얹을 수 있다
+  $('fredBody').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-add]');
+    if (!btn) return;
+    state.macro.add(btn.dataset.add);
+    btn.textContent = '추가됨 ✓';
+    btn.disabled = true;
+    if (state.last) search();
+  });
+
+  // ==================================================
+  // 5. 화면 조작
+  // ==================================================
+  function showError(message) {
+    $('err').innerHTML = message ? `<div class="err">⚠️ ${esc(message)}</div>` : '';
+  }
+
+  /** 예시 버튼을 서버가 준 목록(국내는 거래대금 상위)으로 만든다. */
+  async function buildExamples() {
+    try {
+      const list = await App.get('/api/stock/samples');
+      const box = $('examples');
+      let lastMarket = '';
+      list.forEach((s) => {
+        // 한국 종목과 미국 종목 사이에 구분선을 넣는다
+        if (lastMarket && s.market !== lastMarket) {
+          box.insertAdjacentHTML('beforeend', '<span class="sep"></span>');
+        }
+        lastMarket = s.market;
+        box.insertAdjacentHTML('beforeend',
+          `<button class="ghost" data-ex="${esc(s.ticker)}">${esc(s.label)}</button>`);
+      });
+    } catch {
+      $('examples').insertAdjacentHTML('beforeend',
+        '<span class="hint" style="margin:0">예시 목록을 불러오지 못했습니다.</span>');
+    }
+  }
+
+  // 예시 버튼 — 입력을 채우고 바로 검색 (이벤트 위임: 버튼이 나중에 추가되므로)
+  $('examples').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-ex]');
+    if (!btn) return;
+    $('ticker').value = btn.dataset.ex;
+    search();
+  });
+
+  // 기간 버튼
+  $('periodBar').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-m]');
+    if (!btn) return;
+    state.months = Number(btn.dataset.m);
+    [...btn.parentNode.children].forEach((b) => b.classList.toggle('on', b === btn));
+    if (state.last) search();
+  });
+
+  $('btnSearch').addEventListener('click', search);
+  $('ticker').addEventListener('keydown', (e) => { if (e.key === 'Enter') search(); });
+  $('btnFredSearch').addEventListener('click', searchFred);
+  $('fredQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') searchFred(); });
+
+  // 상단 배지 — 서버 상태와 FRED 인증키 상태
+  (async () => {
+    const badges = [];
+    try {
+      await App.get('/health');
+      badges.push('<span class="badge ok">✅ 서버<em>정상 동작 중</em></span>');
+    } catch {
+      badges.push('<span class="badge warn">⚠️ 서버<em>응답 없음</em></span>');
+    }
+    badges.push('<span class="badge">📈 주가<em>야후 파이낸스 · 인증키 불필요</em></span>');
+    try {
+      const s = await App.get('/api/fred/status');
+      badges.push(s.key_loaded
+        ? `<span class="badge ok">🔑 FRED<em>인증키 ${s.key_source} · ${s.key_length}자 · 지표 ${s.indicator_count}종</em></span>`
+        : '<span class="badge warn">🔑 FRED<em>인증키 없음 — .key 에 FRED_API_KEY 추가</em></span>');
+    } catch {
+      badges.push('<span class="badge warn">🔑 FRED<em>상태 확인 실패</em></span>');
+    }
+    $('badges').innerHTML = badges.join('');
+  })();
+
+  /**
+   * 주소창의 쿼리스트링으로 첫 화면을 정한다 — `/stock?ticker=AAPL&months=3&macro=DGS10,VIXCLS`
+   *
+   * 지금 보고 있는 화면을 그대로 링크로 넘길 수 있게 하려는 것이다.
+   * (검색할 때마다 주소도 함께 갱신하므로 새로고침·뒤로가기에도 같은 화면이 나온다.)
+   */
+  function applyQueryString() {
+    const params = new URLSearchParams(location.search);
+
+    const ticker = params.get('ticker');
+    if (ticker) $('ticker').value = ticker;
+
+    const months = Number(params.get('months'));
+    if ([1, 3, 6, 12].includes(months)) {
+      state.months = months;
+      [...$('periodBar').children].forEach((b) => b.classList.toggle('on', Number(b.dataset.m) === months));
+    }
+
+    (params.get('macro') || '').split(',').filter(Boolean).forEach((id) => {
+      state.macro.add(id.trim().toUpperCase());
+    });
+    // 큐레이션 칩 중 켜진 것을 표시한다 (검색으로 추가한 지표는 칩이 없어도 그려진다)
+    $('macroChips').querySelectorAll('.macro-chip').forEach((chip) => {
+      chip.classList.toggle('on', state.macro.has(chip.dataset.id));
+    });
+  }
+
+  /** 현재 화면 상태를 주소창에 반영한다. 히스토리를 더럽히지 않도록 replaceState 를 쓴다. */
+  function syncQueryString() {
+    const params = new URLSearchParams({ ticker: state.ticker, months: String(state.months) });
+    if (state.macro.size) params.set('macro', [...state.macro].join(','));
+    history.replaceState(null, '', `${location.pathname}?${params}`);
+  }
+
+  // 첫 진입 — 예시·지표 목록을 만든 뒤 조회한다 (빈 화면으로 시작하지 않도록).
+  // 지표 칩을 먼저 만들어야 쿼리스트링으로 켜 둔 지표를 표시할 수 있다.
+  Promise.all([buildExamples(), buildMacroChips()]).then(() => {
+    applyQueryString();
+    search();
+  });
+})();
+</script>
+</body>
+</html>

@@ -8,6 +8,7 @@
     /krx     → krx.html     KRX 일별 시세
     /kosis   → kosis.html   KOSIS 통계 실험실
     /yf      → yf.html      야후 파이낸스 시세 (scripts/yf.py 와 같은 차트)
+    /stock   → stock.html   종목 통합 조회 (국내·미국 + FRED 거시지표)
     /quant   → quant.html   퀀트 분석 (스크리닝·투자선·팩터)
     /tetris  → tetris.html  Canvas 테트리스
 
@@ -31,6 +32,7 @@ PAGES = {
     "/krx": "krx.html",
     "/kosis": "kosis.html",
     "/yf": "yf.html",
+    "/stock": "stock.html",
     "/quant": "quant.html",
     "/tetris": "tetris.html",
     "/ui": "index.html",       # 기존 링크 호환용
