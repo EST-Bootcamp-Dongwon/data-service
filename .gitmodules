@@ -1,0 +1,3 @@
+[submodule "lecture"]
+	path = lecture
+	url = https://github.com/edumgt/api-test2.git

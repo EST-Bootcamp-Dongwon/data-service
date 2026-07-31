@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My FastAPI Backend — 사용자 관리</title>
+  <!-- 외부 파일 없이 인라인 SVG 로 파비콘 지정 (브라우저의 /favicon.ico 404 방지) -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E" />
+  <!-- 시세 차트용 ApexCharts (CDN) — 오프라인이면 차트 영역에 안내 문구가 표시된다 -->
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts@4/dist/apexcharts.min.js"></script>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --surface: #ffffff;
+      --border: #e3e6ea;
+      --text: #1c2024;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --accent-soft: #eff4ff;
+      --get: #0d9488;
+      --post: #d97706;
+      --error: #dc2626;
+      --error-soft: #fef2f2;
+      --ok: #16a34a;
+      /* 국내 증시 관행: 상승 = 빨강, 하락 = 파랑 (미국과 반대) */
+      --up: #e03131;
+      --down: #1c7ed6;
+      --mono: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
+      --radius: 10px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #16181c;
+        --surface: #1f2226;
+        --border: #32363c;
+        --text: #e7e9ec;
+        --muted: #9aa1ab;
+        --accent: #6294ff;
+        --accent-soft: #232a3a;
+        --get: #2dd4bf;
+        --post: #fbbf24;
+        --error: #f87171;
+        --error-soft: #2c1f21;
+        --ok: #4ade80;
+        --up: #ff6b6b;
+        --down: #4dabf7;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 24px 16px 64px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic",
+                   "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+      line-height: 1.6;
+      font-size: 15px;
+    }
+
+    .wrap { max-width: 1080px; margin: 0 auto; }
+
+    /* ---------- 헤더 ---------- */
+    header { margin-bottom: 24px; }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 1.6rem;
+      letter-spacing: -0.02em;
+    }
+
+    .sub { margin: 0; color: var(--muted); font-size: 0.9rem; }
+
+    .links { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .links a {
+      font-size: 0.8rem;
+      color: var(--accent);
+      text-decoration: none;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      padding: 4px 10px;
+      border-radius: 999px;
+    }
+
+    .links a:hover { border-color: var(--accent); }
+
+    /* ---------- 카드 ---------- */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      margin-bottom: 16px;
+    }
+
+    .card > h2 {
+      margin: 0 0 4px;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .card > .desc {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    /* 메서드 배지 */
+    .badge {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 5px;
+      border: 1px solid currentColor;
+      letter-spacing: 0.04em;
+    }
+
+    .badge.get { color: var(--get); }
+    .badge.post { color: var(--post); }
+
+    .path {
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    /* ---------- 폼 요소 ---------- */
+    .row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 160px; }
+
+    label { font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+
+    input {
+      font: inherit;
+      font-size: 0.9rem;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--bg);
+      color: var(--text);
+      width: 100%;
+    }
+
+    input:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: -1px;
+      border-color: var(--accent);
+    }
+
+    button {
+      font: inherit;
+      font-size: 0.88rem;
+      font-weight: 600;
+      padding: 8px 16px;
+      border: 1px solid var(--accent);
+      border-radius: 7px;
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    button:hover { filter: brightness(1.08); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    button.ghost {
+      background: transparent;
+      color: var(--accent);
+    }
+
+    /* ---------- 상태 표시 ---------- */
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.85rem;
+      font-family: var(--mono);
+      margin-left: auto;
+    }
+
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+
+    .dot.ok { background: var(--ok); }
+    .dot.bad { background: var(--error); }
+
+    /* 상태 코드 pill */
+    .code-pill {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 5px;
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .code-pill.err { background: var(--error-soft); color: var(--error); }
+
+    /* ---------- 결과 출력 ---------- */
+    pre.out {
+      margin: 12px 0 0;
+      padding: 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      line-height: 1.5;
+      overflow-x: auto;
+      max-height: 240px;
+      white-space: pre;
+    }
+
+    pre.out.err { border-color: var(--error); background: var(--error-soft); color: var(--error); }
+    pre.out:empty { display: none; }
+
+    /* ---------- 통계 타일 ---------- */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .stat {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: var(--bg);
+    }
+
+    .stat .k { font-size: 0.72rem; color: var(--muted); font-weight: 600; }
+    .stat .v { font-size: 1.25rem; font-weight: 700; font-family: var(--mono); }
+
+    /* ---------- 테이블 ---------- */
+    .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
+
+    th, td {
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    th {
+      background: var(--bg);
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      position: sticky;
+      top: 0;
+    }
+
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: var(--accent-soft); }
+
+    td.num { font-family: var(--mono); }
+
+    .empty {
+      padding: 24px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.87rem;
+    }
+
+    .new-row { animation: flash 1.6s ease-out; }
+
+    @keyframes flash {
+      from { background: var(--accent-soft); }
+      to { background: transparent; }
+    }
+
+    /* ---------- 시세 차트 (ApexCharts) ---------- */
+    .badge.mock { color: var(--muted); }
+
+    .chart-toolbar {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      margin-bottom: 16px;
+    }
+
+    .chart-toolbar > div { display: flex; flex-direction: column; gap: 5px; }
+
+    .pillbar { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    .pillbar button {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 5px 11px;
+      border-radius: 999px;
+    }
+
+    .pillbar button:hover { filter: none; border-color: var(--accent); color: var(--accent); }
+
+    .pillbar button[aria-pressed="true"] {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    /* 이동평균 범례 — ApexCharts 기본 legend 대신 직접 그린다 */
+    .ma-legend { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; padding-top: 6px; }
+
+    .ma-legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-family: var(--mono);
+    }
+
+    .ma-legend i { width: 14px; height: 3px; border-radius: 2px; }
+
+    /* 현재가 헤드라인 */
+    .quote { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+    .quote .price { font-size: 2rem; font-weight: 800; font-family: var(--mono); line-height: 1.1; }
+    .quote .delta { font-size: 0.95rem; font-weight: 700; font-family: var(--mono); padding-bottom: 4px; }
+    .quote .meta { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+
+    .up { color: var(--up); }
+    .down { color: var(--down); }
+    .flat { color: var(--muted); }
+
+    .chart-box { margin: 0 -6px; min-height: 120px; }
+    .chart-note { margin: 12px 0 0; font-size: 0.78rem; color: var(--muted); }
+
+    /* ApexCharts 툴팁을 페이지 테마에 맞춤 */
+    .apexcharts-tooltip {
+      background: var(--surface) !important;
+      border: 1px solid var(--border) !important;
+      color: var(--text) !important;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18) !important;
+    }
+
+    .tip { padding: 9px 11px; font-size: 0.78rem; line-height: 1.55; font-family: var(--mono); }
+    .tip .tip-date { font-weight: 700; margin-bottom: 5px; }
+    .tip .tip-row { display: flex; justify-content: space-between; gap: 18px; }
+    .tip .tip-row > span:first-child { color: var(--muted); }
+
+    footer {
+      margin-top: 28px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>My FastAPI Backend</h1>
+      <p class="sub">FastAPI 실습용 사용자(User) API 테스트 화면 · 메모리 저장소라 서버 재시작 시 초기화됩니다.</p>
+      <div class="links">
+        <a href="/docs" target="_blank">Swagger UI</a>
+        <a href="/redoc" target="_blank">ReDoc</a>
+        <a href="/openapi.json" target="_blank">openapi.json</a>
+      </div>
+    </header>
+
+    <!-- 0) 국내 주식 시세 차트 (Mock · ApexCharts) -->
+    <section class="card">
+      <h2>
+        <span class="badge mock">MOCK</span>
+        국내 주식 시세 차트
+        <span class="path">ApexCharts · 캔들 + 거래량 브러시</span>
+        <span class="status"><span class="dot" id="chartDot"></span><span id="chartText">준비 중</span></span>
+      </h2>
+      <p class="desc">
+        서버 API 없이 <strong>화면(JS)에서 만든 목업 데이터</strong>입니다.
+        종목코드를 난수 시드로 쓰기 때문에 새로고침해도 같은 차트가 나옵니다.
+      </p>
+
+      <div class="chart-toolbar">
+        <div>
+          <label>종목</label>
+          <div class="pillbar" id="tickerBar"></div>
+        </div>
+        <div>
+          <label>기간</label>
+          <div class="pillbar" id="rangeBar"></div>
+        </div>
+        <div>
+          <label>이동평균</label>
+          <div class="ma-legend" id="maLegend"></div>
+        </div>
+      </div>
+
+      <div class="quote">
+        <div>
+          <div class="price" id="qPrice">—</div>
+          <div class="meta" id="qMeta">—</div>
+        </div>
+        <div class="delta" id="qDelta"></div>
+      </div>
+
+      <div class="stats" id="qStats"></div>
+
+      <div class="chart-box">
+        <div id="chartMain"></div>
+        <div id="chartVolume"></div>
+      </div>
+
+      <p class="chart-note">
+        아래 <strong>거래량 차트를 드래그</strong>하면 위 캔들 차트의 구간이 함께 바뀝니다(브러시 연동).
+        상승은 빨강, 하락은 파랑으로 국내 증시 관행을 따랐습니다.
+        가격은 KRX 호가단위로 맞췄고 주말은 제외했지만, <strong>공휴일은 반영하지 않은 실제와 무관한 목업</strong>입니다.
+      </p>
+    </section>
+
+    <!-- 1) 헬스 체크 -->
+    <section class="card">
+      <h2>
+        <span class="badge get">GET</span>
+        서버 상태 확인
+        <span class="path">/health</span>
+        <span class="status"><span class="dot" id="healthDot"></span><span id="healthText">확인 전</span></span>
+      </h2>
+      <p class="desc">헬스 체크. 페이지를 열면 자동으로 1회 호출합니다.</p>
+      <button id="btnHealth">다시 확인</button>
+      <pre class="out" id="outHealth"></pre>
+    </section>
+
+    <!-- 2) 목록 조회 -->
+    <section class="card">
+      <h2>
+        <span class="badge get">GET</span>
+        사용자 목록 조회
+        <span class="path">/users</span>
+        <span id="pillUsers"></span>
+      </h2>
+      <p class="desc">전체 사용자를 배열로 받아옵니다. 아래 검색창은 서버 필터가 아니라 받아온 결과를 화면에서 걸러내는 것입니다.</p>
+
+      <div class="row">
+        <button id="btnUsers">목록 불러오기</button>
+        <div class="field">
+          <label for="filter">검색 (이름 · 이메일 · ID)</label>
+          <input id="filter" type="search" placeholder="예: user1, hong@" autocomplete="off" />
+        </div>
+      </div>
+
+      <div class="stats" id="stats"></div>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Username</th><th>Email</th><th>Age</th><th></th></tr>
+          </thead>
+          <tbody id="tbody">
+            <tr><td colspan="5" class="empty">아직 불러오지 않았습니다.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 3) 단건 조회 -->
+    <section class="card">
+      <h2>
+        <span class="badge get">GET</span>
+        사용자 단건 조회
+        <span class="path">/users/{user_id}</span>
+        <span id="pillOne"></span>
+      </h2>
+      <p class="desc">없는 ID는 <code>404</code>, 정수가 아니면 <code>422</code> 가 돌아옵니다. 에러 응답도 그대로 보여줍니다.</p>
+
+      <form class="row" id="formOne">
+        <div class="field" style="flex: 0 1 200px;">
+          <label for="userId">user_id</label>
+          <input id="userId" type="text" value="1" autocomplete="off" />
+        </div>
+        <button type="submit">조회</button>
+        <button type="button" class="ghost" id="btn404">없는 ID(999)로 404 보기</button>
+      </form>
+      <pre class="out" id="outOne"></pre>
+    </section>
+
+    <!-- 4) 사용자 생성 -->
+    <section class="card">
+      <h2>
+        <span class="badge post">POST</span>
+        사용자 생성
+        <span class="path">/users</span>
+        <span id="pillCreate"></span>
+      </h2>
+      <p class="desc">성공 시 <code>201</code> 과 생성된 사용자 1명을 반환합니다. <code>id</code> 는 서버가 자동 부여하므로 보내지 않습니다.</p>
+
+      <form id="formCreate">
+        <div class="row">
+          <div class="field">
+            <label for="username">username *</label>
+            <input id="username" placeholder="hong" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="email">email *</label>
+            <input id="email" placeholder="hong@example.com" autocomplete="off" />
+          </div>
+          <div class="field" style="flex: 0 1 120px;">
+            <label for="age">age (선택)</label>
+            <input id="age" type="number" placeholder="30" autocomplete="off" />
+          </div>
+          <button type="submit" id="btnCreate">생성</button>
+        </div>
+      </form>
+      <pre class="out" id="outCreate"></pre>
+    </section>
+
+    <footer>학습용 화면 · <code>uvicorn main:app --reload</code> 로 띄운 서버와 같은 오리진에서 동작합니다.</footer>
+  </div>
+
+  <script>
+    // API 기본 주소: 이 페이지를 서버가 서빙하므로 같은 오리진을 쓴다.
+    // file:// 로 직접 열었을 때만 로컬 서버 주소로 대체한다.
+    const API_BASE = location.protocol === 'file:' ? 'http://127.0.0.1:8000' : '';
+
+    const $ = (id) => document.getElementById(id);
+
+    /** 공통 fetch 래퍼 — 상태 코드와 파싱된 본문을 함께 돌려준다. */
+    async function call(path, options = {}) {
+      try {
+        const res = await fetch(API_BASE + path, options);
+        const text = await res.text();
+        let body;
+        try {
+          body = text ? JSON.parse(text) : null;
+        } catch {
+          body = text; // JSON 이 아니면 원문 그대로
+        }
+        return { ok: res.ok, status: res.status, body };
+      } catch (e) {
+        // 네트워크 자체가 실패한 경우 (서버 미실행 · CORS 차단 등)
+        return { ok: false, status: 0, body: { detail: `요청 실패: ${e.message}` } };
+      }
+    }
+
+    /** 결과를 pre 영역에 출력 */
+    function render(el, result) {
+      el.classList.toggle('err', !result.ok);
+      el.textContent = JSON.stringify(result.body, null, 2);
+    }
+
+    /** 상태 코드 pill 표시 */
+    function pill(el, result) {
+      const label = result.status === 0 ? 'ERR' : result.status;
+      el.innerHTML = `<span class="code-pill${result.ok ? '' : ' err'}">${label}</span>`;
+    }
+
+    // --------------------------------------------------
+    // 1) 헬스 체크
+    // --------------------------------------------------
+    async function checkHealth() {
+      $('btnHealth').disabled = true;
+      $('healthText').textContent = '확인 중…';
+      $('healthDot').className = 'dot';
+
+      const result = await call('/health');
+      $('healthDot').className = 'dot ' + (result.ok ? 'ok' : 'bad');
+      $('healthText').textContent = result.ok
+        ? `200 정상`
+        : result.status === 0 ? '서버 응답 없음' : `${result.status} 오류`;
+      render($('outHealth'), result);
+      $('btnHealth').disabled = false;
+    }
+
+    // --------------------------------------------------
+    // 2) 목록 조회 + 화면 필터
+    // --------------------------------------------------
+    let users = []; // 마지막으로 받아온 목록
+
+    async function loadUsers() {
+      $('btnUsers').disabled = true;
+      const result = await call('/users');
+      pill($('pillUsers'), result);
+
+      if (!result.ok || !Array.isArray(result.body)) {
+        users = [];
+        drawTable([], '목록을 불러오지 못했습니다. 서버가 켜져 있는지 확인하세요.');
+        drawStats([]);
+      } else {
+        users = result.body;
+        applyFilter();
+      }
+      $('btnUsers').disabled = false;
+    }
+
+    function applyFilter() {
+      const q = $('filter').value.trim().toLowerCase();
+      const rows = q
+        ? users.filter((u) =>
+            String(u.id).includes(q) ||
+            (u.username || '').toLowerCase().includes(q) ||
+            (u.email || '').toLowerCase().includes(q))
+        : users;
+
+      drawTable(rows, q ? `"${q}" 와 일치하는 사용자가 없습니다.` : '사용자가 없습니다.');
+      drawStats(rows);
+    }
+
+    function drawStats(rows) {
+      const ages = rows.map((u) => u.age).filter((a) => typeof a === 'number');
+      // 나이 평균 — age 가 null 인 사용자는 계산에서 제외한다
+      const avg = ages.length ? (ages.reduce((s, a) => s + a, 0) / ages.length).toFixed(1) : '-';
+      const tiles = [
+        ['표시 중', `${rows.length}명`],
+        ['전체', `${users.length}명`],
+        ['평균 나이', avg],
+        ['최소 / 최대', ages.length ? `${Math.min(...ages)} / ${Math.max(...ages)}` : '-'],
+      ];
+      $('stats').innerHTML = tiles
+        .map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`)
+        .join('');
+    }
+
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"]/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    }
+
+    function drawTable(rows, emptyMessage) {
+      const tbody = $('tbody');
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="5" class="empty">${esc(emptyMessage)}</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = rows
+        .map((u) => `
+          <tr${u.__isNew ? ' class="new-row"' : ''}>
+            <td class="num">${esc(u.id)}</td>
+            <td>${esc(u.username)}</td>
+            <td>${esc(u.email)}</td>
+            <td class="num">${u.age ?? '-'}</td>
+            <td><button class="ghost" data-id="${esc(u.id)}" style="padding:2px 8px;font-size:0.75rem;">단건 조회</button></td>
+          </tr>`)
+        .join('');
+    }
+
+    // 테이블의 "단건 조회" 버튼 (이벤트 위임)
+    $('tbody').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-id]');
+      if (!btn) return;
+      $('userId').value = btn.dataset.id;
+      getOne();
+    });
+
+    // --------------------------------------------------
+    // 3) 단건 조회
+    // --------------------------------------------------
+    async function getOne() {
+      const id = $('userId').value.trim();
+      if (!id) {
+        $('outOne').classList.add('err');
+        $('outOne').textContent = 'user_id 를 입력하세요.';
+        return;
+      }
+      const result = await call(`/users/${encodeURIComponent(id)}`);
+      pill($('pillOne'), result);
+      render($('outOne'), result);
+    }
+
+    // --------------------------------------------------
+    // 4) 사용자 생성
+    // --------------------------------------------------
+    async function createUser() {
+      const ageRaw = $('age').value.trim();
+      // age 는 선택 필드 — 비우면 null 로 보낸다
+      const payload = {
+        username: $('username').value.trim(),
+        email: $('email').value.trim(),
+        age: ageRaw === '' ? null : Number(ageRaw),
+      };
+
+      $('btnCreate').disabled = true;
+      const result = await call('/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      pill($('pillCreate'), result);
+      render($('outCreate'), result);
+
+      // 생성 성공하면 목록을 다시 불러와 방금 만든 사용자를 강조한다
+      if (result.status === 201 && result.body && result.body.id != null) {
+        const newId = result.body.id;
+        await loadUsers();
+        const created = users.find((u) => u.id === newId);
+        if (created) {
+          created.__isNew = true;
+          applyFilter();
+          delete created.__isNew;
+        }
+        $('username').value = '';
+        $('email').value = '';
+        $('age').value = '';
+      }
+      $('btnCreate').disabled = false;
+    }
+
+    // --------------------------------------------------
+    // 이벤트 바인딩
+    // --------------------------------------------------
+    $('btnHealth').addEventListener('click', checkHealth);
+    $('btnUsers').addEventListener('click', loadUsers);
+    $('filter').addEventListener('input', applyFilter);
+    $('formOne').addEventListener('submit', (e) => { e.preventDefault(); getOne(); });
+    $('btn404').addEventListener('click', () => { $('userId').value = '999'; getOne(); });
+    $('formCreate').addEventListener('submit', (e) => { e.preventDefault(); createUser(); });
+
+    // 첫 진입 시 헬스 체크 + 목록 자동 로드
+    checkHealth();
+    loadUsers();
+  </script>
+
+  <script>
+    /* ==================================================
+       국내 주식 시세 차트 (ApexCharts) — 목업
+       --------------------------------------------------
+       백엔드 API 없이 이 스크립트 안에서 OHLCV 를 생성한다.
+       참고: https://apexcharts.com/apexstock/demos/advanced/
+       구성: 캔들스틱(+이동평균선) 메인 차트 + 거래량 브러시 차트
+       ================================================== */
+    (() => {
+      const el = (id) => document.getElementById(id);
+      const mainBox = el('chartMain');
+      if (!mainBox) return;
+
+      // CDN 로드 실패(오프라인 등) 시 안내만 남기고 종료한다
+      if (typeof ApexCharts === 'undefined') {
+        el('chartDot').className = 'dot bad';
+        el('chartText').textContent = 'CDN 로드 실패';
+        mainBox.innerHTML =
+          '<div class="empty">ApexCharts 를 불러오지 못했습니다. 인터넷 연결(CDN)을 확인하세요.</div>';
+        return;
+      }
+
+      // --------------------------------------------------
+      // 목업 종목 — price 는 "최근 종가"로 쓰이는 대략적인 값이며 실제 시세가 아니다.
+      //   vol    : 일간 변동성 (표준편차)
+      //   drift  : 일간 추세 (양수면 우상향)
+      //   volume : 기준 거래량
+      // --------------------------------------------------
+      const STOCKS = [
+        { code: '005930', name: '삼성전자',     market: 'KOSPI',  price: 71200,  vol: 0.016, drift: 0.0006,  volume: 14000000 },
+        { code: '000660', name: 'SK하이닉스',   market: 'KOSPI',  price: 248000, vol: 0.024, drift: 0.0014,  volume: 3600000 },
+        { code: '005380', name: '현대차',       market: 'KOSPI',  price: 254000, vol: 0.017, drift: 0.0005,  volume: 1100000 },
+        { code: '035420', name: 'NAVER',        market: 'KOSPI',  price: 168500, vol: 0.021, drift: -0.0002, volume: 900000 },
+        { code: '035720', name: '카카오',       market: 'KOSPI',  price: 41300,  vol: 0.024, drift: -0.0006, volume: 2400000 },
+        { code: '247540', name: '에코프로비엠', market: 'KOSDAQ', price: 158900, vol: 0.034, drift: -0.0009, volume: 1800000 },
+      ];
+
+      const RANGES = [
+        { key: '1M',  label: '1개월', days: 21 },
+        { key: '3M',  label: '3개월', days: 63 },
+        { key: '6M',  label: '6개월', days: 126 },
+        { key: '1Y',  label: '1년',   days: 252 },
+        { key: 'ALL', label: '전체',  days: Infinity },
+      ];
+
+      // 이동평균 기간과 색 (ApexCharts 기본 legend 를 끄고 직접 범례를 그린다)
+      const MA = [
+        { n: 5,  color: '#f59f00' },
+        { n: 20, color: '#7048e8' },
+        { n: 60, color: '#0ca678' },
+      ];
+
+      const TOTAL_DAYS = 500; // 미리 만들어 두는 전체 거래일 (약 2년)
+
+      // --------------------------------------------------
+      // 시드 난수 — 종목코드를 시드로 써서 새로고침해도 같은 차트가 나오게 한다.
+      // (기존 /users 의 age 가 재시작마다 바뀌던 문제를 여기서는 피한다)
+      // --------------------------------------------------
+      function mulberry32(seed) {
+        let s = seed >>> 0;
+        return () => {
+          s = (s + 0x6d2b79f5) >>> 0;
+          let t = Math.imul(s ^ (s >>> 15), 1 | s);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      // 표준정규분포 난수 (Box-Muller 변환)
+      function gaussian(rand) {
+        let u = 0;
+        while (u === 0) u = rand();
+        return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rand());
+      }
+
+      // --------------------------------------------------
+      // KRX 호가단위 (2023년 개정 기준) — 가격대별 최소 주문 단위
+      // --------------------------------------------------
+      function tickSize(price, market) {
+        if (price < 2000) return 1;
+        if (price < 5000) return 5;
+        if (price < 20000) return 10;
+        if (price < 50000) return 50;
+        if (market === 'KOSDAQ') return 100;   // 코스닥은 5만원 이상 전부 100원
+        if (price < 200000) return 100;
+        if (price < 500000) return 500;
+        return 1000;
+      }
+
+      function roundTick(price, market) {
+        const t = tickSize(price, market);
+        return Math.max(t, Math.round(price / t) * t);
+      }
+
+      // --------------------------------------------------
+      // 거래일 목록 — 오늘(KST)부터 거꾸로 주말을 건너뛰며 모은다.
+      // ApexCharts 의 datetime 축은 UTC 기준으로 라벨을 찍으므로
+      // 날짜가 하루 밀리지 않게 UTC 자정 타임스탬프로 만든다.
+      // --------------------------------------------------
+      function tradingDays(count) {
+        const kst = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+        }).format(new Date());
+        const [y, m, d] = kst.split('-').map(Number);
+
+        let t = Date.UTC(y, m - 1, d);
+        const out = [];
+        while (out.length < count) {
+          const wd = new Date(t).getUTCDay();
+          if (wd !== 0 && wd !== 6) out.push(t); // 일(0)·토(6) 제외
+          t -= 86400000;
+        }
+        return out.reverse();
+      }
+
+      // --------------------------------------------------
+      // OHLCV 생성 — 기하 브라운 운동에 가까운 랜덤워크
+      // --------------------------------------------------
+      function generateCandles(stock) {
+        const rand = mulberry32(Number(stock.code));
+        const days = tradingDays(TOTAL_DAYS);
+        const raw = [];
+        let price = stock.price;
+
+        for (const t of days) {
+          const open = price;
+          const close = open * (1 + stock.drift + gaussian(rand) * stock.vol);
+          const high = Math.max(open, close) * (1 + Math.abs(gaussian(rand)) * stock.vol * 0.6);
+          const low = Math.min(open, close) * (1 - Math.abs(gaussian(rand)) * stock.vol * 0.6);
+          // 변동이 큰 날에 거래량이 늘어나도록 등락폭을 섞는다
+          const move = Math.abs(close / open - 1);
+          const volume = Math.round(
+            stock.volume * (0.5 + Math.abs(gaussian(rand)) * 0.45 + move * 22)
+          );
+          raw.push({ t, open, close, high, low, volume });
+          price = close;
+        }
+
+        // 마지막 종가가 stock.price(= 최근 종가)가 되도록 전체를 비례 보정
+        const k = stock.price / raw[raw.length - 1].close;
+
+        return raw.map((c) => {
+          const open = roundTick(c.open * k, stock.market);
+          const close = roundTick(c.close * k, stock.market);
+          // 호가단위로 반올림하면 "고가 < 종가" 같은 모순이 생길 수 있어 다시 맞춘다
+          const high = Math.max(roundTick(c.high * k, stock.market), open, close);
+          const low = Math.min(roundTick(c.low * k, stock.market), open, close);
+          return { t: c.t, open, high, low, close, volume: Math.max(1000, c.volume) };
+        });
+      }
+
+      // 이동평균 — 전체 구간으로 계산한 뒤 화면 구간만 보여주므로 왼쪽 끝도 값이 정확하다
+      function movingAverage(candles, n) {
+        let sum = 0;
+        return candles.map((c, i) => {
+          sum += c.close;
+          if (i >= n) sum -= candles[i - n].close;
+          return { x: c.t, y: i >= n - 1 ? Math.round(sum / n) : null };
+        });
+      }
+
+      // --------------------------------------------------
+      // 표시 형식
+      // --------------------------------------------------
+      const won = (n) => n.toLocaleString('ko-KR');
+
+      const fmtVolume = (v) => {
+        if (v >= 100000000) return (v / 100000000).toFixed(2) + '억주';
+        if (v >= 10000) return won(Math.round(v / 10000)) + '만주';
+        return won(v) + '주';
+      };
+
+      const fmtDate = (t) => {
+        const d = new Date(t);
+        const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const dd = String(d.getUTCDate()).padStart(2, '0');
+        return `${d.getUTCFullYear()}.${mm}.${dd}`;
+      };
+
+      const dirClass = (diff) => (diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat');
+      const dirMark = (diff) => (diff > 0 ? '▲' : diff < 0 ? '▼' : '－');
+      const signed = (rate) => `${rate >= 0 ? '+' : ''}${rate.toFixed(2)}%`;
+
+      // CSS 변수 값을 읽어 차트 색으로 넘긴다 (다크모드 대응)
+      const css = (name) =>
+        getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+      // --------------------------------------------------
+      // 상태
+      // --------------------------------------------------
+      const cache = new Map(); // 종목코드 → 캔들 배열 (종목당 1회만 생성)
+      let current = STOCKS[0];
+      let range = RANGES[2];   // 기본 6개월
+      let mainChart = null;
+      let volumeChart = null;
+      let rendering = false;   // 버튼 연타로 render 가 겹쳐 destroy/render 가 뒤엉키는 것을 막는다
+      let pending = false;
+
+      // --------------------------------------------------
+      // 커스텀 툴팁 — 시/고/저/종 + 전일대비 + 거래량 + 이동평균
+      // 메인 차트는 전체 구간을 데이터로 갖고 있어 dataPointIndex 가 candles 인덱스와 같다.
+      // --------------------------------------------------
+      function makeTooltip(candles, maSeries) {
+        const row = (k, v, cls = '') =>
+          `<div class="tip-row"><span>${k}</span><span class="${cls}">${v}</span></div>`;
+
+        return ({ dataPointIndex }) => {
+          const c = candles[dataPointIndex];
+          if (!c) return '';
+          const prev = candles[dataPointIndex - 1];
+          const diff = prev ? c.close - prev.close : 0;
+          const rate = prev ? (diff / prev.close) * 100 : 0;
+          const cls = dirClass(diff);
+
+          const maRows = MA.map((m, i) => {
+            const y = maSeries[i][dataPointIndex].y;
+            return y == null ? '' : row(`MA${m.n}`, won(y));
+          }).join('');
+
+          return `<div class="tip">
+            <div class="tip-date">${fmtDate(c.t)}</div>
+            ${row('시가', won(c.open))}
+            ${row('고가', won(c.high))}
+            ${row('저가', won(c.low))}
+            ${row('종가', `<strong>${won(c.close)}</strong>`)}
+            ${row('전일대비', `${dirMark(diff)} ${won(Math.abs(diff))} (${signed(rate)})`, cls)}
+            ${row('거래량', fmtVolume(c.volume))}
+            ${maRows}
+          </div>`;
+        };
+      }
+
+      // --------------------------------------------------
+      // 현재가 헤드라인 + 통계 타일
+      // --------------------------------------------------
+      function updateQuote(candles, from) {
+        const view = candles.slice(from);
+        const last = view[view.length - 1];
+        const prev = candles[candles.length - 2];
+
+        // 전일대비는 선택 기간과 무관하게 항상 "직전 거래일" 기준
+        const diff = last.close - prev.close;
+        const rate = (diff / prev.close) * 100;
+        const cls = dirClass(diff);
+
+        el('qPrice').textContent = won(last.close);
+        el('qPrice').className = `price ${cls}`;
+        el('qMeta').textContent =
+          `${current.name} · ${current.code} · ${current.market} · ${fmtDate(last.t)} 종가 (원)`;
+        el('qDelta').innerHTML =
+          `<span class="${cls}">${dirMark(diff)} ${won(Math.abs(diff))} (${signed(rate)})</span>`;
+
+        const first = view[0].close;
+        const periodRate = ((last.close - first) / first) * 100;
+        const avgVolume = Math.round(view.reduce((s, c) => s + c.volume, 0) / view.length);
+        let high = -Infinity;
+        let low = Infinity;
+        for (const c of view) {
+          if (c.high > high) high = c.high;
+          if (c.low < low) low = c.low;
+        }
+
+        const tiles = [
+          ['기간 고가', won(high), ''],
+          ['기간 저가', won(low), ''],
+          ['기간 수익률', signed(periodRate), dirClass(periodRate)],
+          ['평균 거래량', fmtVolume(avgVolume), ''],
+          ['거래일 수', `${view.length}일`, ''],
+        ];
+
+        el('qStats').innerHTML = tiles
+          .map(([k, v, c]) => `<div class="stat"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`)
+          .join('');
+
+        el('chartDot').className = 'dot ok';
+        el('chartText').textContent = `${range.label} · ${view.length}거래일`;
+      }
+
+      // --------------------------------------------------
+      // 렌더 — 종목·기간이 바뀌면 두 차트를 다시 그린다.
+      // 브러시 차트는 대상 차트(chart.id)가 먼저 렌더돼 있어야 하므로 순서를 지킨다.
+      // --------------------------------------------------
+      async function render() {
+        // 이미 그리는 중이면 예약만 해두고, 끝난 뒤 최신 선택으로 한 번 더 그린다
+        if (rendering) {
+          pending = true;
+          return;
+        }
+        rendering = true;
+        try {
+          await draw();
+        } finally {
+          rendering = false;
+          if (pending) {
+            pending = false;
+            render();
+          }
+        }
+      }
+
+      async function draw() {
+        if (!cache.has(current.code)) cache.set(current.code, generateCandles(current));
+        const candles = cache.get(current.code);
+
+        // 선택 구간 = 최근에서 range.days 만큼 (차트 데이터는 항상 전체를 넘긴다)
+        const from = range.days === Infinity ? 0 : Math.max(0, candles.length - range.days);
+        const selMin = candles[from].t;
+        const selMax = candles[candles.length - 1].t;
+
+        updateQuote(candles, from);
+
+        const maSeries = MA.map((m) => movingAverage(candles, m.n));
+        const border = css('--border');
+        const muted = css('--muted');
+        const accent = css('--accent');
+        const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+
+        if (mainChart) mainChart.destroy();
+        if (volumeChart) volumeChart.destroy();
+
+        mainChart = new ApexCharts(el('chartMain'), {
+          series: [
+            {
+              name: '주가',
+              type: 'candlestick',
+              data: candles.map((c) => ({ x: c.t, y: [c.open, c.high, c.low, c.close] })),
+            },
+            ...MA.map((m, i) => ({ name: `MA${m.n}`, type: 'line', data: maSeries[i] })),
+          ],
+          chart: {
+            id: 'krx-candles',        // 브러시 차트가 이 id 를 target 으로 잡는다
+            type: 'candlestick',
+            height: 400,
+            fontFamily: 'inherit',
+            foreColor: muted,
+            animations: { enabled: false },  // 브러시 연동 시 애니메이션은 끄는 것이 권장된다
+            toolbar: { show: true, autoSelected: 'pan', tools: { download: false } },
+            zoom: { enabled: true },
+          },
+          // colors[0] 은 캔들(plotOptions 로 색을 지정)이라 실제로 쓰이지 않는다
+          colors: [muted, ...MA.map((m) => m.color)],
+          plotOptions: {
+            candlestick: {
+              colors: { upward: css('--up'), downward: css('--down') },
+              wick: { useFillColor: true },
+            },
+          },
+          stroke: { width: [1, 1.4, 1.4, 1.4], curve: 'straight' },
+          dataLabels: { enabled: false },
+          legend: { show: false },   // 범례는 HTML(#maLegend)로 직접 그린다
+          grid: { borderColor: border, strokeDashArray: 3, padding: { left: 4, right: 8 } },
+          xaxis: {
+            type: 'datetime',
+            min: selMin,
+            max: selMax,
+            labels: { datetimeUTC: true, style: { fontSize: '11px' } },
+            axisBorder: { color: border },
+            axisTicks: { color: border },
+            tooltip: { enabled: false },
+          },
+          yaxis: {
+            opposite: true,          // 국내 HTS 처럼 가격축을 오른쪽에 둔다
+            tickAmount: 5,
+            labels: { formatter: (v) => won(Math.round(v)), style: { fontSize: '11px' } },
+            tooltip: { enabled: false },
+          },
+          tooltip: {
+            shared: true,
+            theme: dark ? 'dark' : 'light',
+            custom: makeTooltip(candles, maSeries),
+          },
+        });
+        await mainChart.render();
+
+        volumeChart = new ApexCharts(el('chartVolume'), {
+          series: [{ name: '거래량', data: candles.map((c) => ({ x: c.t, y: c.volume })) }],
+          chart: {
+            id: 'krx-volume',
+            type: 'bar',
+            height: 150,
+            fontFamily: 'inherit',
+            foreColor: muted,
+            animations: { enabled: false },
+            brush: { enabled: true, target: 'krx-candles', autoScaleYaxis: true },
+            selection: {
+              enabled: true,
+              xaxis: { min: selMin, max: selMax },
+              fill: { color: accent, opacity: 0.12 },
+              stroke: { color: accent, width: 1, opacity: 0.6 },
+            },
+            toolbar: { show: false },
+          },
+          colors: [accent],
+          fill: { opacity: 0.55 },
+          plotOptions: { bar: { columnWidth: '75%' } },
+          dataLabels: { enabled: false },
+          legend: { show: false },
+          grid: { borderColor: border, strokeDashArray: 3, padding: { left: 4, right: 8 } },
+          xaxis: {
+            type: 'datetime',
+            labels: { datetimeUTC: true, style: { fontSize: '11px' } },
+            axisBorder: { color: border },
+            axisTicks: { color: border },
+            tooltip: { enabled: false },
+          },
+          yaxis: {
+            opposite: true,
+            tickAmount: 2,
+            labels: { formatter: (v) => fmtVolume(Math.round(v)), style: { fontSize: '11px' } },
+          },
+          tooltip: { enabled: false },
+        });
+        await volumeChart.render();
+      }
+
+      // --------------------------------------------------
+      // 툴바 (종목 · 기간 · 이동평균 범례)
+      // --------------------------------------------------
+      function pill(text, pressed, onClick) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = text;
+        b.setAttribute('aria-pressed', String(pressed));
+        b.addEventListener('click', onClick);
+        return b;
+      }
+
+      function syncPressed() {
+        [...el('tickerBar').children].forEach((b, i) =>
+          b.setAttribute('aria-pressed', String(STOCKS[i].code === current.code))
+        );
+        [...el('rangeBar').children].forEach((b, i) =>
+          b.setAttribute('aria-pressed', String(RANGES[i].key === range.key))
+        );
+      }
+
+      function buildToolbar() {
+        const tickerBar = el('tickerBar');
+        STOCKS.forEach((s) => {
+          tickerBar.appendChild(
+            pill(s.name, s.code === current.code, () => {
+              current = s;
+              syncPressed();
+              render();
+            })
+          );
+        });
+
+        const rangeBar = el('rangeBar');
+        RANGES.forEach((r) => {
+          rangeBar.appendChild(
+            pill(r.label, r.key === range.key, () => {
+              range = r;
+              syncPressed();
+              render();
+            })
+          );
+        });
+
+        el('maLegend').innerHTML = MA.map(
+          (m) => `<span><i style="background:${m.color}"></i>MA${m.n}</span>`
+        ).join('');
+      }
+
+      // 다크/라이트 전환 시 차트 색을 다시 계산해 그린다
+      matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => render());
+
+      buildToolbar();
+      render();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+# ─────────────────────────────────────────────────────────────
+# 줄바꿈 정책 — Windows · WSL(Ubuntu) 양쪽에서 작업하기 위한 설정
+#
+# Windows 는 core.autocrlf=true, WSL(리눅스)은 기본 꺼짐이라
+# 같은 저장소를 양쪽에서 열면 한쪽에서만 "전체 파일 수정됨"으로 보인다.
+# 이 파일은 git 설정보다 우선하므로, 여기 규칙을 두면 양쪽이 동일하게 동작한다.
+#
+# 원칙: 저장소에는 항상 LF 로 저장한다. (Docker·리눅스 VM 실행 대응)
+# ─────────────────────────────────────────────────────────────
+
+* text=auto eol=lf
+
+# ── 리눅스·컨테이너에서 실행되는 파일 — LF 필수 ──
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+Dockerfile.*    text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.py            text eol=lf
+*.sql           text eol=lf
+
+# ── Windows 전용 스크립트 — CRLF 유지 ──
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+*.ps1           text eol=crlf
+
+# ── 텍스트 ──
+*.md            text eol=lf
+*.txt           text eol=lf
+*.json          text eol=lf
+*.html          text eol=lf
+*.css           text eol=lf
+*.js            text eol=lf
+*.csv           text eol=lf
+*.ipynb         text eol=lf
+
+# ── 바이너리 — 변환 금지 ──
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.pdf           binary
+*.zip           binary
+*.xlsx          binary
+*.parquet       binary
+*.feather       binary
+*.pkl           binary
