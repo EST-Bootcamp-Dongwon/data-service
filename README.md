@@ -59,11 +59,16 @@ api-test/
 │   │   └── krx_data.py
 │   └── core/               ← 공통 유틸 : 거래일 · KST
 │       └── trading_calendar.py
-├── scripts/fetch_krx.py    캐시를 채우는 CLI 수집 스크립트
+├── scripts/
+│   ├── fetch_krx.py        캐시를 채우는 CLI 수집 스크립트
+│   └── kosis_rss.py        KOSIS 공지 크롤러 → RSS 2.0 변환
+├── test.sh                 KOSIS 공지 범위 수집 실행 스크립트
 ├── static/
 │   ├── pages/              화면 4종 (index · krx · quant · tetris)
 │   └── assets/             공통 app.css · app.js
-├── data/krx_cache.db       시세 캐시 (.gitignore 대상)
+├── data/
+│   ├── krx_cache.db        시세 캐시 (.gitignore 대상)
+│   └── kosis_rss/          KOSIS 공지 RSS 산출물 (.gitignore 대상)
 ├── docs/                   todo · 작업 기록
 └── lecture/                강사님 원본 (서브모듈, 읽기 전용)
 ```
@@ -94,6 +99,7 @@ static/pages/*.html             화면 (받은 값을 그리기만)
 | `app/routers/krx_router.py` | 272 | KRX 시세 API 의 DTO 와 엔드포인트 |
 | `app/core/trading_calendar.py` | 61 | 거래일·KST 유틸 (순환 import 방지용 공통 모듈) |
 | `scripts/fetch_krx.py` | 92 | 캐시를 채우는 CLI 수집 스크립트 |
+| `scripts/kosis_rss.py` | 439 | KOSIS 공지 크롤링 → RSS 2.0 변환 (표준 라이브러리만 사용) |
 | `main.py` | 413 | FastAPI 앱, 사용자 CRUD, 화면 라우트 |
 
 > `main.py` 만 루트에 남겨 뒀다. 강의에서 쓰는 `uvicorn main:app` 명령을 그대로 쓰기 위해서다.
@@ -451,6 +457,85 @@ WSL과 Windows 호스트 간 네트워크가 분리돼 있을 수 있다.
 - **자동 수집** — cron 또는 GitHub Actions로 장 마감 후 `scripts/fetch_krx.py --days 1` 실행
 - **ETF·지수 확장** — `etp/etf_bydd_trd` · `idx/kospi_dd_trd` 를 `MARKET_APIS` 에 추가하면 같은 구조로 붙는다
 - **배포** — Docker(`python:3.12-slim`) 또는 Render/Fly.io/Cloud Run
+
+---
+
+## 14. KOSIS 공지사항 RSS 수집 ★
+
+국가통계포털(KOSIS) 공지사항을 긁어 **RSS 2.0 파일**로 저장하는 부속 도구다.
+KRX 파이프라인과는 별개로 도는 독립 스크립트이며, **표준 라이브러리만** 쓰므로 설치가 필요 없다.
+
+### 수집 경로 두 가지
+
+| 경로 | 주소 | 범위 |
+|------|------|------|
+| RSS 피드 | `https://kosis.kr/rss/notice_rss.jsp` | 최신 10여 건만 제공 |
+| 상세 페이지 크롤링 | `https://kosis.kr/serviceInfo/noticeDetail.do?boardIdx=N` | 과거 글까지 번호로 직접 수집 |
+
+피드는 최신 글만 주기 때문에, **실질적인 수집은 상세 페이지 크롤링** 쪽이다.
+상세 페이지에서 제목 · 작성기관 · 게시일 · 본문 HTML · 첨부파일 목록을 뽑아 RSS `<item>` 으로 만든다.
+
+### 사용법
+
+```bash
+# 최신 공지 목록만 보기 (저장 안 함)
+python3 scripts/kosis_rss.py --list
+
+# 게시물 번호 하나를 RSS 로 저장 → data/kosis_rss/2200_제목.xml
+python3 scripts/kosis_rss.py --board-idx 2200
+
+# 범위 수집 (요청 사이 1초 대기) → 한 파일로 합쳐 저장
+python3 scripts/kosis_rss.py --board-range 2200-2220 --delay 1
+
+# 게시물마다 파일 하나씩 + 첨부파일까지 내려받기
+python3 scripts/kosis_rss.py --board-range 2200-2220 --split --with-files
+
+# 최신 피드 전체를 한 파일로
+python3 scripts/kosis_rss.py --feed --rss-output kosis-latest.xml
+```
+
+`test.sh` 는 위 범위 수집을 감싼 실행 스크립트다.
+
+```bash
+./test.sh                    # 기본 범위 2200~2220, 5초 간격
+./test.sh 2300 2320 3        # 범위·간격 직접 지정
+SPLIT=1 ./test.sh            # 게시물마다 파일 하나씩
+WITH_FILES=1 ./test.sh       # 첨부파일도 함께
+OUT_DIR=./tmp ./test.sh      # 저장 폴더 변경
+```
+
+### 출력 형식
+
+폴더가 없으면 자동으로 만든다 (기본 `data/kosis_rss/`). 첨부파일은 `data/kosis_rss/files/<번호>/` 아래에 쌓인다.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:kosis="https://kosis.kr/ns/notice">
+  <channel>
+    <title>[ KOSIS ] 공지사항</title>
+    ...
+    <item>
+      <title>2020년 11월말 기준 KOSIS 수록자료 현행화율 공개</title>
+      <link>https://kosis.kr/serviceInfo/noticeDetail.do?boardIdx=2200</link>
+      <description><![CDATA[... 본문 HTML ...]]></description>
+      <category>통계청</category>
+      <pubDate>Fri, 04 Dec 2020 00:00:00 +0900</pubDate>
+      <guid isPermaLink="true">https://kosis.kr/serviceInfo/noticeDetail.do?boardIdx=2200</guid>
+      <kosis:attachment name="KOSIS 수록자료 현행화율.xlsx" docId="2200" program="news/news_01Form.jsp" />
+    </item>
+  </channel>
+</rss>
+```
+
+- **`pubDate`** — KOSIS 는 `2020-12-04` 처럼 RSS 표준을 지키지 않는 형식으로 주므로, RFC 822 로 변환해 넣는다.
+- **`<kosis:attachment>`** — 첨부파일은 RSS 표준에 없는 정보라 별도 네임스페이스로 확장했다.
+
+### 크롤링 시 주의
+
+- **없는 게시물도 HTTP 200** — KOSIS 는 존재하지 않는 `boardIdx` 에도 200 과 빈 껍데기 페이지를 준다.
+  제목(`div.b_title`) 유무로 판별해 "없음" 처리하고 건너뛴다. (2202 · 2203 · 2204 처럼 번호가 비어 있는 구간이 있다)
+- **요청 간격** — 기본 1초(`--delay`)를 둔다. 범위를 크게 잡을 때 간격을 줄이지 말 것.
+- **User-Agent** — 기본 파이썬 UA 는 막힐 수 있어 브라우저 UA 로 요청한다.
 
 ---
 

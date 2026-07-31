@@ -27,6 +27,10 @@ data/krx_cache.db
 data/krx_cache.db-wal
 data/krx_cache.db-shm
 
+# KOSIS 공지 크롤링 결과 (재수집 가능한 산출물)
+# ./test.sh 또는 scripts/kosis_rss.py 로 언제든 다시 만들 수 있다.
+data/kosis_rss/
+
 # 에디터 스왑 파일
 *.swp
 *.swo
