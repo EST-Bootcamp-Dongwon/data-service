@@ -20,6 +20,7 @@ import os                                       # 환경변수 · 쓰기 권한 
 import sqlite3                                   # 파일 기반 DB (표준 라이브러리)
 import tempfile                                  # 읽기 전용 환경에서 쓸 임시 폴더
 import threading                                 # 쓰기 직렬화용 자물쇠
+import time                                      # 라이브 조회 메모리 캐시 TTL
 from contextlib import contextmanager            # 직접 만드는 with 블록
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -287,6 +288,60 @@ def snapshot(bas_dd: str, market: Optional[str] = None) -> List[Dict]:
         params.append(market)
     with connect() as conn:
         return _rows_to_dicts(conn.execute(sql, params).fetchall())
+
+
+# 라이브 조회 결과를 담아 두는 메모리 캐시. {(거래일, 시장): (저장시각, 행 목록)}
+# 배포 환경(서버리스)은 DB 를 유지할 수 없어서, 같은 인스턴스가 살아 있는 동안만이라도
+# KRX 를 다시 부르지 않도록 한다. KRX 호출은 1회에 2~3초가 걸린다.
+_live_cache: Dict[Tuple, Tuple[float, List[Dict]]] = {}
+_live_lock = threading.Lock()
+LIVE_CACHE_TTL = 600            # 일별 데이터라 10분이면 충분하다
+
+
+def snapshot_live(bas_dd: str = "", market: Optional[str] = None) -> Tuple[List[Dict], str, str]:
+    """**DB 없이** KRX 를 직접 불러 전 종목 스냅샷을 돌려준다.
+
+    `(행 목록, 실제 거래일, 출처)` 를 돌려준다. 출처는 `live` 또는 `live-cache` 다.
+
+    왜 필요한가
+    -----------
+    배포 환경(Vercel 등 서버리스)에는 96MB 짜리 `krx_cache.db` 를 올릴 수 없고,
+    파일을 써 봐야 인스턴스가 바뀌면 사라진다. 그렇다고 `/krx` 화면을 통째로 막아 두면
+    "인증키는 멀쩡한데 화면은 죽어 있는" 이상한 상태가 된다.
+
+    다행히 KRX 일별매매정보는 **하루치 전 종목**을 한 번에 주므로, DB 없이 그 자리에서
+    받아 쓰면 된다. 집계·정렬·페이지는 어차피 메모리에서 하던 일이라 그대로 동작한다.
+
+    `bas_dd` 를 비우면 **최근 거래일부터 거꾸로** 훑는다. KRX 는 휴장일에 빈 배열을 주므로,
+    데이터가 나올 때까지 최대 7거래일을 시도한다 (연휴 대비).
+    """
+    markets = (market,) if market else MARKETS
+
+    # 날짜를 지정했으면 그 날짜만, 아니면 최근 거래일부터 거슬러 올라가며 찾는다
+    candidates = [bas_dd] if bas_dd else [d.strftime("%Y%m%d") for d in
+                                          reversed(trading_days(7))]
+
+    for day in candidates:
+        key = (day, market or "ALL")
+        now = time.monotonic()
+
+        with _live_lock:
+            hit = _live_cache.get(key)
+            if hit and now - hit[0] < LIVE_CACHE_TTL:
+                return hit[1], day, "live-cache"
+
+        rows: List[Dict] = []
+        for mkt in markets:
+            # 인증 실패는 재시도해도 소용없으므로 그대로 올려보낸다 (차단기가 이미 걸린다)
+            rows.extend(api.fetch_snapshot(day, mkt))
+
+        if rows:
+            with _live_lock:
+                _live_cache[key] = (time.monotonic(), rows)
+            return rows, day, "live"
+        # 빈 배열이면 휴장일이다. 다음 후보 날짜로 넘어간다.
+
+    return [], (bas_dd or ""), "live"
 
 
 def series(code: str, days: int = 250, end: Optional[str] = None) -> List[Dict]:

@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from app.clients import krx_data as api            # 외부 연동 (KRX 호출)
 from app.repositories import krx_store as store    # 저장소 (SQLite 캐시)
 from app.services import market_data as analysis   # 서비스 (분석 계산)
-from app.core.trading_calendar import to_iso       # 공통 유틸 (거래일·KST)
+from app.core.trading_calendar import to_iso, trading_days   # 공통 유틸 (거래일·KST)
 
 router = APIRouter(prefix="/api/krx", tags=["KRX 일별 시세"])
 
@@ -87,7 +87,8 @@ class SnapshotSummary(BaseModel):
 class SnapshotResponse(BaseModel):
     bas_dd: str = Field(..., description="기준일자 (YYYYMMDD)", examples=["20260730"])
     date: str = Field(..., description="기준일자 (YYYY-MM-DD)", examples=["2026-07-30"])
-    source: str = Field(..., description="데이터 출처 — `cache`(DB) 또는 `krx`(방금 받아옴)",
+    source: str = Field(..., description=(
+        "데이터 출처 — `cache`(DB) · `live`(KRX 를 방금 호출) · `live-cache`(라이브 결과 메모리 재사용)"),
                         examples=["cache"])
     total: int = Field(..., description="해당 거래일 전체 종목 수", examples=[2764])
     matched: int = Field(..., description="검색·필터를 적용한 뒤 종목 수", examples=[46])
@@ -125,6 +126,9 @@ class StatusResponse(BaseModel):
     last_result: Optional[str] = Field(None, description="마지막 KRX 호출 결과", examples=["ok"])
     last_detail: Optional[str] = Field(None, description="실패했다면 그 이유")
     cache: CacheStats = Field(..., description="디스크 캐시 현황")
+    mode: str = Field("cache", description=(
+        "조회 방식 — `cache`(DB 에서 읽음) 또는 "
+        "`live`(캐시가 비어 KRX 를 요청할 때마다 직접 호출)"), examples=["cache"])
 
 
 class SyncResponse(BaseModel):
@@ -151,6 +155,9 @@ def get_status():
     """
     status = api.get_status()
     status["cache"] = store.stats()
+    # 캐시가 비어 있으면 KRX 를 그 자리에서 부르는 라이브 모드로 동작한다.
+    # 화면 배지가 "0거래일"만 보여 주면 고장난 것처럼 보이므로 모드를 함께 알려 준다.
+    status["mode"] = "cache" if status["cache"]["days"] else "live"
     return status
 
 
@@ -158,11 +165,18 @@ def get_status():
 def get_dates(
     limit: int = Query(400, ge=1, le=1000, description="가져올 거래일 수 (최근순)"),
 ):
-    """캐시에 데이터가 있는 거래일 목록(YYYYMMDD, 최근순).
+    """조회할 수 있는 거래일 목록(YYYYMMDD, 최근순).
 
     화면의 날짜 선택 박스는 이 목록만 고를 수 있게 해서, 휴장일을 골라 빈 화면을 보는 일을 막는다.
+
+    캐시가 비어 있으면(배포 환경) **최근 거래일 달력**을 대신 돌려준다.
+    그 날짜를 고르면 `/stocks` 가 KRX 를 그 자리에서 불러 채운다.
+    (달력 기준이라 공휴일이 섞일 수 있고, 그런 날은 조회 결과가 404 다.)
     """
-    return store.available_dates(limit=limit)
+    dates = store.available_dates(limit=limit)
+    if dates:
+        return dates
+    return [d.strftime("%Y%m%d") for d in reversed(trading_days(min(limit, 30)))]
 
 
 @router.get(
@@ -197,22 +211,38 @@ def get_krx_stocks(
             detail=f"정렬할 수 없는 필드입니다: {sort} (가능: {', '.join(api.SORTABLE)})",
         )
 
-    bas_dd = bas_dd or store.latest_date()
-    if not bas_dd:
-        raise HTTPException(
-            status_code=503,
-            detail="시세 캐시가 비어 있습니다. `python3 scripts/fetch_krx.py` 를 먼저 실행하세요.",
-        )
-    if not api.DATE_PATTERN.fullmatch(bas_dd):
+    if bas_dd and not api.DATE_PATTERN.fullmatch(bas_dd):
         raise HTTPException(status_code=422, detail="bas_dd 는 YYYYMMDD 형식이어야 합니다.")
 
-    items = store.snapshot(bas_dd, market)
+    # 1순위는 캐시다. 있으면 수십 밀리초로 끝난다.
+    cached_date = bas_dd or store.latest_date()
+    items: List[Dict] = store.snapshot(cached_date, market) if cached_date else []
+    source = "cache"
+
+    # 캐시가 비었으면 KRX 를 그 자리에서 부른다.
+    # 배포 환경(서버리스)에는 96MB DB 를 올릴 수 없어 캐시가 항상 비어 있는데,
+    # 일별매매정보는 하루치 전 종목을 한 번에 주므로 DB 없이도 화면을 채울 수 있다.
+    if not items:
+        try:
+            items, cached_date, source = store.snapshot_live(bas_dd, market)
+        except api.KrxError as error:
+            # 인증 문제와 그 밖의 장애를 구분해서 알려 준다
+            raise HTTPException(
+                status_code=503 if error.unauthorized else 502,
+                detail=(
+                    f"시세 캐시가 비어 있어 KRX 에 직접 조회했지만 실패했습니다 — {error} "
+                    "(로컬에서는 `python3 scripts/fetch_krx.py` 로 캐시를 채울 수 있습니다.)"
+                ),
+            )
+
     if not items:
         raise HTTPException(
             status_code=404,
-            detail=(f"{bas_dd} 데이터가 캐시에 없습니다. 휴장일이거나 아직 받지 않은 날짜입니다. "
-                    "`GET /api/krx/dates` 로 조회 가능한 날짜를 확인하세요."),
+            detail=(f"{cached_date or '최근 거래일'} 데이터를 찾지 못했습니다. "
+                    "휴장일이 이어졌거나 아직 장 마감 전일 수 있습니다."),
         )
+
+    bas_dd = cached_date
 
     # 검색어를 반영한 뒤 집계한다 — 화면의 차트와 표가 같은 모집단을 보게 하기 위함이다
     filtered, matched = api.paginate(items, q=q, sort=sort, order=order, page=1, size=len(items))
@@ -221,7 +251,7 @@ def get_krx_stocks(
     return {
         "bas_dd": bas_dd,
         "date": to_iso(bas_dd),
-        "source": "cache",
+        "source": source,
         "total": len(items),
         "matched": matched,
         "count": len(rows),
