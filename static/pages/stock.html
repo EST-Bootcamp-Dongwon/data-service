@@ -56,6 +56,36 @@
     .corr-bar i { position: absolute; top: 0; height: 8px; border-radius: 4px; }
     .corr-bar .zero { position: absolute; left: 50%; top: -3px; width: 1px; height: 14px; background: var(--border); }
 
+    /* ── HTS 스타일 자동완성 드롭다운 ────────────────── */
+    .ac-wrap { position: relative; flex: 1 1 260px; min-width: 200px; }
+    .ac-wrap input { width: 100%; }
+
+    .ac-list {
+      position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 50;
+      max-height: 340px; overflow-y: auto;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, .28);
+    }
+    .ac-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 12px; cursor: pointer; border-bottom: 1px solid var(--border);
+    }
+    .ac-item:last-child { border-bottom: 0; }
+    /* 마우스 hover 와 키보드 선택을 같은 모양으로 보여 준다 */
+    .ac-item:hover, .ac-item.on { background: var(--accent-soft); }
+
+    .ac-flag { font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); flex: none; }
+    .ac-flag.kr { border-color: var(--accent); color: var(--accent); }
+    .ac-flag.us { border-color: #8b5cf6; color: #8b5cf6; }
+    .ac-name { flex: 1; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* 검색어와 일치한 부분을 굵게 — 왜 이 종목이 나왔는지 바로 보인다 */
+    .ac-name mark { background: none; color: var(--accent); font-weight: 700; }
+    .ac-code { font-family: var(--mono); font-size: 12px; color: var(--muted); flex: none; }
+    .ac-ex { font-size: 11px; color: var(--muted); flex: none; }
+    .ac-etf { font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; flex: none; }
+
+    .ac-msg { padding: 12px; font-size: 13px; color: var(--muted); text-align: center; }
+
     .err {
       font-size: 13px; padding: 11px 13px; border-radius: 8px; margin-bottom: 12px;
       background: var(--error-soft); border: 1px solid var(--error); color: var(--text);
@@ -92,7 +122,13 @@
       코스피·코스닥 접미사(<code>.KS</code>·<code>.KQ</code>)는 서버가 KRX 시장 구분을 보고 알아서 붙인다.
     </p>
     <div class="searchbar">
-      <input id="ticker" type="search" value="005930" placeholder="005930 · 삼성전자 · AAPL" autocomplete="off" />
+      <!-- 자동완성 드롭다운을 입력창 바로 아래에 띄우려고 position:relative 로 감싼다 -->
+      <div class="ac-wrap">
+        <input id="ticker" type="search" value="005930" placeholder="삼성 · 005930 · AAPL — 두 글자만 쳐도 목록이 뜹니다"
+               autocomplete="off" role="combobox" aria-expanded="false"
+               aria-autocomplete="list" aria-controls="acList" />
+        <div class="ac-list" id="acList" role="listbox" hidden></div>
+      </div>
       <button id="btnSearch">검색</button>
     </div>
     <div class="examples" id="examples">
@@ -642,8 +678,135 @@
     if (state.last) search();
   });
 
-  $('btnSearch').addEventListener('click', search);
-  $('ticker').addEventListener('keydown', (e) => { if (e.key === 'Enter') search(); });
+  // ==================================================
+  // 6. HTS 스타일 자동완성
+  // ==================================================
+  // 서버(/api/search)는 메모리 색인이라 4~6ms 에 답한다. 느린 쪽은 네트워크이므로
+  // 타자마다 보내지 않고 180ms 동안 입력이 멈추면 한 번만 보낸다.
+  const ac = {
+    items: [],        // 지금 떠 있는 후보 목록
+    active: -1,       // 키보드로 선택 중인 위치 (-1 이면 선택 없음)
+    seq: 0,           // 요청 순번 — 늦게 도착한 옛 응답이 새 결과를 덮지 않게 한다
+    open: false,
+  };
+
+  const AC_MIN = 2;   // 두 글자부터 (한 글자면 후보가 수백 개라 의미가 없다)
+
+  function acClose() {
+    ac.open = false;
+    ac.active = -1;
+    $('acList').hidden = true;
+    $('ticker').setAttribute('aria-expanded', 'false');
+  }
+
+  function acShow(html) {
+    $('acList').innerHTML = html;
+    $('acList').hidden = false;
+    ac.open = true;
+    $('ticker').setAttribute('aria-expanded', 'true');
+  }
+
+  /** 검색어와 일치한 부분을 <mark> 로 감싼다 (왜 이 종목이 나왔는지 보이게). */
+  function acHighlight(text, needle) {
+    const idx = text.toLowerCase().indexOf(needle.toLowerCase());
+    if (idx < 0) return esc(text);
+    return esc(text.slice(0, idx))
+      + `<mark>${esc(text.slice(idx, idx + needle.length))}</mark>`
+      + esc(text.slice(idx + needle.length));
+  }
+
+  function acRender(rows, needle) {
+    ac.items = rows;
+    ac.active = -1;
+
+    if (!rows.length) {
+      // "데이터 없음" 도 분명히 알려 준다. 아무것도 안 뜨면 고장난 줄 안다.
+      acShow(`<div class="ac-msg">'${esc(needle)}' 와 맞는 종목이 없습니다.<br />
+              종목명 일부(삼성) 또는 티커(AAPL)로 입력해 보세요.</div>`);
+      return;
+    }
+
+    acShow(rows.map((r, i) => `
+      <div class="ac-item" role="option" data-i="${i}" aria-selected="false">
+        <span class="ac-flag ${r.market === 'KR' ? 'kr' : 'us'}">${r.market === 'KR' ? '🇰🇷' : '🇺🇸'}</span>
+        <span class="ac-name">${acHighlight(r.name, needle)}</span>
+        ${r.is_etf ? '<span class="ac-etf">ETF</span>' : ''}
+        <span class="ac-code">${esc(r.code)}</span>
+        <span class="ac-ex">${esc(r.exchange)}</span>
+      </div>`).join(''));
+  }
+
+  /** 키보드로 위아래 이동. 화면 밖으로 나가면 스크롤도 따라간다. */
+  function acMove(step) {
+    if (!ac.open || !ac.items.length) return;
+    ac.active = (ac.active + step + ac.items.length) % ac.items.length;
+    [...$('acList').children].forEach((el, i) => {
+      const on = i === ac.active;
+      el.classList.toggle('on', on);
+      el.setAttribute('aria-selected', on ? 'true' : 'false');
+      if (on) el.scrollIntoView({ block: 'nearest' });
+    });
+  }
+
+  /** 후보 하나를 최종 선택 → 조회까지 이어서 실행한다. */
+  function acPick(i) {
+    const item = ac.items[i];
+    if (!item) return;
+    acClose();
+    // 서버가 판별한 티커를 그대로 넣는다 (코스피/코스닥 접미사가 이미 붙어 있다)
+    $('ticker').value = item.ticker;
+    search();
+  }
+
+  const acFetch = App.debounce(async (needle) => {
+    const seq = ++ac.seq;
+    try {
+      const rows = await App.get(`/api/search?q=${encodeURIComponent(needle)}&limit=10`);
+      if (seq !== ac.seq) return;        // 그 사이 더 최신 요청이 나갔으면 버린다
+      acRender(rows, needle);
+    } catch (error) {
+      if (seq !== ac.seq) return;
+      acShow(`<div class="ac-msg">검색 실패 — ${esc(error.message)}</div>`);
+    }
+  }, 180);
+
+  $('ticker').addEventListener('input', () => {
+    const needle = $('ticker').value.trim();
+    if (needle.length < AC_MIN) { acClose(); return; }
+    // 응답이 오기 전까지 로딩을 보여 준다 (빈 화면이면 멈춘 것처럼 느껴진다)
+    acShow('<div class="ac-msg">검색 중…</div>');
+    acFetch(needle);
+  });
+
+  // 방향키·엔터·ESC 처리. 목록이 떠 있을 때와 아닐 때 동작이 다르다.
+  $('ticker').addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); acMove(1); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); acMove(-1); return; }
+    if (e.key === 'Escape') { acClose(); return; }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // 목록에서 고른 것이 있으면 그것을, 없으면 입력값 그대로 조회한다
+      if (ac.open && ac.active >= 0) acPick(ac.active);
+      else { acClose(); search(); }
+    }
+  });
+
+  // 마우스 클릭 선택 (이벤트 위임)
+  $('acList').addEventListener('mousedown', (e) => {
+    // mousedown 을 쓰는 이유: click 은 blur 뒤에 오는데, blur 에서 목록을 닫아 버리면
+    // 클릭이 허공을 때린다.
+    const el = e.target.closest('.ac-item');
+    if (!el) return;
+    e.preventDefault();
+    acPick(Number(el.dataset.i));
+  });
+
+  // 입력창 밖을 누르면 닫는다
+  document.addEventListener('mousedown', (e) => {
+    if (!e.target.closest('.ac-wrap')) acClose();
+  });
+
+  $('btnSearch').addEventListener('click', () => { acClose(); search(); });
   $('btnFredSearch').addEventListener('click', searchFred);
   $('fredQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') searchFred(); });
 

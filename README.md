@@ -54,12 +54,14 @@ api-test/
 │   │   ├── kosis_router.py     KOSIS 통계 API (/api/kosis/...)
 │   │   ├── yf_router.py        야후 시세 API  (/api/yf/...)
 │   │   ├── stock_router.py     종목 통합 조회 (/api/stock/...)
+│   │   ├── search_router.py    종목 자동완성  (/api/search)
 │   │   ├── fred_router.py      FRED 거시지표  (/api/fred/...)
 │   │   ├── market_router.py    분석 API       (/api/...)
 │   │   └── page_router.py      화면(HTML) 라우트
 │   ├── services/           ← 서비스   : 비즈니스 로직
 │   │   ├── market_data.py      스크리닝 · 투자선 · 팩터
-│   │   └── stock_service.py    티커 판별(국내/미국) · 주가+거시지표 융합
+│   │   ├── stock_service.py    티커 판별(국내/미국) · 주가+거시지표 융합
+│   │   └── search_service.py   자동완성 색인 (메모리 15,414종목)
 │   ├── repositories/       ← 저장소   : 저장 · 조회
 │   │   ├── krx_store.py        KRX 시세 (SQLite)
 │   │   └── user_store.py       실습용 사용자 30명 (메모리 리스트)
@@ -80,7 +82,8 @@ api-test/
 │   └── start.sh            서버 자동 실행 + 포트 Public 전환 + 주소 출력
 ├── scripts/
 │   ├── fetch_krx.py        KRX 캐시를 채우는 CLI 수집 스크립트
-│   ├── build_stock_master.py  종목 마스터 생성 (DB 없이 티커 판별용)
+│   ├── build_stock_master.py  국내 종목 마스터 (티커 판별 + 시총순위)
+│   ├── build_us_master.py     미국 종목 마스터 (나스닥 심볼 + S&P500)
 │   ├── yf.py               야후 파이낸스 차트 스크립트 (matplotlib · 단독 실행)
 │   └── kosis_rss.py        KOSIS 공지 크롤러 → RSS 2.0 변환
 ├── test.sh                 KOSIS 공지 범위 수집 실행 스크립트
@@ -88,7 +91,8 @@ api-test/
 │   ├── pages/              화면 8종 (index · stock · kosis · krx · yf · quant · users · tetris)
 │   └── assets/             공통 app.css · app.js
 ├── data/
-│   ├── stock_master.json   종목코드·이름·시장 2,764종 (98KB, **저장소에 포함**)
+│   ├── stock_master.json   국내 2,764종목 — 코드·이름·시장·시총순위 (111KB, **포함**)
+│   ├── us_master.json      미국 12,650종목 — 티커·이름·거래소·S&P500 (751KB, **포함**)
 │   ├── krx_cache.db        시세 캐시 96MB (.gitignore 대상)
 │   ├── yf/                 scripts/yf.py 가 저장한 차트 PNG (.gitignore 대상)
 │   └── kosis_rss/          KOSIS 공지 RSS 산출물 (.gitignore 대상)
@@ -393,7 +397,8 @@ GET /search        itmId 는 메타에서 선택         + 데이터 표 + 원�
 
 | 구성 | 내용 |
 |------|------|
-| 검색 | 종목코드(`005930`) · **한글 종목명**(`삼성전자`) · 미국 티커(`AAPL`) · 야후 티커(`005930.KS`) |
+| 검색 | **HTS 스타일 자동완성** — 두 글자만 쳐도 연관 종목이 드롭다운으로 뜬다. 방향키 ↑↓ · Enter · 클릭으로 선택 |
+| 입력 형식 | 종목코드(`005930`) · **한글 종목명**(`삼성전자`) · 미국 티커(`AAPL`) · 야후 티커(`005930.KS`) |
 | 기간 | 1개월 · 3개월 · **6개월**(기본) · 1년 |
 | 요약 | 종목명 · 시장 배지(🇰🇷/🇺🇸) · 현재가 · 전일 대비 · **데이터 출처** |
 | 요약 타일 | 구간 수익률 · 구간 최저/최고 종가 · 최근 거래량 · 거래일 수 · 52주 범위 |
@@ -579,6 +584,36 @@ ApexCharts(화면)와 matplotlib(`scripts/yf.py`)이 **같은 그림**을 그릴
 - 허용하지 않는 `months` 는 `422`, 야후 응답 실패는 `502`.
 - `macro` 로 넘긴 지표 중 **일부만 실패해도 주가 응답은 살린다.**
   실패한 지표는 `macro[].ok = false` 와 `error` 로 표시된다 (화면 일부가 비는 편이 전체 실패보다 낫다).
+
+### 종목 검색 (자동완성) — `/api/search`
+
+| Method | Path | 설명 | 성공 |
+|--------|------|------|------|
+| GET | `/api/search?q=삼성` | HTS 스타일 자동완성 (최대 10건) | 200 |
+| GET | `/api/search?q=AAP&limit=5&market=US` | 개수·시장 지정 | 200 |
+| GET | `/api/search/stats` | 색인 현황 (국내 2,764 + 미국 12,650) | 200 |
+
+**입력할 때마다 호출되는 API 라 속도가 전부다.** 종목 목록을 서버가 뜰 때
+(`lifespan`) 메모리에 한 번만 올려 두고, 검색은 파일·DB·외부 API 를 전혀 건드리지 않는다.
+**실측 4~6ms** (첫 요청만 색인 구축에 0.8초라 미리 올려 둔다).
+
+관련도 순으로 정렬한다 — ① 티커 정확일치 ② 티커가 검색어로 시작 ③ 종목명이 시작
+④ 종목명에 포함 ⑤ 티커에 포함. 여기에 **중요도**를 더한다.
+
+| | 중요도 신호 | 출처 |
+|---|---|---|
+| 국내 | 시가총액 순위 | KRX 캐시 → `data/stock_master.json` |
+| 미국 | S&P 500 편입 여부 | 위키백과 → `data/us_master.json` |
+
+**ETF 는 항상 뒤로 민다.** ETF 이름에 유명 종목 티커가 그대로 들어가서
+(`2x Long TSLA Daily ETF`), 그냥 두면 `TES` 검색에 테슬라보다 ETF 가 먼저 나온다.
+
+```text
+삼성  → 삼성전자 · 삼성전자우 · 삼성바이오로직스
+AAP   → AAP(정확일치) · AAPL · AAPG          (ETF 6종은 아래로)
+TES   → TSLA
+전자  → 삼성전자 · 삼성전자우 · LG전자
+```
 
 ### FRED 거시지표 — `/api/fred/...`
 
