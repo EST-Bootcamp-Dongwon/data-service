@@ -46,7 +46,7 @@
   <!-- 2) 사용자 목록 -->
   <section class="card">
     <h2 class="endpoint">
-      <span class="method get">GET</span><span class="path">/users</span>
+      <span class="method get">GET</span><span class="path">/api/users</span>
       <span class="muted">사용자 전체 목록</span>
       <span style="margin-left:auto" id="pillUsers"></span>
     </h2>
@@ -69,7 +69,7 @@
   <!-- 3) 단건 조회 -->
   <section class="card">
     <h2 class="endpoint">
-      <span class="method get">GET</span><span class="path">/users/{user_id}</span>
+      <span class="method get">GET</span><span class="path">/api/users/{user_id}</span>
       <span class="muted">사용자 단건 조회</span>
       <span style="margin-left:auto" id="pillOne"></span>
     </h2>
@@ -88,7 +88,7 @@
   <!-- 4) 사용자 생성 -->
   <section class="card">
     <h2 class="endpoint">
-      <span class="method post">POST</span><span class="path">/users</span>
+      <span class="method post">POST</span><span class="path">/api/users</span>
       <span class="muted">사용자 생성</span>
       <span style="margin-left:auto" id="pillCreate"></span>
     </h2>
@@ -169,7 +169,7 @@
 
   async function loadUsers() {
     $('btnUsers').disabled = true;
-    const result = await call('/users');
+    const result = await call('/api/users');
     pill($('pillUsers'), result);
 
     if (!result.ok || !Array.isArray(result.body)) {
@@ -242,7 +242,7 @@
       $('outOne').textContent = 'user_id 를 입력하세요.';
       return;
     }
-    const result = await call(`/users/${encodeURIComponent(id)}`);
+    const result = await call(`/api/users/${encodeURIComponent(id)}`);
     pill($('pillOne'), result);
     render($('outOne'), result);
   }
@@ -258,7 +258,7 @@
     };
 
     $('btnCreate').disabled = true;
-    const result = await call('/users', {
+    const result = await call('/api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
