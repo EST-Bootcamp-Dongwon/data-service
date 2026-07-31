@@ -3,7 +3,7 @@
 KRX OpenAPI 는 **하루치 전 종목 스냅샷**만 준다. 캔들 차트나 수익률 계산처럼
 "한 종목의 여러 날"이 필요한 기능은 거래일 수만큼 호출해야 하는데, 1회에 2~3초가 걸린다.
 
-그래서 한 번 받은 날짜는 SQLite 파일(`krx_cache.db`)에 쌓아 두고 다음부터는 DB 에서 읽는다.
+그래서 한 번 받은 날짜는 SQLite 파일(`data/krx_cache.db`)에 쌓아 두고 다음부터는 DB 에서 읽는다.
 
 | | 메모리 캐시 | SQLite 캐시 (이 모듈) |
 |---|---|---|
@@ -23,10 +23,16 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-import krx_data as api                                  # KRX 호출·정규화 (외부 통신 담당)
-from trading_calendar import today_kst, to_iso, trading_days   # 거래일 계산 (공통 유틸)
+from app.clients import krx_data as api                 # KRX 호출·정규화 (외부 통신 담당)
+from app.core.trading_calendar import today_kst, to_iso, trading_days   # 거래일 계산 (공통 유틸)
 
-DB_PATH = Path(__file__).resolve().parent / "krx_cache.db"
+# 이 파일은 app/repositories/ 안에 있으므로 parents[2] 가 프로젝트 루트다.
+# (parents[0]=repositories, parents[1]=app, parents[2]=프로젝트 루트)
+# 실행 위치(cwd)와 무관하게 항상 같은 DB 파일을 가리킨다.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DB_PATH = PROJECT_ROOT / "data" / "krx_cache.db"
+# 최초 실행 시 data/ 폴더가 없으면 sqlite3.connect 가 실패하므로 미리 만들어 둔다.
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # 수집 대상 시장. KRX 는 시장마다 API 가 따로라 각각 호출해야 한다.
 MARKETS = ("KOSPI", "KOSDAQ")

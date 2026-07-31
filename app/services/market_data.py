@@ -3,7 +3,8 @@
 `krx_store` 에 쌓인 **실제 KRX 일별 시세**로 화면의 차트 4종을 계산한다.
 FastAPI 에 의존하지 않는 순수 함수 모음이라 단독으로 실행·테스트할 수 있다.
 
-    KRX OpenAPI  →  krx_data(호출·정규화)  →  krx_store(SQLite)  →  market_data(분석)  →  라우터  →  화면
+    KRX OpenAPI  →  clients/krx_data(호출·정규화)  →  repositories/krx_store(SQLite)
+                 →  services/market_data(분석)  →  routers(컨트롤러)  →  화면
 
 예전에는 이 파일이 난수로 목업 시세를 만들었지만, KRX API 승인 후
 **전부 실데이터 기반 계산**으로 바꿨다. 난수는 효율적 투자선의 비중 추첨에만 남아 있다.
@@ -22,8 +23,8 @@ import random                                            # 포트폴리오 비�
 import statistics                                        # 평균·표준편차
 from typing import Dict, List, Optional, Sequence, Tuple
 
-import krx_store as store                                # SQLite 캐시 (데이터 공급원)
-from trading_calendar import round_half_up, to_iso, today_kst
+from app.repositories import krx_store as store          # SQLite 캐시 (데이터 공급원)
+from app.core.trading_calendar import round_half_up, to_iso, today_kst
 
 # 분석에 쓰는 기본 관측 기간(거래일). 60일 ≒ 3개월.
 DEFAULT_WINDOW = 60

@@ -22,6 +22,7 @@ __pycache__/
 Thumbs.db
 
 # KRX 일별 시세 디스크 캐시 (용량이 크고 재생성 가능)
-krx_cache.db
-krx_cache.db-wal
-krx_cache.db-shm
+# scripts/fetch_krx.py 로 언제든 다시 만들 수 있으므로 저장소에 올리지 않는다.
+data/krx_cache.db
+data/krx_cache.db-wal
+data/krx_cache.db-shm

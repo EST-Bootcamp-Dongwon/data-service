@@ -5,12 +5,12 @@
 
 | | 강의 원본 | 이 저장소 |
 |---|---|---|
-| 데이터 출처 | 요청할 때마다 KRX 직접 호출 | `krx_cache.db`(SQLite) 에서 조회 |
+| 데이터 출처 | 요청할 때마다 KRX 직접 호출 | `data/krx_cache.db`(SQLite) 에서 조회 |
 | 응답 필드 | KRX 원본 그대로 (`TDD_CLSPRC` = `"71,200"`) | snake_case + 숫자형 (`close` = `71200`) |
 | 시장 | 유가증권만 | 유가증권 + 코스닥 |
 | 부가 정보 | 없음 | 집계(`summary`) · 검색 · 정렬 · 페이지 |
 
-화면(`static/krx.html`)은 이 엔드포인트들이 주는 값을 그대로 그리기만 한다.
+화면(`static/pages/krx.html`)은 이 엔드포인트들이 주는 값을 그대로 그리기만 한다.
 """
 
 from typing import Dict, List, Optional
@@ -18,10 +18,10 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
-import krx_data as api
-import krx_store as store
-import market_data as analysis
-from trading_calendar import to_iso
+from app.clients import krx_data as api            # 외부 연동 (KRX 호출)
+from app.repositories import krx_store as store    # 저장소 (SQLite 캐시)
+from app.services import market_data as analysis   # 서비스 (분석 계산)
+from app.core.trading_calendar import to_iso       # 공통 유틸 (거래일·KST)
 
 router = APIRouter(prefix="/api/krx", tags=["KRX 일별 시세"])
 

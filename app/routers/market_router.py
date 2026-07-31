@@ -1,10 +1,10 @@
 """시장 분석 라우터 (컨트롤러 계층)
 
-계산 로직은 `market_data` 모듈(서비스 계층)에 두고,
+계산 로직은 `app/services/market_data.py`(서비스 계층)에 두고,
 여기서는 **요청 검증 + 응답 형식(DTO)** 만 담당한다.
 
-화면(`static/index.html`)은 이 엔드포인트들이 주는 값을 그대로 그리기만 한다.
-모든 값은 `krx_cache.db` 에 쌓인 **실제 KRX 일별 시세**에서 계산된다.
+화면(`static/pages/quant.html`)은 이 엔드포인트들이 주는 값을 그대로 그리기만 한다.
+모든 값은 `data/krx_cache.db` 에 쌓인 **실제 KRX 일별 시세**에서 계산된다.
 """
 
 from typing import List, Optional
@@ -12,8 +12,8 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
-import krx_store as store
-import market_data as service
+from app.repositories import krx_store as store   # 저장소 (SQLite 캐시)
+from app.services import market_data as service   # 서비스 (분석 계산)
 
 router = APIRouter(prefix="/api", tags=["시장 분석"])
 

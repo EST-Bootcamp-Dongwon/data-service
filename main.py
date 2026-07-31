@@ -21,8 +21,8 @@ from pathlib import Path as FilePath
 import random
 
 # 차트 데이터 API 묶음(/api/...)을 가져온다. router 라는 이름이 흔해서 별칭을 붙인다.
-from market_router import router as market_router   # 분석 API (/api/...)
-from krx_router import router as krx_router         # KRX 일별 시세 API (/api/krx/...)
+from app.routers.market_router import router as market_router   # 분석 API (/api/...)
+from app.routers.krx_router import router as krx_router         # KRX 일별 시세 API (/api/krx/...)
 
 # --------------------------------------------------
 # API 문서(Swagger) 메타데이터
@@ -112,12 +112,15 @@ app = FastAPI(
 )
 
 # --------------------------------------------------
-# 정적 화면(static/index.html) 서빙
+# 정적 화면(static/) 서빙
 # --------------------------------------------------
 # 같은 오리진에서 서빙하므로 화면(JS fetch)에서 CORS 문제가 발생하지 않는다.
 # __file__ 은 이 파일(main.py)의 경로 → .parent 는 그 폴더 → / "static" 으로 하위 폴더를 가리킨다.
 # 실행 위치(cwd)와 무관하게 항상 같은 폴더를 가리키므로 상대경로보다 안전하다.
+#   static/pages/   HTML 화면 4종
+#   static/assets/  공통 app.css · app.js
 STATIC_DIR = FilePath(__file__).parent / "static"
+PAGES_DIR = STATIC_DIR / "pages"
 # /static/파일명 으로 요청하면 해당 폴더의 파일을 그대로 내려준다.
 # name="static" 은 코드에서 url_for("static", ...) 로 URL 을 만들 때 쓰는 식별자다.
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -143,10 +146,10 @@ app.include_router(market_router)
 # 화면 라우트
 # --------------------------------------------------
 # 화면은 기능별로 파일을 나눠 두었다. 파일명만 봐도 무슨 화면인지 알 수 있어 수정이 쉽다.
-#   /        → static/index.html   홈 · 사용자 API 테스트
-#   /krx     → static/krx.html     KRX 일별 시세
-#   /quant   → static/quant.html   퀀트 분석 (스크리닝·투자선·팩터)
-#   /tetris  → static/tetris.html  Canvas 테트리스
+#   /        → static/pages/index.html   홈 · 사용자 API 테스트
+#   /krx     → static/pages/krx.html     KRX 일별 시세
+#   /quant   → static/pages/quant.html   퀀트 분석 (스크리닝·투자선·팩터)
+#   /tetris  → static/pages/tetris.html  Canvas 테트리스
 PAGES = {
     "/": "index.html",
     "/krx": "krx.html",
@@ -164,7 +167,7 @@ def _page(filename: str):
     """
     def handler():
         # FileResponse 는 파일을 열어 스트리밍으로 내려주고, 확장자로 Content-Type 을 자동 판단한다.
-        return FileResponse(STATIC_DIR / filename)
+        return FileResponse(PAGES_DIR / filename)
     return handler
 
 

@@ -12,7 +12,19 @@
       "Bash(curl -s -o /dev/null -w \"8099 health: %{http_code}\\\\n\" http://127.0.0.1:8099/health)",
       "Bash(netstat -ltnp)",
       "Bash(git add *)",
-      "Bash(grep -iE \"\\\\.key$|\\\\.env|\\\\.db$|\\\\.pdf$|\\\\.zip$\")"
+      "Bash(grep -iE \"\\\\.key$|\\\\.env|\\\\.db$|\\\\.pdf$|\\\\.zip$\")",
+      "Bash(git commit *)",
+      "Bash(set -e)",
+      "Bash(mkdir -p app/routers app/services app/repositories app/clients app/core scripts static/pages static/assets data docs)",
+      "Bash(mv krx_cache.db data/krx_cache.db)",
+      "Bash(cd /mnt/c/Users/kik32/workspace/EST-Camp-AI-Quant/projects/api-test *)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python scripts/fetch_krx.py --status)",
+      "Bash(curl -s http://127.0.0.1:8000/openapi.json)",
+      "Bash(.venv/bin/python -c \"import json,sys; [print\\(p\\) for p in sorted\\(json.load\\(sys.stdin\\)['paths']\\)]\")"
+    ],
+    "additionalDirectories": [
+      "/mnt/c/Users/kik32/workspace/EST-Camp-AI-Quant/projects/api-test/static/pages"
     ]
   }
 }

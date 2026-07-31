@@ -1,15 +1,15 @@
 """KRX 일별 시세 수집 스크립트
 
-KRX 를 직접 두드려 `krx_cache.db` 를 채운다. 서버(`uvicorn`)와 별개로 돌릴 수 있으므로,
+KRX 를 직접 두드려 `data/krx_cache.db` 를 채운다. 서버(`uvicorn`)와 별개로 돌릴 수 있으므로,
 미리 한 번 채워 두면 화면은 처음부터 빠르게 뜬다.
 
 사용법
 ------
-    python3 fetch_krx.py                 # 최근 250거래일 (없는 날짜만)
-    python3 fetch_krx.py --days 60       # 최근 60거래일만
-    python3 fetch_krx.py --days 1        # 오늘 장 마감 후 하루치만 추가
-    python3 fetch_krx.py --workers 4     # 동시 호출 수 조절 (기본 6)
-    python3 fetch_krx.py --status        # 받지 않고 현재 캐시 상태만 확인
+    python3 scripts/fetch_krx.py                 # 최근 250거래일 (없는 날짜만)
+    python3 scripts/fetch_krx.py --days 60       # 최근 60거래일만
+    python3 scripts/fetch_krx.py --days 1        # 오늘 장 마감 후 하루치만 추가
+    python3 scripts/fetch_krx.py --workers 4     # 동시 호출 수 조절 (기본 6)
+    python3 scripts/fetch_krx.py --status        # 받지 않고 현재 캐시 상태만 확인
 
 이미 받은 날짜는 건너뛴다. 휴장일(0건)도 기록해 두므로 다시 요청하지 않는다.
 """
@@ -17,8 +17,14 @@ KRX 를 직접 두드려 `krx_cache.db` 를 채운다. 서버(`uvicorn`)와 별�
 import argparse
 import sys
 import time
+from pathlib import Path
 
-import krx_store as store
+# 이 스크립트는 scripts/ 안에 있어서 파이썬이 프로젝트 루트를 모른다.
+# `app` 패키지를 import 하려면 루트를 검색 경로에 직접 넣어 줘야 한다.
+# (parents[0]=scripts, parents[1]=프로젝트 루트)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.repositories import krx_store as store  # noqa: E402  (경로 설정 후에 import 해야 한다)
 
 
 def human(n: int) -> str:

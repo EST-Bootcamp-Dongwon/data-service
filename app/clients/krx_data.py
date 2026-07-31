@@ -7,9 +7,9 @@ FastAPI 에 의존하지 않는 순수 함수 모음이라 단독으로 실행·
 --------
 | 모듈 | 역할 |
 |---|---|
-| `krx_data.py` (이 파일) | KRX 와 HTTP 로 통신하고 응답을 정규화한다 |
-| `krx_store.py` | 받은 데이터를 SQLite 에 쌓고 꺼내 준다 |
-| `market_data.py` | 쌓인 데이터로 스크리닝·포트폴리오·팩터를 계산한다 |
+| `app/clients/krx_data.py` (이 파일) | KRX 와 HTTP 로 통신하고 응답을 정규화한다 |
+| `app/repositories/krx_store.py` | 받은 데이터를 SQLite 에 쌓고 꺼내 준다 |
+| `app/services/market_data.py` | 쌓인 데이터로 스크리닝·포트폴리오·팩터를 계산한다 |
 
 강의 원본과 달라진 점
 --------------------
@@ -31,8 +31,11 @@ from urllib.error import HTTPError, URLError             # 네트워크 오류 �
 from urllib.parse import urlencode                       # 쿼리스트링 생성
 from urllib.request import Request, urlopen              # HTTP 요청 (표준 라이브러리)
 
-BASE_DIR = Path(__file__).resolve().parent               # 이 파일이 있는 폴더 (실행 위치와 무관)
-KEY_FILE = BASE_DIR / ".key"                             # 강의 원본과 같은 위치·이름
+# 이 파일은 app/clients/ 안에 있으므로 parents[2] 가 프로젝트 루트다.
+# (parents[0]=clients, parents[1]=app, parents[2]=프로젝트 루트)
+# 인증키는 강의 원본과 같이 프로젝트 루트에 두므로 루트를 기준으로 찾는다.
+BASE_DIR = Path(__file__).resolve().parents[2]           # 프로젝트 루트 (실행 위치와 무관)
+KEY_FILE = BASE_DIR / ".key"                             # 강의 원본과 같은 이름
 ENV_FILE = BASE_DIR / ".env"                             # dotenv 형식도 지원
 KRX_BASE_URL = "https://data-dbg.krx.co.kr/svc/apis"     # KRX OpenAPI 기본 주소
 DATE_PATTERN = re.compile(r"^\d{8}$")                    # YYYYMMDD 8자리
