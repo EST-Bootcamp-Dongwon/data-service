@@ -5,12 +5,12 @@
 
 사용법
 ------
-    python3 yf.py                          # 삼성전자(005930.KS)
-    python3 yf.py 000660.KS                # 종목 지정 (SK하이닉스)
-    python3 yf.py 005930                   # 숫자 6자리면 .KS 를 자동으로 붙인다
-    python3 yf.py AAPL                     # 해외 종목도 된다 (통화는 응답 값을 따라간다)
-    python3 yf.py AAPL --save chart.png    # 화면 대신 PNG 로 저장
-    python3 yf.py --english                # 축·제목을 영어로 (한글 폰트가 없을 때)
+    python3 scripts/yf.py                          # 삼성전자(005930.KS)
+    python3 scripts/yf.py 000660.KS                # 종목 지정 (SK하이닉스)
+    python3 scripts/yf.py 005930                   # 숫자 6자리면 .KS 를 자동으로 붙인다
+    python3 scripts/yf.py AAPL                     # 해외 종목도 된다 (통화는 응답 값을 따라간다)
+    python3 scripts/yf.py AAPL --save chart.png    # 화면 대신 PNG 로 저장
+    python3 scripts/yf.py --english                # 축·제목을 영어로 (한글 폰트가 없을 때)
 
 같은 값을 브라우저에서 보려면 서버를 띄우고 <http://127.0.0.1:8000/yf> 로 들어가면 된다.
 (화면은 `static/pages/yf.html`, API 는 `app/routers/yf_router.py`)
@@ -26,9 +26,11 @@ from pathlib import Path
 
 import matplotlib
 
-# `app` 패키지를 import 할 수 있도록 이 파일이 있는 폴더(프로젝트 루트)를 검색 경로에 넣는다.
-# 다른 폴더에서 `python3 /경로/yf.py` 로 실행해도 동작하게 하기 위함이다.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# 이 스크립트는 scripts/ 안에 있어서 파이썬이 프로젝트 루트를 모른다.
+# `app` 패키지를 import 하려면 루트를 검색 경로에 직접 넣어 줘야 한다.
+# (parents[0]=scripts, parents[1]=프로젝트 루트)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.clients import yf_data  # noqa: E402  (경로 설정 후에 import 해야 한다)
 
@@ -170,7 +172,7 @@ def plot_stock_movement(ticker_symbol: str, save_path: str = "", english: bool =
     #    GUI 가 없는 환경(WSL·서버)에서 --save 를 안 줬으면, 결과를 잃지 않도록 자동 저장한다.
     if not save_path and not can_show():
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        auto_dir = Path(__file__).resolve().parent / "data" / "yf"
+        auto_dir = PROJECT_ROOT / "data" / "yf"
         auto_dir.mkdir(parents=True, exist_ok=True)
         save_path = str(auto_dir / f"{quote['ticker']}_{stamp}.png")
         print(f"\n창을 띄울 수 없는 환경입니다 (matplotlib backend={matplotlib.get_backend()}). 파일로 저장합니다.")

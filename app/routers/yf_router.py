@@ -1,6 +1,6 @@
 """야후 파이낸스 시세 라우터 (컨트롤러 계층)
 
-화면(`static/pages/yf.html`)과 스크립트(`yf.py`)가 함께 쓰는 API 다.
+화면(`static/pages/yf.html`)과 스크립트(`scripts/yf.py`)가 함께 쓰는 API 다.
 
     GET /api/yf/quote?ticker=005930.KS              당일 가격 지표 5종 + 차트 데이터
     GET /api/yf/history?ticker=005930.KS&period=3mo 기간별 일봉 (캔들·거래량)
@@ -136,7 +136,7 @@ def quote(
 
     - 숫자 6자리만 주면(`005930`) 코스피 종목으로 보고 `.KS` 를 붙인다.
     - 같은 티커를 60초 안에 다시 물으면 서버 메모리 캐시로 돌려준다.
-    - `chart` 를 그대로 막대+꺾은선으로 그리면 `yf.py` 가 그리는 그림과 같아진다.
+    - `chart` 를 그대로 막대+꺾은선으로 그리면 `scripts/yf.py` 가 그리는 그림과 같아진다.
     """
     return _guard(api.fetch_quote, ticker)
 

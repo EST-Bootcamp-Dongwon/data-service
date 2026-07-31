@@ -60,7 +60,7 @@
     <div>
       <h1>💹 야후 파이낸스 시세</h1>
       <p>한 종목의 <b>전일종가 · 시가 · 저가 · 고가 · 현재가</b>를 받아 막대와 꺾은선을 겹쳐 그린다.
-         터미널 스크립트 <code>python3 yf.py</code>와 <b>같은 API·같은 계산</b>을 쓰므로 두 그림의 값이 항상 일치한다.</p>
+         터미널 스크립트 <code>python3 scripts/yf.py</code>와 <b>같은 API·같은 계산</b>을 쓰므로 두 그림의 값이 항상 일치한다.</p>
     </div>
     <nav class="nav" id="nav"></nav>
   </header>
@@ -112,7 +112,7 @@
 
   <div class="tiles" id="tiles"></div>
 
-  <!-- ── 당일 가격 움직임 (yf.py 와 같은 그림) ────────── -->
+  <!-- ── 당일 가격 움직임 (scripts/yf.py 와 같은 그림) ────────── -->
   <section class="card">
     <h2>당일 가격 움직임 <span class="muted">— 막대 + 꺾은선</span></h2>
     <p class="hint">
@@ -146,14 +146,14 @@
   <section class="card">
     <h2>터미널에서 같은 차트 그리기</h2>
     <p class="hint">
-      루트의 <code>yf.py</code>가 이 화면과 같은 <code>app/clients/yf_data.py</code>를 써서 matplotlib으로 그린다.
+      <code>scripts/yf.py</code>가 이 화면과 같은 <code>app/clients/yf_data.py</code>를 써서 matplotlib으로 그린다.
       GUI가 없는 환경(WSL·서버)이면 창 대신 <code>data/yf/</code>에 PNG로 저장한다.
     </p>
-<pre class="cmd"><b>python3 yf.py</b>                        # 삼성전자(005930.KS)
-<b>python3 yf.py 000660.KS</b>              # 종목 지정
-<b>python3 yf.py 005930</b>                 # 숫자 6자리면 .KS 자동
-<b>python3 yf.py AAPL --save chart.png</b>  # 창 대신 PNG 저장
-<b>python3 yf.py --english</b>              # 한글 폰트가 없을 때</pre>
+<pre class="cmd"><b>python3 scripts/yf.py</b>                        # 삼성전자(005930.KS)
+<b>python3 scripts/yf.py 000660.KS</b>              # 종목 지정
+<b>python3 scripts/yf.py 005930</b>                 # 숫자 6자리면 .KS 자동
+<b>python3 scripts/yf.py AAPL --save chart.png</b>  # 창 대신 PNG 저장
+<b>python3 scripts/yf.py --english</b>              # 한글 폰트가 없을 때</pre>
   </section>
 
   <!-- ── API 응답 원문 ─────────────────────────── -->
@@ -277,7 +277,7 @@
 
   /**
    * 당일 가격 움직임 차트.
-   * `yf.py` 의 matplotlib 그림과 같은 구성이다 — 연파랑 막대 위에 빨간 꺾은선을 겹치고,
+   * `scripts/yf.py` 의 matplotlib 그림과 같은 구성이다 — 연파랑 막대 위에 빨간 꺾은선을 겹치고,
    * Y축은 서버가 계산해 준 `y_min`~`y_max` 로 좁힌다.
    */
   function drawMovement(q) {
@@ -290,7 +290,7 @@
         { name: '가격 (막대)', type: 'column', data: values },
         { name: '가격 (선)', type: 'line', data: values },
       ],
-      // 막대는 연파랑(투명도 0.5), 선은 빨강 — yf.py 의 색과 같게 맞춘다
+      // 막대는 연파랑(투명도 0.5), 선은 빨강 — scripts/yf.py 의 색과 같게 맞춘다
       colors: ['#4A90E2', '#D0021B'],
       fill: { opacity: [0.5, 1] },
       stroke: { width: [0, 2.5], curve: 'straight' },
