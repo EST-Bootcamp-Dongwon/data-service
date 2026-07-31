@@ -72,6 +72,26 @@ class YahooError(Exception):
         self.status = status
 
 
+def _wrap_error(error: Exception, what: str) -> YahooError:
+    """야후 호출 예외를 사용자에게 설명 가능한 오류로 바꾼다.
+
+    **요청 한도 초과(429)를 따로 구분하는 이유** — yfinance 는 공식 API 가 아니라
+    야후 웹 엔드포인트를 긁어 오는 라이브러리라, 같은 IP 에서 요청이 몰리면 야후가 막는다.
+    특히 클라우드(서버리스) 배포는 **여러 사용자가 IP 를 공유**하므로 내가 조금만 호출해도
+    이미 한도에 걸려 있을 수 있다. 이때 "조회 실패" 라고만 하면 원인을 알 수 없어서,
+    한도 문제임을 분명히 알려 준다. (일시적이며 시간이 지나면 풀린다)
+    """
+    text = str(error)
+    if "429" in text or "Too Many Requests" in text or "Rate limit" in text.lower():
+        return YahooError(
+            "야후 파이낸스 요청 한도(429)에 걸렸습니다. 잠시 후 다시 시도해 주세요. "
+            "야후는 IP 단위로 한도를 두는데, 클라우드 배포는 IP 를 공유하기 때문에 "
+            "직접 많이 호출하지 않아도 걸릴 수 있습니다.",
+            status=429,
+        )
+    return YahooError(f"{what}: {error}", status=502)
+
+
 # ==================================================
 # 공통 도구
 # ==================================================
@@ -161,8 +181,8 @@ def _fetch_quote_uncached(symbol: str) -> dict:
     started = time.monotonic()
     try:
         info = yf.Ticker(symbol).info or {}
-    except Exception as error:  # 네트워크 장애 · 야후 응답 형식 변경 등
-        raise YahooError(f"야후 파이낸스 조회에 실패했습니다: {error}", status=502)
+    except Exception as error:  # 네트워크 장애 · 요청 한도 · 야후 응답 형식 변경 등
+        raise _wrap_error(error, "야후 파이낸스 조회에 실패했습니다")
 
     # 가격 5종을 뽑는다. 현재가는 장중/장마감에 따라 키가 달라서 두 곳을 함께 본다.
     prices = {
@@ -237,7 +257,7 @@ def _fetch_history_uncached(symbol: str, period: str) -> dict:
     try:
         frame = yf.Ticker(symbol).history(period=period, interval="1d")
     except Exception as error:
-        raise YahooError(f"야후 파이낸스 시세 조회에 실패했습니다: {error}", status=502)
+        raise _wrap_error(error, "야후 파이낸스 시세 조회에 실패했습니다")
 
     if frame is None or frame.empty:
         raise YahooError(

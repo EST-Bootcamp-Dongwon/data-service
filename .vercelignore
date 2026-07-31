@@ -1,0 +1,40 @@
+# Vercel 배포 번들에서 뺄 것들.
+# 앱을 띄우는 데 필요 없는 파일을 빼면 번들이 작아지고 배포가 빨라진다.
+# (파이썬 함수 번들 한도는 500MB. 의존성만으로 280MB 쯤 되므로 나머지는 줄여 둔다.)
+
+# 강의 원본 서브모듈 — 읽기 전용 참고 자료라 서버 구동과 무관하다
+lecture/
+
+# 개발 환경
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 문서·작업 기록
+docs/
+*.md
+!README.md
+
+# 로컬 데이터
+# ⚠️ data/stock_master.json 은 티커 판별에 필요하므로 반드시 올라가야 한다.
+#    아래는 그 파일을 제외한 나머지만 뺀다.
+data/krx_cache.db
+data/krx_cache.db-wal
+data/krx_cache.db-shm
+data/kosis_rss/
+data/yf/
+
+# Codespaces 설정 (Vercel 에서는 안 쓴다)
+.devcontainer/
+
+# 수집·차트 스크립트 — 웹 서버가 import 하지 않는다
+scripts/
+test.sh
+
+# 에디터·OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

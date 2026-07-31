@@ -72,6 +72,8 @@ api-test/
 │       ├── trading_calendar.py
 │       ├── secrets.py          KRX·KOSIS·FRED 인증키 로딩
 │       └── api_docs.py         Swagger(/docs) 설명 글
+├── vercel.json             Vercel 배포 설정 (함수 실행시간)
+├── .vercelignore           배포 번들에서 뺄 파일
 ├── .devcontainer/          GitHub Codespaces 설정 (→ 15장 배포·공유)
 │   ├── devcontainer.json   파이썬 3.12 컨테이너 · 8000 포트 전달
 │   ├── setup.sh            의존성 설치 + 인증키·캐시 상태 안내 (최초 1회)
@@ -874,108 +876,126 @@ OUT_DIR=./tmp ./test.sh      # 저장 폴더 변경
 
 ---
 
-## 15. 배포 · 공유 (GitHub Codespaces) ★
+## 15. 배포 · 공유 ★
 
-강사님께 보여드릴 주소를 만드는 방법. **서버가 필요한 앱**이라 GitHub Pages 로는 안 된다
-(Pages 는 정적 파일만 올라간다). Codespaces 에서 서버를 띄우고 **8000 포트를 공개**하면
-아래 형태의 주소가 나온다.
+강사님께 보여드릴 주소를 만드는 방법.
 
-```text
-https://<코드스페이스이름>-8000.app.github.dev
+> ⚠️ **GitHub Pages 로는 이 앱을 올릴 수 없다.** Pages 는 정적 파일만 서빙한다.
+> `/api/stock`·`/api/fred` 는 파이썬이 돌아야 하므로 서버가 필요하다.
+> (Pages 에 올리려면 데이터를 미리 JSON 으로 구워 두고 프론트가 그걸 읽도록 고쳐야 한다.)
+
+### 15.1 Vercel — 현재 방식
+
+`main.py` 에 `app = FastAPI(...)` 가 있으면 **Vercel 이 알아서 진입점으로 잡는다.**
+따로 래퍼 파일을 만들 필요가 없어서, 이 저장소는 설정 파일 두 개만 추가하면 끝난다.
+
+| 파일 | 역할 |
+|------|------|
+| `vercel.json` | 함수 최대 실행 시간 60초 (야후 호출이 느릴 때 대비) |
+| `.vercelignore` | `lecture/`·`scripts/`·`docs/` 등 서버 구동에 없는 파일 제외 |
+
+```bash
+npm i -g vercel      # 이미 있으면 생략
+vercel login         # 브라우저 인증 (1회)
+vercel               # 미리보기 배포 — 주소가 바로 나온다
+vercel --prod        # 운영 배포
 ```
 
-### 15.1 3단계
+WSL 에서 `node: not found` 가 나면 CLI 가 윈도우에 깔린 것이다. 윈도우 터미널(PowerShell)에서
+프로젝트 폴더로 이동해 같은 명령을 쓰면 된다.
 
-**① Codespace 만들기** — 저장소 첫 화면에서 `Code ▾` → `Codespaces` → `Create codespace on main`
+### 15.2 인증키 (Vercel 환경변수)
 
-`.devcontainer/` 설정대로 파이썬 3.12 컨테이너가 만들어지고,
-의존성 설치(2~3분) → **8000 포트로 서버 자동 실행**까지 알아서 진행된다.
-
-**② 포트를 Public 으로** — 이 단계를 빠뜨리면 강사님이 주소를 열었을 때
-**GitHub 로그인 화면이나 404** 가 뜬다. Codespaces 의 전달 포트는 **기본이 Private** 이기 때문이다.
-
-`.devcontainer/start.sh` 가 자동으로 시도하고, 실패하면 터미널에 안내를 띄운다. 직접 바꾸려면:
-
-| 방법 | 절차 |
-|------|------|
-| VS Code | 아래쪽 **[포트]** 탭 → `8000` 행 우클릭 → **포트 공개 범위** → **Public** |
-| 터미널 | `gh codespace ports visibility 8000:public -c $CODESPACE_NAME` |
-
-> ⚠️ `devcontainer.json` 만으로는 공개 범위를 지정할 수 없다.
-> `"visibility": "public"` 은 오래된 요청 사항이지만 **아직 지원되지 않는다.**
-
-**③ 주소 전달** — 터미널 배너에 찍힌 주소를 그대로 복사해서 보내면 된다.
-
-### 15.2 인증키 (Codespaces Secrets)
-
-`.key` 는 `.gitignore` 대상이라 저장소에 없다. **환경변수로 넣는다.**
+`.key` 는 `.gitignore` 대상이라 배포본에 없다. **환경변수로 넣는다.**
 `app/core/secrets.py` 가 **환경변수를 가장 먼저** 보므로 코드는 고칠 필요가 없다.
 
-`github.com/settings/codespaces` → **Secrets** → `New secret` 에서 아래를 넣고,
-저장소 `api-test` 에 접근 권한을 준다. (넣은 뒤 Codespace 를 **재시작**해야 반영된다.)
+```bash
+vercel env add FRED_API_KEY production
+vercel env add KOSIS_API_KEY production
+```
+
+또는 Vercel 대시보드 → 프로젝트 → **Settings → Environment Variables**.
+넣은 뒤에는 **다시 배포해야** 반영된다 (`vercel --prod`).
 
 | 이름 | 없으면 |
 |------|--------|
-| `FRED_API_KEY` | `/stock` 의 거시지표 겹쳐 보기와 `/api/fred/...` 만 막힌다 |
-| `KRX_API_KEY` | `scripts/fetch_krx.py` 로 시세를 못 받는다 |
+| `FRED_API_KEY` | `/stock` 의 거시지표 겹쳐 보기와 `/api/fred/...` 가 `503` |
 | `KOSIS_API_KEY` | `/kosis` 화면이 막힌다 |
+| `KRX_API_KEY` | 배포본에서는 어차피 수집을 못 하므로 넣지 않아도 된다 |
 
-> 🔑 **키를 커밋하지 말 것.** `.gitignore` 에 `.key` · `.env` 가 들어 있지만,
-> Codespace 터미널에서 `.key` 파일을 새로 만들면 실수로 올라갈 수 있다. Secrets 를 쓰자.
+### 15.3 서버리스에서 달라지는 것 ★
 
-### 15.3 키가 하나도 없어도 보여줄 수 있는 것
+배포 환경은 **파일을 쓸 수 없고**(읽기 전용), **IP 를 남과 공유**한다. 그래서 두 가지를 손봤다.
 
-| 화면 | 키 없이 |
-|------|---------|
-| `/stock` **종목 통합 조회** | ✅ 국내·미국 주가 전부 동작 (야후는 인증키 불필요) |
-| `/yf` 야후 파이낸스 시세 | ✅ 동작 |
-| `/users` · `/tetris` · `/docs` | ✅ 동작 |
-| `/stock` 의 거시지표 겹쳐 보기 | ❌ `FRED_API_KEY` 필요 |
-| `/krx` · `/quant` | ❌ 시세 캐시 필요 (아래) |
+**① 파일 쓰기 — DB 경로가 자동으로 옮겨진다**
 
-### 15.4 시세 캐시(96MB)는 어떻게 되나
+`krx_store` 는 호출마다 `CREATE TABLE IF NOT EXISTS` 를 실행한다. 이것도 쓰기라서
+읽기 전용 환경에서는 **곧바로 500** 이 난다. 그래서 `_resolve_db_path()` 가
+쓰기 권한을 확인하고, 막혀 있으면 임시 폴더(`/tmp`)로 옮긴다.
+거기 만들어진 DB 는 비어 있으므로 `/krx`·`/quant` 는 **의도한 대로 `503` 안내**를 준다.
+(`KRX_DB_PATH` 환경변수로 직접 지정할 수도 있다.)
 
-`data/krx_cache.db` 는 96MB 라 저장소에 올리지 않는다. 대신 **판별에 꼭 필요한 것만**
-뽑아 둔 `data/stock_master.json`(2,764종목 · 98KB)을 함께 올린다.
+**② 야후 요청 한도 — `429` 를 구분해서 알려 준다**
 
-이 파일 덕분에 DB 가 없는 Codespace 에서도 `/stock` 이 **그대로** 동작한다.
+`yfinance` 는 공식 API 가 아니라 야후 웹 엔드포인트를 긁어 온다.
+야후는 **IP 단위로 한도**를 두는데, 클라우드는 여러 사용자가 IP 를 공유하므로
+**내가 조금만 호출해도 이미 걸려 있을 수 있다.**
+그래서 `_wrap_error()` 가 429 를 따로 잡아 "요청 한도에 걸렸습니다" 로 안내한다.
+막연한 "조회 실패" 보다 원인이 분명해진다.
 
-- `005930` → 코스피니까 `005930.KS`
-- `247540` → 코스닥이니까 `247540.KQ` (`.KS` 로 물으면 엉뚱한 값이 온다)
-- `삼성전자` → `005930` (한글 종목명 검색)
+> ⚠️ **이건 코드로 못 막는 위험이다.** 발표 직전에 `/stock` 을 한 번 열어 확인하고,
+> 429 가 뜨면 몇 분 뒤 다시 시도한다. 같은 티커는 60초간 캐시되므로 미리 한 번
+> 조회해 두면 발표 중에는 캐시로 응답한다.
 
-`/krx` · `/quant` 는 전 종목 × 여러 날치가 필요해 마스터로는 안 된다.
-Codespace 안에서 직접 받으면 된다 (`KRX_API_KEY` 필요, 60거래일에 2~3분).
+### 15.4 배포본에서 동작하는 범위
 
-```bash
-python3 scripts/fetch_krx.py --days 60
-python3 scripts/build_stock_master.py      # 신규 상장 반영해 마스터 갱신
-```
+| 화면 | 배포본 |
+|------|--------|
+| `/stock` **종목 통합 조회** | ✅ 국내·미국 주가 전부 (야후는 인증키 불필요) |
+| `/stock` 거시지표 겹쳐 보기 | ✅ `FRED_API_KEY` 를 넣었다면 |
+| `/yf` · `/users` · `/tetris` · `/docs` | ✅ |
+| `/kosis` | ✅ `KOSIS_API_KEY` 를 넣었다면 |
+| `/krx` · `/quant` | ❌ `503` — 96MB 시세 캐시가 배포본에 없다 |
+
+`/krx`·`/quant` 는 전 종목 × 여러 날치 시세가 필요해 서버리스에 올리기 어렵다.
+**이 둘은 로컬에서 보여드리는 편이 낫다.** 대신 `/stock` 은 `data/stock_master.json`(98KB)
+덕분에 배포본에서도 티커 판별·한글명 검색까지 그대로 된다.
 
 ### 15.5 알아 둘 것
 
-- **주소는 영구적이지 않다.** Codespace 를 멈추면 닫힌다(기본 **30분 유휴 시 자동 중지**).
-  발표 직전에 한 번 열어 두고, 끝나면 `Code ▾ → Codespaces → Stop` 으로 멈춘다.
-- **무료 사용량** — 개인 계정은 월 120 코어시간 · 15GB 저장용량이다.
-  안 쓸 때는 **중지**해 두어야 시간이 깎이지 않는다. 삭제하지 않으면 저장용량은 계속 잡힌다.
-- **조직 정책으로 Public 이 막힐 수 있다.** `EST-Bootcamp-Dongwon` 조직 설정에서
-  전달 포트 공개를 제한해 두었다면 Public 을 고를 수 없다.
-  그때는 **Org** 범위로 바꾸면 조직 구성원(=강사님)은 열 수 있다.
-- **첫 요청이 느리다.** 야후 파이낸스 `.info` 호출이 1~3초 걸린다. 같은 티커는 60초간 캐시된다.
+- **첫 요청이 느리다** — 콜드 스타트에 `pandas`·`yfinance` 를 불러오느라 3~10초 걸린다.
+  발표 직전에 한 번 열어 두면 이후에는 빠르다.
+- **번들 크기** — 의존성만 280MB 쯤 된다. [파이썬 함수 한도는 500MB](https://vercel.com/changelog/python-vercel-functions-bundle-size-limit-increased-to-500mb)라 여유가 있다.
+- **정적 파일** — Vercel 은 `public/**` 을 CDN 으로 서빙하지만, 이 저장소는 기존 구조를 지키려고
+  `/static` 마운트를 그대로 둔다. 함수를 거쳐 나가므로 조금 느릴 뿐 동작에는 문제가 없다.
 
-### 15.6 Codespaces 를 못 쓸 때
+### 15.6 대안 — GitHub Codespaces
 
-계정 상태나 조직 정책으로 Codespace 를 만들 수 없다면, 서버가 필요한 앱이므로
-**파이썬을 실행해 주는 곳**이 필요하다. 이 저장소는 코드가 2MB 뿐이라 어디든 잘 올라간다.
+`.devcontainer/` 설정을 함께 두었으므로 Codespace 를 만들 수 있는 계정이면 이쪽이 더 간단하다.
+`Code ▾` → `Codespaces` → `Create codespace on main` 이면 의존성 설치와 서버 실행까지 자동이고,
+`data/krx_cache.db` 를 직접 받을 수 있어 **`/krx`·`/quant` 까지 전부** 보여줄 수 있다.
+
+```bash
+python3 scripts/fetch_krx.py --days 60   # KRX_API_KEY 필요, 2~3분
+```
+
+다만 전달 포트는 **기본이 Private** 라, 그대로 두면 남이 열었을 때 로그인 화면이나 404 가 뜬다.
+`.devcontainer/start.sh` 가 자동으로 Public 전환을 시도하고 실패하면 안내를 띄운다.
+직접 바꾸려면 **[포트] 탭 → `8000` 우클릭 → 포트 공개 범위 → Public** 이다.
+
+> `devcontainer.json` 만으로는 공개 범위를 지정할 수 없다
+> (`"visibility": "public"` 은 아직 미지원). 조직 정책으로 Public 이 막혀 있으면
+> **Org** 범위로 바꾸면 조직 구성원은 열 수 있다.
+
+### 15.7 그 밖의 방법
 
 | 방법 | 특징 |
 |------|------|
-| 로컬 + Cloudflare Tunnel | `cloudflared tunnel --url http://localhost:8000` — 계정 없이 임시 공개 주소가 나온다. 가장 빠르다 |
+| 로컬 + Cloudflare Tunnel | `cloudflared tunnel --url http://localhost:8000` — 계정 없이 임시 공개 주소. **내 IP 를 쓰므로 야후 429 위험이 없고 96MB 캐시도 그대로 쓴다.** 발표용으로는 사실 이게 가장 안전하다 |
 | Hugging Face Spaces | GitHub 계정과 무관. Docker SDK 로 FastAPI 구동, Secrets 기능 있음 |
-| Fly.io · Google Cloud Run | 로컬에서 `flyctl launch` · `gcloud run deploy --source .` 로 배포 (GitHub 불필요) |
+| Fly.io · Google Cloud Run | `flyctl launch` · `gcloud run deploy --source .` 로 로컬에서 바로 배포 |
 
-어느 쪽이든 인증키는 **환경변수**로 넣는다. `app/core/secrets.py` 가 환경변수를 먼저 보므로
-코드 수정 없이 그대로 동작한다.
+어느 쪽이든 인증키는 **환경변수**로 넣으면 코드 수정 없이 그대로 동작한다.
 
 ---
 

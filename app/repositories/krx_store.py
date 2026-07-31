@@ -16,7 +16,9 @@ KRX OpenAPI 는 **하루치 전 종목 스냅샷**만 준다. 캔들 차트나 �
 
 from __future__ import annotations
 
+import os                                       # 환경변수 · 쓰기 권한 확인
 import sqlite3                                   # 파일 기반 DB (표준 라이브러리)
+import tempfile                                  # 읽기 전용 환경에서 쓸 임시 폴더
 import threading                                 # 쓰기 직렬화용 자물쇠
 from contextlib import contextmanager            # 직접 만드는 with 블록
 from datetime import date, datetime, timedelta
@@ -30,9 +32,41 @@ from app.core.trading_calendar import today_kst, to_iso, trading_days   # 거래
 # (parents[0]=repositories, parents[1]=app, parents[2]=프로젝트 루트)
 # 실행 위치(cwd)와 무관하게 항상 같은 DB 파일을 가리킨다.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DB_PATH = PROJECT_ROOT / "data" / "krx_cache.db"
-# 최초 실행 시 data/ 폴더가 없으면 sqlite3.connect 가 실패하므로 미리 만들어 둔다.
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _resolve_db_path() -> Path:
+    """DB 파일 경로를 정한다. **쓸 수 있는 곳**이어야 한다.
+
+    평소에는 `data/krx_cache.db` 지만, 서버리스(Vercel 등)에 올리면 배포된 파일이
+    **읽기 전용**이라 그 자리에 DB 를 만들 수 없다. SQLite 는 파일을 열 때 없으면 만들려 하고,
+    `PRAGMA journal_mode=WAL` 도 쓰기라서 곧바로 예외가 난다.
+
+    그래서 쓰기가 막혀 있으면 임시 폴더(`/tmp`)로 옮긴다. 거기에 만들어진 DB 는 비어 있으므로
+    `/krx`·`/quant` 화면은 "시세 캐시가 비어 있습니다" 안내(503)를 그대로 받는다.
+    500 에러로 죽는 것보다, 무엇을 해야 하는지 알려 주는 편이 낫다.
+
+    `KRX_DB_PATH` 환경변수로 직접 지정할 수도 있다 (배포 환경에서 경로를 바꾸고 싶을 때).
+    """
+    override = os.getenv("KRX_DB_PATH", "").strip()
+    if override:
+        path = Path(override)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    default = PROJECT_ROOT / "data" / "krx_cache.db"
+    try:
+        # 최초 실행 시 data/ 폴더가 없으면 sqlite3.connect 가 실패하므로 미리 만들어 둔다.
+        default.parent.mkdir(parents=True, exist_ok=True)
+        # 폴더가 있어도 쓰기 권한이 없을 수 있다. 실제로 쓸 수 있는지 확인한다.
+        if os.access(default.parent, os.W_OK):
+            return default
+    except OSError:
+        pass          # 폴더를 만들 수 없는 환경 (읽기 전용 배포)
+
+    return Path(tempfile.gettempdir()) / "krx_cache.db"
+
+
+DB_PATH = _resolve_db_path()
 
 # 수집 대상 시장. KRX 는 시장마다 API 가 따로라 각각 호출해야 한다.
 MARKETS = ("KOSPI", "KOSDAQ")
