@@ -906,12 +906,21 @@ WSL 에서 `node: not found` 가 나면 CLI 가 윈도우에 깔린 것이다. �
 
 ### 15.2 인증키 (Vercel 환경변수)
 
-`.key` 는 `.gitignore` 대상이라 배포본에 없다. **환경변수로 넣는다.**
+> 🚨 **함정 — `.gitignore` 는 Vercel 에 적용되지 않는다.**
+> `vercel deploy` 는 git 이 아니라 **로컬 폴더를 그대로 올린다.** 그래서 `.gitignore` 에
+> `.key` 가 있어도 **`.vercelignore` 에 적지 않으면 인증키가 배포 번들에 실려 간다.**
+> 실제로 첫 배포에서 이 일이 있었고(`/api/fred/status` 의 `key_source` 가 `.key` 로 나왔다),
+> `.vercelignore` 에 `.key`·`.env` 를 추가하고 다시 배포해 바로잡았다.
+> HTTP 로 직접 읽히지는 않지만(라우트가 없어 404), **키는 파일이 아니라 환경변수로 넣는 것이 맞다.**
+
 `app/core/secrets.py` 가 **환경변수를 가장 먼저** 보므로 코드는 고칠 필요가 없다.
+제대로 들어갔는지는 `/api/fred/status` 의 `key_source` 로 확인한다 —
+`환경변수 FRED_API_KEY` 로 나와야 정상이고, `.key` 로 나오면 파일이 함께 올라간 것이다.
 
 ```bash
 vercel env add FRED_API_KEY production
 vercel env add KOSIS_API_KEY production
+vercel env ls                       # 등록 확인 (값은 Encrypted 로만 보인다)
 ```
 
 또는 Vercel 대시보드 → 프로젝트 → **Settings → Environment Variables**.
