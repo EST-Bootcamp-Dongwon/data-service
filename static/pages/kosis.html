@@ -49,6 +49,21 @@
     }
     .examples { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
     .examples button { padding: 3px 10px; font-size: 12px; }
+    /* 원클릭 예시 버튼 — 눌러야 할 것이 무엇인지 한눈에 보이도록 크게 만든다 */
+    .presets { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; margin: 12px 0; }
+    .preset {
+      display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+      padding: 11px 13px; text-align: left; cursor: pointer;
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; color: inherit;
+    }
+    .preset:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .preset .pt { font-size: 14px; font-weight: 600; }
+    .preset .pd { font-size: 12px; color: var(--muted); line-height: 1.45; }
+    .preset .pc { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+    /* 1단계 표에서 "클릭할 수 있다"는 것을 분명히 보여 준다 */
+    #tblResults tbody tr { cursor: pointer; }
+    #tblResults tbody tr:hover { background: var(--accent-soft); }
   </style>
 </head>
 <body>
@@ -62,6 +77,20 @@
   </header>
 
   <div class="badges" id="badges"></div>
+
+  <!-- ── 0단계 : 원클릭 예시 ───────────────────────── -->
+  <section class="card" id="presetCard">
+    <h2>🚀 바로 보기 <span class="muted">— 아래를 누르면 1~3단계를 한 번에 실행합니다</span></h2>
+    <p class="hint">
+      KOSIS는 통계표마다 코드(<code>orgId</code>·<code>tblId</code>)가 달라서 처음에는 무엇을 넣어야 할지 알기 어렵다.
+      그래서 <b>바로 동작하는 조합</b>을 몇 개 넣어 두었다. 하나를 눌러 결과를 먼저 본 뒤,
+      아래 1~3단계에서 값이 어떻게 채워졌는지 확인하면 사용법이 한눈에 들어온다.
+    </p>
+    <div class="presets" id="presets"></div>
+    <p class="hint" style="margin-bottom:0">
+      💡 직접 찾고 싶다면 <b>1단계에서 검색 → 표의 행을 클릭</b>하면 2단계 코드가 자동으로 채워진다.
+    </p>
+  </section>
 
   <!-- ── 1단계 : 통계표 찾기 ───────────────────────── -->
   <section class="card">
@@ -108,6 +137,15 @@
     <p class="hint">
       항목(<code>itmId</code>)은 위에서 고른 통계표의 메타에서 자동으로 채운다.
       기간은 <b>최근 N개</b> 또는 <b>시작~종료</b> 중 하나로 지정한다.
+    </p>
+    <p class="hint">
+      <b>용어</b> —
+      <code>orgId</code> 통계를 만든 <b>기관</b>(101=국가데이터처) ·
+      <code>tblId</code> <b>통계표</b> 번호 ·
+      <code>itmId</code> 표 안의 <b>항목</b>(지수·증감률 등, ALL이면 전체) ·
+      <code>objL1</code> <b>분류</b>(지역·연령 등, ALL이면 전체) ·
+      <code>prdSe</code> <b>주기</b>(M=월 · Q=분기 · Y=년).
+      <br />전부 KOSIS가 정한 이름이라 그대로 쓴다. 값은 위 「바로 보기」를 누르거나 1단계에서 표를 고르면 자동으로 채워진다.
     </p>
     <div class="controls" style="margin-bottom:12px">
       <label class="field">orgId (기관)
@@ -524,9 +562,68 @@
     btn.addEventListener('click', () => { $('q').value = btn.dataset.ex; search(); });
   });
 
-  // 처음 들어왔을 때 바로 눈에 보이는 것이 있도록 예시 하나를 미리 띄운다
-  $('q').value = '소비자물가';
-  search();
+  // ==================================================
+  // 원클릭 예시 (프리셋)
+  // ==================================================
+  /**
+   * 바로 동작하는 조합들. 전부 실제 호출로 데이터가 나오는 것만 확인해 넣었다.
+   *
+   * KOSIS 는 통계표마다 필요한 파라미터가 달라서, 아무 표나 골라 ALL 로 부르면
+   * "필수요청변수값이 누락되었습니다(objL)" 나 "40,000셀을 초과했습니다" 가 자주 난다.
+   * 처음 쓰는 사람이 그 벽을 먼저 만나지 않도록, 성공하는 조합을 미리 준비해 둔다.
+   */
+  const PRESETS = [
+    { title: '📈 소비자물가 등락률', desc: '최근 24개월 · 생활물가 등 6개 지수',
+      q: '소비자물가', org: '101', tbl: 'DT_1J22042', prd: 'M', n: 24 },
+    { title: '💼 취업자 수', desc: '최근 24개월 · 산업별 취업자',
+      q: '취업자', org: '101', tbl: 'DT_1DA7011S', prd: 'M', n: 24 },
+    { title: '🏠 공동주택 실거래가격지수', desc: '최근 24개월 · 지역별',
+      q: '실거래가격지수', org: '408', tbl: 'DT_KAB_11672_S13', prd: 'M', n: 24 },
+    { title: '📊 연도별 소비자물가', desc: '최근 15년 · 장기 추세',
+      q: '소비자물가', org: '101', tbl: 'DT_1J22041', prd: 'Y', n: 15 },
+  ];
+
+  function renderPresets() {
+    $('presets').innerHTML = PRESETS.map((p, i) => `
+      <button class="preset" data-preset="${i}">
+        <span class="pt">${esc(p.title)}</span>
+        <span class="pd">${esc(p.desc)}</span>
+        <span class="pc">${esc(p.org)} / ${esc(p.tbl)}</span>
+      </button>`).join('');
+  }
+
+  /** 프리셋 하나를 2단계 폼에 채우고 3단계까지 실행한다. */
+  async function applyPreset(preset) {
+    $('orgId').value = preset.org;
+    $('tblId').value = preset.tbl;
+    $('objL1').value = 'ALL';
+    $('prdSe').value = preset.prd;
+    $('periodCount').value = preset.n;
+    setState(1, `「바로 보기」로 ${preset.title} 를 불러옵니다`, true);
+    setState(2, '메타 불러오는 중…');
+
+    // 항목(itmId) 목록을 채운다. 실패해도 ALL 로 호출하면 되므로 막지 않는다.
+    try { await loadMeta(); } catch { /* 메타가 없어도 ALL 로 호출 가능하다 */ }
+    $('itmId').value = 'ALL';
+    updateUrlPreview();
+    await run();
+
+    // 어떤 표인지 1단계 검색 결과로도 보여 준다 (사용자가 맥락을 잡을 수 있게)
+    $('q').value = preset.q;
+    search();
+  }
+
+  $('presets').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-preset]');
+    if (!btn) return;
+    applyPreset(PRESETS[Number(btn.dataset.preset)]);
+  });
+
+  // 처음 들어왔을 때 빈 화면이 아니라 **완성된 결과**가 보이도록 첫 프리셋을 실행한다.
+  // (예전에는 검색 결과만 띄웠는데, 차트를 보려면 표를 고르고 호출까지 눌러야 해서
+  //  "무엇을 해야 하는지 모르겠다"는 피드백이 있었다.)
+  renderPresets();
+  applyPreset(PRESETS[0]);
 })();
 </script>
 </body>
