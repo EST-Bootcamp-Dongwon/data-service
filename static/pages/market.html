@@ -248,18 +248,28 @@
     const labels = thinLabels(data.dates);
 
     // 캔들 + 이동평균을 한 차트에. 이동평균은 선으로 얹는다.
+    //
+    // ⚠️ 이동평균도 **반드시 `{x, y}` 로** 넘긴다. 생배열(`[null, null, …, 값]`)로 주면 안 된다.
+    //    차트 종류가 candlestick 이면 ApexCharts 는 **모든 계열**을 캔들 파서에 집어넣어
+    //    `data[j].y` 를 읽는데, 이동평균 앞쪽은 워밍업이라 null 이다 → `null.y` 로 터지고
+    //    예외가 render() 프라미스 안에서 삼켜져 **차트 자리가 통째로 빈 칸**이 된다.
+    //    (`/krx` 캔들이 멀쩡했던 이유가 거기서는 처음부터 `{x, y}` 로 넘겼기 때문이다.
+    //     검사는 `node tests/render_charts.js market`)
     const maSeries = (data.moving_averages || []).map((m) => ({
-      name: m.label, type: 'line', data: m.values,
+      name: m.label, type: 'line',
+      data: m.values.map((v, i) => ({ x: data.dates[i], y: v })),
     }));
 
     App.draw(charts, 'candleChart', {
       chart: { type: 'candlestick', height: '100%', toolbar: { show: true, tools: { download: false } }, animations: { enabled: false } },
-      series: [{ name: data.label, type: 'candlestick', data: data.candles.map((c, i) => ({ x: labels[i] || data.dates[i], y: c })) }, ...maSeries],
+      series: [{ name: data.label, type: 'candlestick', data: data.candles.map((c, i) => ({ x: data.dates[i], y: c })) }, ...maSeries],
       // 상승 빨강 · 하락 파랑 (국내 증시 관행 — U3 결정)
       plotOptions: { candlestick: { colors: { upward: App.color('up'), downward: App.color('down') } } },
       stroke: { width: [1, 2, 2, 2], curve: 'straight' },
       colors: [App.color('flat'), ...App.series(3)],
-      ...axes({ xaxis: { categories: labels } }),
+      // 계열이 x 를 직접 들고 있으므로 categories 는 쓰이지 않는다. 눈금은 tickAmount 로 솎는다
+      // (아래 거래량 차트의 thinLabels 8개와 눈금 수를 맞춘 값이다).
+      ...axes({ xaxis: { tickAmount: 8 } }),
     });
 
     App.draw(charts, 'volumeChart', {
@@ -415,7 +425,10 @@
         xaxis: { categories: labels },
         yaxis: { labels: { formatter: (v) => App.num(Math.abs(Math.round(v))) } },
       }),
-      tooltip: { shared: true, y: { formatter: (v) => `${App.num(Math.abs(v))}종목` } },
+      // ⚠️ 막대 차트는 ApexCharts v4 기본값이 `intersect: true` 다 (v3 과 달라진 부분).
+      //    `shared: true` 만 주면 "둘을 같이 못 쓴다" 예외가 나면서 차트가 안 그려진다.
+      //    상승·하락을 한 날짜에서 같이 읽어야 하므로 shared 를 살리고 intersect 를 끈다.
+      tooltip: { shared: true, intersect: false, y: { formatter: (v) => `${App.num(Math.abs(v))}종목` } },
     });
 
     App.draw(charts, 'adChart', {

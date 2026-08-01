@@ -62,6 +62,9 @@ test.sh
 
 # 회귀 검사 (node + jsdom) — 로컬에서만 돌린다
 tests/
+# 검사용 node 패키지(jsdom · apexcharts 32MB). 서버는 파이썬이라 쓰지 않는다.
+# (`npm install --no-save jsdom apexcharts@4` 로 로컬에만 둔다)
+node_modules/
 
 # 에디터·OS
 .vscode/
