@@ -559,14 +559,17 @@
           <div class="s">현재가 대비 · 정규 가정</div></div>
         <div class="stat-tile"><div class="k">방향 적중률</div>
           <div class="v">${pctText(bt.hit_rate)}</div>
-          <div class="s">${bt.folds}폴드 · ${App.num(bt.points)}개 예측</div></div>
+          <div class="s">${bt.folds}폴드 · ${App.num(bt.points)}개 예측${
+            bt.overlapping ? ` · <b>겹침 (독립 ${bt.independent_folds}회)</b>` : ''}</div></div>
         <div class="stat-tile"><div class="k">RMSE</div>
           <div class="v">${App.num(bt.rmse, 0)}</div>
           <div class="s">확률보행 ${App.num(bt.random_walk_rmse, 0)}</div></div>
         <div class="stat-tile"><div class="k">확률보행 대비</div>
           <div class="v" style="color:var(--text)">${esc(bt.vs_random_walk)}</div>
           <div class="s">${beat ? '✓ 이겼습니다' : '✗ 이기지 못했습니다'}</div></div>`;
-      $('backtestVerdict').innerHTML = `<b>${esc(bt.verdict)}</b>`;
+      // 폴드가 겹쳤으면 결론 아래에 바로 붙인다 — 위 한 줄을 믿을 만한지가 여기서 갈린다
+      $('backtestVerdict').innerHTML =
+        `<b>${esc(bt.verdict)}</b>` + (bt.limitation ? `<br>${esc(bt.limitation)}` : '');
     }
 
     // ── 3단 시나리오 ──

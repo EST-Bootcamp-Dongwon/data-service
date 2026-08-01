@@ -410,6 +410,11 @@ def forecast(ticker: str, years: int = 2, horizon: int = DEFAULT_HORIZON,
                 "random_walk_rmse": (checked.get("random_walk") or {}).get("rmse"),
                 "available": checked.get("available", False),
                 "reason": checked.get("reason"),
+                # 폴드가 겹쳤으면 화면이 그 사실을 함께 내보낼 수 있게 올려 준다
+                "overlapping": checked.get("overlapping", False),
+                "independent_folds": checked.get("independent_folds"),
+                "step": checked.get("step"),
+                "limitation": checked.get("limitation"),
             },
         },
 
@@ -466,6 +471,15 @@ def _caveats(series: Dict, model: Dict, band: Dict,
         out.append(checked.get("verdict"))
     else:
         out.append(f"백테스트를 하지 못했습니다 — {checked.get('reason')}")
+
+    # 1-b) 폴드가 겹쳤으면 **바로 다음 줄**에 둔다.
+    # 위 한 줄(이겼다/졌다)을 믿을 만한지가 여기서 갈리므로 뒤로 밀면 안 된다.
+    if checked.get("overlapping"):
+        out.append(
+            f"⚠️ 학습 표본이 짧아 백테스트 폴드 {checked.get('folds')}개의 평가 구간이 서로 겹칩니다 "
+            f"(간격 {checked.get('step')}일 < 예측 {checked.get('horizon')}일). "
+            f"사실상 독립 시행은 {checked.get('independent_folds')}회 수준이라, 위의 적중률·RMSE 는 "
+            "'측정값'이 아니라 한 구간의 결과로 읽어야 합니다.")
 
     # 2) 차분 여부
     if model.get("d"):

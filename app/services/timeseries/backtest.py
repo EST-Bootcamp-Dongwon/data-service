@@ -105,6 +105,15 @@ def walk_forward(prices: Sequence, order: Optional[Tuple[int, int, int]] = None,
         folds = max(1, room + 1)
     step = max(1, room // folds) if folds > 1 else 1
 
+    # ⚠️ 폴드 간격이 예측기간보다 좁으면 **평가 구간이 서로 겹친다.**
+    #
+    # 실측 — 배포본 축약본(150행)에서 min_train=120·horizon=10·folds=12 로 돌리면
+    # step 이 1이 되어 학습집합이 120~132 로 거의 같아진다. 12회 시행처럼 보이지만
+    # 사실상 한 번의 시행이고, 그래서 적중률이 15.8%(로컬 282행에서는 62.7%)까지 튀었다.
+    # 숫자를 지우지는 않는다 — 그 숫자가 **독립 시행 12회의 결과가 아니라는 사실**을 밝힌다.
+    overlapping = step < horizon
+    independent_folds = max(1, room // horizon) if horizon else folds
+
     model_pred: List[float] = []
     rw_pred: List[float] = []
     actuals: List[float] = []
@@ -183,6 +192,9 @@ def walk_forward(prices: Sequence, order: Optional[Tuple[int, int, int]] = None,
         "folds": len(fold_rows),
         "horizon": horizon,
         "min_train": int(min_train),
+        "step": int(step),
+        "overlapping": bool(overlapping),
+        "independent_folds": int(min(independent_folds, len(fold_rows))),
         "points": model_metrics["n"],
         "rmse": model_metrics["rmse"],
         "mae": model_metrics["mae"],
@@ -205,5 +217,11 @@ def walk_forward(prices: Sequence, order: Optional[Tuple[int, int, int]] = None,
         "limitation": (
             "차수는 첫 학습 구간에서 한 번 고르고 전 폴드에 같은 차수를 썼습니다. "
             "적중률은 출발점(학습 마지막 종가) 대비 방향이며, 보합인 날은 판정에서 뺐습니다."
+            + (f" ⚠️ 표본이 {n}행뿐이라 폴드 간격이 {step}일로 좁아져 "
+               f"**{len(fold_rows)}개 폴드의 평가 구간이 서로 겹칩니다**(예측기간 {horizon}일). "
+               f"학습 집합도 거의 같아 사실상 독립 시행은 {min(independent_folds, len(fold_rows))}회 수준입니다 — "
+               "적중률과 RMSE 를 '측정값'이 아니라 **한 구간의 결과**로 읽어야 합니다. "
+               "긴 시계열(로컬 원본 캐시)에서 다시 재면 크게 달라질 수 있습니다."
+               if overlapping else "")
         ),
     }
