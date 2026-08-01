@@ -7,7 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%88%3C/text%3E%3C/svg%3E" />
   <!-- 차트 라이브러리 (CDN) — 오프라인이면 차트 자리에 안내 문구가 뜬다 -->
   <script src="https://cdn.jsdelivr.net/npm/apexcharts@4/dist/apexcharts.min.js"></script>
-  <link rel="stylesheet" href="/static/assets/app.css" />
+  <link rel="stylesheet" href="../assets/app.css" />
 </head>
 <body>
 <div class="wrap">
@@ -16,6 +16,7 @@
       <h1>📈 KRX 일별 시세</h1>
       <p>한국거래소 OpenAPI의 <b>유가증권·코스닥 일별매매정보</b>를 조회한다. 전부 실제 데이터다.</p>
     </div>
+    <nav class="nav" id="nav"></nav>
   </header>
 
   <!-- 데이터 출처·캐시 상태 -->
@@ -121,8 +122,7 @@
   </section>
 </div>
 
-<script src="/static/assets/app.js"></script>
-<script src="/static/assets/shell.js"></script>
+<script src="../assets/app.js"></script>
 <script>
 (() => {
   'use strict';
@@ -149,7 +149,7 @@
   // ==================================================
   // 2. 초기화
   // ==================================================
-  Shell.render('krx');
+  App.renderNav('krx');
 
   async function init() {
     try {
@@ -329,7 +329,7 @@
       xaxis: { categories: hist.map((h) => h.label) },
       plotOptions: { bar: { distributed: true, columnWidth: '75%' } },
       // 앞 5칸은 하락, 6번째는 보합, 나머지는 상승
-      colors: hist.map((_, i) => (i < 5 ? App.color('down') : i === 5 ? App.color('flat') : App.color('up'))),
+      colors: hist.map((_, i) => (i < 5 ? App.color('down') : i === 5 ? App.color('muted') : App.color('up'))),
       legend: { show: false },
       dataLabels: { enabled: true, formatter: (v) => (v ? v : '') },
     });
@@ -343,7 +343,7 @@
         { name: '보합', data: bm.map((m) => m.flat) },
         { name: '하락', data: bm.map((m) => m.down) },
       ],
-      colors: [App.color('up'), App.color('flat'), App.color('down')],
+      colors: [App.color('up'), App.color('muted'), App.color('down')],
       xaxis: { categories: bm.map((m) => `${m.market} (거래대금 ${App.won(m.value)})`) },
       plotOptions: { bar: { horizontal: true, barHeight: '50%' } },
       dataLabels: { enabled: true },
@@ -404,10 +404,6 @@
         name: `MA${ma.period}`, type: 'line',
         data: data.candles.map((c, i) => ({ x: t(c.date), y: ma.values[i] })),
       }));
-    // 이동평균 색은 **기간마다 고정**한다. 값이 없어 하나가 빠져도 나머지 색은 그대로다
-    // (색은 순위가 아니라 항목을 따라간다 — app.css 상단 U3 규칙)
-    const MA_SLOT = { 5: 'c2', 20: 'c3', 60: 'c4' };
-    const maColors = maSeries.map((s) => App.color(MA_SLOT[Number(s.name.slice(2))] || 'flat'));
 
     App.draw(charts, 'chartCandle', {
       chart: {
@@ -422,9 +418,8 @@
       xaxis: { type: 'datetime', crosshairs: { show: true, stroke: { dashArray: 3 } } },
       yaxis: { tooltip: { enabled: true }, labels: { formatter: (v) => App.num(Math.round(v)) },
                crosshairs: { show: true } },
-      stroke: { width: [1, ...maSeries.map(() => 1.4)] },
-      // 첫 칸은 캔들 자리다. 캔들 색은 아래 plotOptions 가 정하므로 자리만 채운다.
-      colors: [App.color('flat'), ...maColors],
+      stroke: { width: [1, 1.4, 1.4, 1.4] },
+      colors: [undefined, '#f59e0b', '#8b5cf6', '#0ea5e9'],
       plotOptions: { candlestick: { colors: { upward: App.color('up'), downward: App.color('down') } } },
       legend: { show: true, position: 'top' },
     });

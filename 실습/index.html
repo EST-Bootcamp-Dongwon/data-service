@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>실습 아카이브 — api-test</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%A6%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="assets/app.css" />
+  <style>
+    /* 아카이브 안내 화면 전용 — 카드 목록이 전부다 */
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    .link-card {
+      display: flex; flex-direction: column; gap: 6px;
+      text-decoration: none; color: inherit;
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 14px 16px;
+    }
+    .link-card:hover { border-color: var(--accent); }
+    .link-card .t { font-size: 15px; font-weight: 600; }
+    .link-card .d { font-size: 13px; color: var(--muted); line-height: 1.55; }
+    .notice {
+      background: var(--accent-soft); border: 1px solid var(--accent);
+      border-radius: var(--radius); padding: 12px 14px; font-size: 13px; margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page-head">
+    <div>
+      <h1>📦 실습 아카이브</h1>
+      <p>M1 리팩토링 이전의 화면 8개를 <b>원본 그대로</b> 얼려 둔 수업 자료다.</p>
+    </div>
+    <nav class="nav"><a href="/">↩ 현재 앱으로</a><a href="/docs">API 문서</a></nav>
+  </header>
+
+  <div class="notice">
+    강사님 원본(<code>lecture/</code>)은 git 서브모듈이라 pull 로만 갱신한다.
+    내 실습 결과물을 거기에 넣으면 충돌이 나므로, <b>저장소 루트의 <code>실습/</code> 폴더</b>에 따로 보관한다.
+  </div>
+
+  <section class="card">
+    <h2>데이터 실험 화면 (현재 앱에도 살아 있음)</h2>
+    <p class="hint">아래 화면들은 새 사이드바 셸로 이식되어 현재 앱에서도 쓴다. 여기 있는 것은 이식 전 원본이다.</p>
+    <div class="cards">
+      <a class="link-card" href="pages/stock.html">
+        <div class="t">🔎 종목 통합 조회</div>
+        <div class="d">국내·미국 통합 조회 + FRED 거시지표 겹쳐 보기 · 상관계수</div>
+      </a>
+      <a class="link-card" href="pages/yf.html">
+        <div class="t">💹 야후 파이낸스 시세</div>
+        <div class="d">당일 가격 5종 막대+꺾은선 · 기간별 캔들</div>
+      </a>
+      <a class="link-card" href="pages/krx.html">
+        <div class="t">📈 KRX 일별 시세</div>
+        <div class="d">전 종목 스냅샷 · 거래대금 상위 · 등락률 분포</div>
+      </a>
+      <a class="link-card" href="pages/kosis.html">
+        <div class="t">📊 KOSIS 통계 실험실</div>
+        <div class="d">검색 → 파라미터 조립 → 호출 3단계 실습</div>
+      </a>
+      <a class="link-card" href="pages/quant.html">
+        <div class="t">🧮 퀀트 분석</div>
+        <div class="d">스크리닝 깔때기 · 효율적 투자선 · 팩터 방사형</div>
+      </a>
+      <a class="link-card" href="pages/index.html">
+        <div class="t">⚡ 예전 랜딩</div>
+        <div class="d">화면 안내 · 계층 데이터 흐름도 (현재 앱은 <code>/guide</code>)</div>
+      </a>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>현재 앱에서 내린 화면</h2>
+    <p class="hint">U6 결정 — 리팩토링 방향과 맞지 않아 메뉴에서 내리고 수업 자료로만 남긴다. API(<code>/api/users</code>)는 그대로 살아 있다.</p>
+    <div class="cards">
+      <a class="link-card" href="pages/users.html">
+        <div class="t">👤 사용자 API 테스트</div>
+        <div class="d">CRUD 상태 코드(201·404·422) 확인 실습</div>
+      </a>
+      <a class="link-card" href="pages/tetris.html">
+        <div class="t">🧱 Canvas 테트리스</div>
+        <div class="d">canvas 2D 컨텍스트만으로 만든 게임</div>
+      </a>
+    </div>
+  </section>
+</div>
+</body>
+</html>

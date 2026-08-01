@@ -6,7 +6,7 @@
   <title>종목 통합 조회 — 국내·미국 주가 + FRED 거시지표</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%8E%3C/text%3E%3C/svg%3E" />
   <script src="https://cdn.jsdelivr.net/npm/apexcharts@4/dist/apexcharts.min.js"></script>
-  <link rel="stylesheet" href="/static/assets/app.css" />
+  <link rel="stylesheet" href="../assets/app.css" />
   <style>
     /* 이 화면에서만 쓰는 규칙 */
 
@@ -108,6 +108,7 @@
          <code>005930</code>·<code>삼성전자</code>·<code>AAPL</code> 무엇을 넣어도 서버가 알아서 판별하고,
          원하면 <b>FRED 거시지표</b>를 같은 차트에 겹쳐 볼 수 있다.</p>
     </div>
+    <nav class="nav" id="nav"></nav>
   </header>
 
   <div class="badges" id="badges"></div>
@@ -254,12 +255,11 @@
   </section>
 </div>
 
-<script src="/static/assets/app.js"></script>
-<script src="/static/assets/shell.js"></script>
+<script src="../assets/app.js"></script>
 <script>
 (() => {
   'use strict';
-  Shell.render('stock');
+  App.renderNav('stock');
 
   const $ = (id) => document.getElementById(id);
   const charts = {};                        // ApexCharts 인스턴스 보관 (다시 그릴 때 파괴용)
@@ -409,7 +409,7 @@
       type: 'line',
       data: hasMacro ? toBase(d.prices) : d.prices,
     }];
-    const colors = [App.color('c1')];      // 주가는 언제나 1번 슬롯
+    const colors = [App.color('accent')];
     const widths = [2.4];
     const dashes = [0];
 
@@ -417,28 +417,22 @@
     const maList = hasMacro
       ? d.moving_averages.filter((m) => m.period === 20)
       : d.moving_averages;
-    // 기간마다 슬롯을 고정한다. 20일만 남아도 20일의 색은 바뀌지 않는다
-    // (색은 순위가 아니라 **항목**을 따라간다 — U3 규칙)
-    const maColors = { 5: 'c2', 20: 'c3', 60: 'c4' };
+    const maColors = { 5: '#f59e0b', 20: '#10b981', 60: '#8b5cf6' };
     maList.forEach((ma) => {
       series.push({ name: `${ma.period}일 이동평균`, type: 'line',
                     data: hasMacro ? toBase(ma.values) : ma.values });
-      colors.push(App.color(maColors[ma.period] || 'flat'));
+      colors.push(maColors[ma.period] || App.color('muted'));
       widths.push(1.3);
       dashes.push(0);
     });
 
-    // 거시지표 — 점선으로 그려 주가와 구분한다.
-    // 색은 범주형 슬롯 5~8번을 **순서대로** 쓴다 (주가·이동평균이 1~4번을 쓴다).
-    // 5개를 넘으면 색을 새로 만들지 않고 **점선 간격을 바꿔** 구분한다 —
-    // 색 하나로 두 계열을 구분하지 않기 위한 복합 부호화다. (app.css 상단 U3 규칙)
-    const macroSlots = ['c5', 'c6', 'c7', 'c8'];
-    const macroDashes = [5, 2, 9];
+    // 거시지표 — 점선으로 그려 주가와 구분한다
+    const macroColors = ['#ef4444', '#0ea5e9', '#a855f7', '#f97316', '#14b8a6', '#eab308'];
     macro.forEach((m, i) => {
       series.push({ name: `${m.label} (100 기준)`, type: 'line', data: m.rebased });
-      colors.push(App.color(macroSlots[i % macroSlots.length]));
+      colors.push(macroColors[i % macroColors.length]);
       widths.push(1.8);
-      dashes.push(macroDashes[Math.floor(i / macroSlots.length) % macroDashes.length]);
+      dashes.push(5);
     });
 
     App.draw(charts, 'chartPrice', {
@@ -483,7 +477,7 @@
         },
       },
       legend: { show: true, position: 'top', horizontalAlign: 'left' },
-      grid: { borderColor: App.color('grid'), strokeDashArray: 0 },
+      grid: { borderColor: App.color('border'), strokeDashArray: 3 },
     });
   }
 

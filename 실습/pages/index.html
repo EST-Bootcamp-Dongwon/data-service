@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>api-test — FastAPI + 공공데이터 실습</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="/static/assets/app.css" />
+  <link rel="stylesheet" href="../assets/app.css" />
   <style>
     /* 이 화면에서만 쓰는 규칙 — 랜딩이라 카드 그리드가 대부분이다 */
     .hero { padding: 8px 0 4px; }
@@ -42,11 +42,11 @@
 <div class="wrap">
   <header class="page-head">
     <div class="hero">
-      <h1>⚡ 프로젝트 안내</h1>
+      <h1>⚡ api-test</h1>
       <p>FastAPI로 <b>KRX 시세</b>와 <b>KOSIS 국가통계</b>를 받아 화면에 그리는 실습 저장소.
-         Controller → Service → Repository 계층으로 나눠 두었고, 모든 화면은 자기 API만 호출한다.
-         시장 현황은 <a href="/">대시보드</a>에서 본다.</p>
+         Controller → Service → Repository 계층으로 나눠 두었고, 모든 화면은 자기 API만 호출한다.</p>
     </div>
+    <nav class="nav" id="nav"></nav>
   </header>
 
   <div class="badges" id="badges"></div>
@@ -56,32 +56,32 @@
     <h2>데이터 실험</h2>
     <p class="hint">공공 OpenAPI를 실제 인증키로 호출하고, 받은 값을 ApexCharts로 그린다.</p>
     <div class="cards">
-      <a class="link-card primary" href="/stock">
+      <a class="link-card primary" href="stock.html">
         <div class="t">🔎 종목 통합 조회</div>
         <div class="d"><b>엔드포인트 하나</b>로 한국·미국 주식을 모두 조회한다.
           <code>005930</code>·<code>삼성전자</code>·<code>AAPL</code> 무엇을 넣어도 판별하고,
           <b>FRED 거시지표</b>(금리·환율·물가)를 같은 차트에 겹쳐 상관계수까지 계산한다.</div>
         <div class="tags"><span class="chip">yfinance</span><span class="chip">FRED</span><span class="chip">상관분석</span></div>
       </a>
-      <a class="link-card primary" href="/kosis">
+      <a class="link-card primary" href="kosis.html">
         <div class="t">📊 KOSIS 통계 실험실</div>
         <div class="d">국가통계포털 OpenAPI를 <b>검색 → 파라미터 조립 → 호출</b> 3단계로 실험한다.
           어떤 통계표든 골라 꺾은선·막대·도넛으로 즉시 시각화.</div>
         <div class="tags"><span class="chip">OpenAPI</span><span class="chip">ApexCharts</span><span class="chip">인증키 실습</span></div>
       </a>
-      <a class="link-card primary" href="/krx">
+      <a class="link-card primary" href="krx.html">
         <div class="t">📈 KRX 일별 시세</div>
         <div class="d">유가증권·코스닥 전 종목 스냅샷, 거래대금 상위·등락률 분포, 종목별 캔들 차트.
           받은 시세는 SQLite에 캐시해 두고 읽는다.</div>
         <div class="tags"><span class="chip">SQLite 캐시</span><span class="chip">캔들차트</span></div>
       </a>
-      <a class="link-card primary" href="/yf">
+      <a class="link-card primary" href="yf.html">
         <div class="t">💹 야후 파이낸스 시세</div>
         <div class="d"><b>전일종가 · 시가 · 저가 · 고가 · 현재가</b>를 막대+꺾은선으로 겹쳐 그린다.
           국내·해외 종목 모두 되고, 터미널 스크립트 <code>scripts/yf.py</code>와 같은 API·같은 계산을 쓴다.</div>
         <div class="tags"><span class="chip">yfinance</span><span class="chip">인증키 불필요</span><span class="chip">matplotlib 연동</span></div>
       </a>
-      <a class="link-card primary" href="/quant">
+      <a class="link-card primary" href="quant.html">
         <div class="t">🧮 퀀트 분석</div>
         <div class="d">스크리닝 깔때기 · 효율적 투자선 · 팩터 방사형.
           Mock이 아니라 캐시에 쌓인 <b>실제 시세로 계산</b>하므로 같은 거래일이면 항상 같은 값이 나온다.</div>
@@ -92,20 +92,24 @@
 
   <!-- API·기타 화면 -->
   <section class="card">
-    <h2>API 문서 · 실습 아카이브</h2>
-    <p class="hint">FastAPI 자체를 익히는 화면들. M1 리팩토링에서 앱 메뉴에는 내리고 수업 자료로 남겼다.</p>
+    <h2>API 실습 · 기타</h2>
+    <p class="hint">FastAPI 자체를 익히는 화면들.</p>
     <div class="cards">
+      <a class="link-card" href="users.html">
+        <div class="t">👤 사용자 API 테스트</div>
+        <div class="d">CRUD를 눌러보며 <code>201</code> · <code>404</code> · <code>422</code>가
+          언제 나오는지 상태 코드와 함께 확인한다.</div>
+        <div class="tags"><span class="chip">CRUD</span><span class="chip">요청 검증</span></div>
+      </a>
       <a class="link-card" href="/docs">
         <div class="t">📄 Swagger UI</div>
         <div class="d">FastAPI가 자동 생성한 API 문서. 브라우저에서 바로 호출해 볼 수 있다.</div>
         <div class="tags"><span class="chip">자동 생성</span></div>
       </a>
-      <a class="link-card" href="/practice/">
-        <div class="t">📦 실습 아카이브</div>
-        <div class="d">리팩토링 이전 화면 8개를 <b>원본 그대로</b> 얼려 둔 곳.
-          <b>사용자 API 테스트</b>와 <b>Canvas 테트리스</b>는 이제 여기서만 본다.
-          (사용자 API <code>/api/users</code> 자체는 그대로 살아 있다)</div>
-        <div class="tags"><span class="chip">CRUD</span><span class="chip">canvas</span><span class="chip">수업 자료</span></div>
+      <a class="link-card" href="tetris.html">
+        <div class="t">🧱 Canvas 테트리스</div>
+        <div class="d">HTML5 canvas 2D 컨텍스트만으로 만든 게임. 외부 라이브러리 없음.</div>
+        <div class="tags"><span class="chip">canvas</span></div>
       </a>
     </div>
   </section>
@@ -133,12 +137,11 @@
   </section>
 </div>
 
-<script src="/static/assets/app.js"></script>
-<script src="/static/assets/shell.js"></script>
+<script src="../assets/app.js"></script>
 <script>
 (() => {
   'use strict';
-  Shell.render('guide');
+  App.renderNav('home');
 
   /** HTML 특수문자를 이스케이프한다. */
   function esc(v) {

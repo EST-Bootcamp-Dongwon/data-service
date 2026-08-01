@@ -45,8 +45,10 @@ KOREAN_FONTS = (
     ("/System/Library/Fonts/AppleSDGothicNeo.ttc", ""),                        # macOS
 )
 
-BAR_COLOR = "#4A90E2"     # 막대 — 연한 파랑
-LINE_COLOR = "#D0021B"    # 꺾은선 — 빨강
+# 화면(static/assets/app.css)의 범주형 슬롯 1·2번과 같은 값이다.
+# 터미널 그림과 웹 화면이 같은 색으로 보이도록 여기서도 같은 헥스를 쓴다.
+BAR_COLOR = "#2a78d6"     # 막대 — 슬롯 1 (파랑)
+LINE_COLOR = "#eb6834"    # 꺾은선 — 슬롯 2 (주황)
 DEFAULT_TICKER = "005930.KS"
 
 

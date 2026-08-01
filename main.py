@@ -31,6 +31,7 @@ from app.routers.kosis_router import router as kosis_router     # KOSIS 통계  
 from app.routers.market_router import router as market_router   # 분석 API     (/api/...)
 from app.routers.fred_router import router as fred_router       # FRED 거시지표 (/api/fred/...)
 from app.routers.search_router import router as search_router   # 종목 자동완성  (/api/search)
+from app.routers.dashboard_router import router as dashboard_router  # 대시보드 집계 (/api/dashboard/...)
 from app.routers import page_router                             # 화면 (HTML)
 
 # 자동완성 색인 — 서버가 뜰 때 메모리에 올려 둔다 (아래 lifespan 참고)
@@ -90,11 +91,19 @@ app = FastAPI(
 # __file__ 은 이 파일(main.py)의 경로 → .parent 는 그 폴더 → / "static" 으로 하위 폴더를 가리킨다.
 # 실행 위치(cwd)와 무관하게 항상 같은 폴더를 가리키므로 상대경로보다 안전하다.
 #   static/pages/   HTML 화면
-#   static/assets/  공통 app.css · app.js
+#   static/assets/  공통 app.css · app.js · shell.js
 STATIC_DIR = Path(__file__).parent / "static"
 # /static/파일명 으로 요청하면 해당 폴더의 파일을 그대로 내려준다.
 # name="static" 은 코드에서 url_for("static", ...) 로 URL 을 만들 때 쓰는 식별자다.
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# 실습 아카이브 — M1 리팩토링 이전 화면 8개를 원본 그대로 얼려 둔 수업 자료다.
+# 강사님 원본(`lecture/`)은 git 서브모듈이라 내 파일을 넣으면 pull 때 충돌한다.
+# 그래서 저장소 루트의 별도 폴더(`실습/`)에 두고 여기서 통째로 서빙한다.
+# html=True 면 폴더 주소(`/practice/`)로 들어왔을 때 그 폴더의 index.html 을 내려준다.
+PRACTICE_DIR = Path(__file__).parent / "실습"
+if PRACTICE_DIR.exists():
+    app.mount("/practice", StaticFiles(directory=PRACTICE_DIR, html=True), name="practice")
 
 # 실습용이라 모든 오리진을 허용한다.
 # 화면을 file:// 로 직접 열어도 API 호출이 되도록 하기 위한 설정이며,
@@ -115,6 +124,7 @@ app.include_router(krx_router)
 app.include_router(kosis_router)
 app.include_router(fred_router)
 app.include_router(search_router)
+app.include_router(dashboard_router)
 if yf_router is not None:                # yfinance 가 없으면 이 두 라우터만 빠진다
     app.include_router(yf_router)
     app.include_router(stock_router)

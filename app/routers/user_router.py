@@ -9,9 +9,13 @@ FastAPI 의 기본기를 익히는 실습용 API 다. 강의 원본의 `main.py`
     POST /api/users            생성 — 201 Created
 
 강의 원본은 `/users` 를 썼지만 이 저장소에서는 **`/api` 를 붙인다.**
-같은 주소를 화면(`/users` → `static/pages/users.html`)이 이미 쓰고 있어서,
-둘 다 `GET /users` 로 두면 먼저 등록된 쪽이 이기고 나머지는 영영 호출되지 않는다.
+같은 주소를 화면이 이미 쓰고 있어서, 둘 다 `GET /users` 로 두면
+먼저 등록된 쪽이 이기고 나머지는 영영 호출되지 않기 때문이다.
 KRX·KOSIS·야후 API 가 모두 `/api/...` 인 것과도 규칙이 맞는다.
+
+M1 에서 `/users` **화면**은 실습 아카이브(`실습/pages/users.html`)로 옮겼지만,
+**이 API 는 그대로 둔다.** 아카이브 화면이 여전히 이 엔드포인트를 부르고,
+주소 규칙을 지금 와서 바꾸면 강의 노트·README·curl 예시가 전부 어긋난다.
 """
 
 from typing import List, Optional

@@ -6,7 +6,7 @@
   <title>KOSIS 통계 실험실 — 검색 · 조립 · 호출</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E" />
   <script src="https://cdn.jsdelivr.net/npm/apexcharts@4/dist/apexcharts.min.js"></script>
-  <link rel="stylesheet" href="/static/assets/app.css" />
+  <link rel="stylesheet" href="../assets/app.css" />
   <style>
     /* 이 화면에서만 쓰는 규칙 */
     .step-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -73,6 +73,7 @@
       <h1>📊 KOSIS 통계 실험실</h1>
       <p>국가통계포털 OpenAPI를 <b>검색 → 파라미터 조립 → 호출</b> 3단계로 직접 실험한다. 결과는 ApexCharts로 그린다.</p>
     </div>
+    <nav class="nav" id="nav"></nav>
   </header>
 
   <div class="badges" id="badges"></div>
@@ -231,13 +232,12 @@
   </section>
 </div>
 
-<script src="/static/assets/app.js"></script>
-<script src="/static/assets/shell.js"></script>
+<script src="../assets/app.js"></script>
 <script>
 (() => {
   'use strict';
   const $ = (id) => document.getElementById(id);
-  Shell.render('kosis');
+  App.renderNav('kosis');
 
   const charts = {};          // 생성한 ApexCharts 인스턴스 보관 (다시 그릴 때 파괴용)
   let last = null;            // 마지막 /api/kosis/data 응답

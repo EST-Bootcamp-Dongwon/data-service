@@ -6,7 +6,7 @@
   <title>퀀트 분석 — My FastAPI Backend</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A7%AE%3C/text%3E%3C/svg%3E" />
   <script src="https://cdn.jsdelivr.net/npm/apexcharts@4/dist/apexcharts.min.js"></script>
-  <link rel="stylesheet" href="/static/assets/app.css" />
+  <link rel="stylesheet" href="../assets/app.css" />
 </head>
 <body>
 <div class="wrap">
@@ -15,6 +15,7 @@
       <h1>🧮 퀀트 분석</h1>
       <p>캐시에 쌓인 <b>실제 KRX 일별 시세</b>로 스크리닝·포트폴리오·팩터를 계산한다.</p>
     </div>
+    <nav class="nav" id="nav"></nav>
   </header>
 
   <div class="badges" id="badges"></div>
@@ -125,15 +126,14 @@
   </section>
 </div>
 
-<script src="/static/assets/app.js"></script>
-<script src="/static/assets/shell.js"></script>
+<script src="../assets/app.js"></script>
 <script>
 (() => {
   'use strict';
   const $ = (id) => document.getElementById(id);
   const charts = {};
 
-  Shell.render('quant');
+  App.renderNav('quant');
 
   // ==================================================
   // 공통 — 캐시 상태 배지
@@ -171,14 +171,9 @@
       series: [{ name: '잔존 종목 수', data: data.steps.map((s) => s.count) }],
       xaxis: { categories: data.steps.map((s) => `${s.step}. ${s.name}`) },
       plotOptions: { bar: { horizontal: true, barHeight: '65%', distributed: true } },
-      // 깔때기는 **순서형** 척도다 (단계가 진행될수록 좁아진다).
-      // 투명도로 흐리게 만들지 않고 한 색상의 밝기 단계(시퀀셜 램프)를 쓴다.
-      // 표면과 붙어 사라지지 않도록 s3 부터 시작한다 (라이트에서 2:1 확보).
-      colors: data.steps.map((_, i) => {
-        const ramp = ['s3', 's4', 's5', 's6', 's7'];
-        const pos = data.steps.length > 1 ? i / (data.steps.length - 1) : 0;
-        return App.color(ramp[Math.round(pos * (ramp.length - 1))]);
-      }),
+      // 단계가 진행될수록 색이 진해지도록 투명도를 조절한다
+      colors: data.steps.map((_, i) => App.color('accent')),
+      fill: { opacity: data.steps.map((_, i) => 0.35 + 0.65 * (i / (data.steps.length - 1))) },
       legend: { show: false },
       dataLabels: {
         enabled: true,
@@ -245,9 +240,7 @@
         { name: '최소 분산',
           data: [{ x: pct(data.min_variance.volatility), y: pct(data.min_variance['return']) }] },
       ],
-      // 계열 4개 = 항목 4개. 슬롯 순서대로 배정하고, 배경이 되는 무작위 점만 회색으로 물린다
-      // (등락색 up/down 은 다이버징 축 전용이라 범주형 계열에 쓰지 않는다)
-      colors: [App.color('flat'), App.color('c1'), App.color('c2'), App.color('c3')],
+      colors: [App.color('muted'), App.color('accent'), App.color('up'), App.color('down')],
       markers: { size: [3, 0, 11, 11], strokeWidth: 0 },
       stroke: { width: [0, 3, 0, 0], curve: 'smooth' },
       xaxis: { title: { text: '연 변동성 (위험, %)' }, tickAmount: 8,

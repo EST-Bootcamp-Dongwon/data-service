@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>대시보드 — QuantLab</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/assets/app.css" />
+  <style>
+    /* 이 화면에서만 쓰는 규칙 — 공통 부품은 app.css 에 있다 */
+
+    /* 상승·하락 비율 막대. 두 조각 사이를 표면색 2px 로 띄워 경계를 만든다
+       (테두리를 그리면 데이터가 아닌 잉크가 늘어난다) */
+    .ratio-bar { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--surface-3); }
+    .ratio-bar i { display: block; height: 100%; }
+    .ratio-bar i.u { background: var(--up); }
+    .ratio-bar i.gap { background: var(--surface); width: 2px; flex: none; }
+    .ratio-bar i.d { background: var(--down); }
+    .ratio-legend { display: flex; gap: 10px; font-size: var(--t-xs); color: var(--muted); }
+    .ratio-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 3px; }
+
+    /* 데이터 상태 표 — 배지를 카드로 승격한 자리 */
+    .status-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--sp-3); }
+    .status-row {
+      display: flex; flex-direction: column; gap: 3px;
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 10px 12px;
+    }
+    .status-row .t { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); font-size: var(--t-md); font-weight: 600; }
+    .status-row .d { font-size: var(--t-xs); color: var(--muted); word-break: break-all; }
+
+    /* 앞으로 붙을 자리 (M4~M6) — 비어 있음을 숨기지 않고 그대로 말한다 */
+    .placeholder {
+      border: 1px dashed var(--border); border-radius: var(--radius);
+      padding: var(--sp-5); text-align: center; color: var(--muted); font-size: var(--t-md);
+    }
+    .notice-line { font-size: var(--t-xs); color: var(--muted); margin: 0 0 var(--sp-4); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page-head">
+    <div>
+      <h1>대시보드</h1>
+      <p>지수·환율·금리·시장 온도를 <b>값 + 추이 + 상태등급</b>으로 함께 본다.</p>
+    </div>
+    <div class="pillbar">
+      <button class="ghost" id="reloadBtn" type="button">다시 불러오기</button>
+    </div>
+  </header>
+
+  <p class="notice-line" id="notice"></p>
+
+  <!-- ── 시장 카드 그리드 ───────────────────── -->
+  <div class="card-grid" id="cards">
+    <div class="stat"><div class="stat-label">불러오는 중…</div></div>
+  </div>
+
+  <!-- ── 시장 온도 ─────────────────────────── -->
+  <section class="card" id="tempCard">
+    <h2>시장 온도 <span class="muted">— 상승 종목 비율</span></h2>
+    <p class="hint">지수는 대형주 몇 개에 좌우되지만, <b>몇 종목이 올랐는지</b>는 시장 전체를 센다.
+      보합은 빼고 상승/(상승+하락)으로 계산한다.</p>
+    <div id="tempBody" class="empty">불러오는 중…</div>
+  </section>
+
+  <!-- ── 최근 리포트 (M4~M6) ───────────────── -->
+  <section class="card">
+    <h2>최근 리서치 리포트</h2>
+    <p class="hint">GIC 하네스(H00~H11)로 실행한 리포트가 여기 쌓인다.</p>
+    <div class="placeholder">
+      리서치 하네스는 <b>M4</b>에서 붙는다. 지금은 데이터 실험실 화면으로 원천 데이터를 확인할 수 있다.
+    </div>
+  </section>
+
+  <!-- ── 데이터 상태 ───────────────────────── -->
+  <section class="card" id="data-status">
+    <h2>데이터 상태</h2>
+    <p class="hint">인증키와 캐시 현황. <b>키 값은 서버가 응답에 담지 않는다</b> — 출처와 길이만 확인한다.</p>
+    <div class="status-list" id="statusBody"><div class="empty">불러오는 중…</div></div>
+  </section>
+</div>
+
+<script src="/static/assets/app.js"></script>
+<script src="/static/assets/shell.js"></script>
+<script>
+(() => {
+  'use strict';
+  Shell.render('dashboard');
+
+  const esc = Shell.esc;
+
+  /** 카드 한 장 — 라벨 · 값 · 등락 · 스파크라인 · 상태등급 */
+  function marketCard(card) {
+    if (!card.ok) {
+      return `<div class="stat dead">
+        <div class="stat-label">${esc(card.label)}</div>
+        <div class="stat-value">—</div>
+        <div class="stat-sub">${esc(card.error || '데이터 없음')}</div>
+      </div>`;
+    }
+
+    const cls = App.signClass(card.rate ?? card.diff);
+    // 등락은 색만으로 방향을 말하지 않는다 — 부호와 화살표를 함께 찍는다
+    const arrow = (card.rate ?? card.diff ?? 0) > 0 ? '▲' : (card.rate ?? card.diff ?? 0) < 0 ? '▼' : '−';
+    const rate = card.rate == null ? '' : ` (${App.signed(card.rate, 2)}%)`;
+    const grade = card.grade ? Shell.grade(card.grade, card.grade_text) : '';
+
+    return `<div class="stat">
+      <div class="stat-head">
+        <span class="stat-label">${esc(card.label)}</span>
+        <span style="margin-left:auto">${grade}</span>
+      </div>
+      <div class="stat-value">${App.num(card.value, card.digits)}<span class="stat-sub"> ${esc(card.unit)}</span></div>
+      <div class="stat-delta ${cls}">${arrow} ${App.signed(card.diff, card.digits)}${rate}</div>
+      <div class="spark-slot" id="spark-${esc(card.key)}"></div>
+      <div class="stat-sub">${esc(card.date || '')} 기준${card.spark.length ? ` · 최근 ${card.spark.length}점` : ''}</div>
+    </div>`;
+  }
+
+  /** 시장 온도 — 비율 막대 + 등급. 막대만으로 읽히지 않게 숫자를 함께 쓴다. */
+  function temperatureHtml(t) {
+    if (!t.ok) return `<div class="empty">${esc(t.error || '데이터 없음')}</div>`;
+
+    const upPct = t.value ?? 50;
+    const downPct = 100 - upPct;
+    return `
+      <div class="stat-row" style="margin-bottom:10px">
+        <span class="hero-value">${App.num(upPct, 1)}<span class="stat-sub">%</span></span>
+        ${Shell.grade(t.grade, t.grade_text)}
+      </div>
+      <div class="ratio-bar" role="img"
+           aria-label="상승 ${t.up}종목, 하락 ${t.down}종목">
+        <i class="u" style="width:${upPct}%"></i><i class="gap"></i><i class="d" style="width:${downPct}%"></i>
+      </div>
+      <div class="ratio-legend" style="margin-top:6px">
+        <span><i style="background:var(--up)"></i>상승 ${App.num(t.up)}종목</span>
+        <span><i style="background:var(--down)"></i>하락 ${App.num(t.down)}종목</span>
+        <span><i style="background:var(--surface-3)"></i>보합 ${App.num(t.flat)}종목</span>
+        <span style="margin-left:auto">${App.isoDate(t.date)} · ${esc(t.source || '')} · 총 ${App.num(t.total)}종목</span>
+      </div>`;
+  }
+
+  /** 데이터 상태 — 상태색은 반드시 글자와 함께 낸다 */
+  function statusHtml(rows) {
+    if (!rows.length) return '<div class="empty">확인할 항목이 없습니다.</div>';
+    return rows.map((row) => `
+      <div class="status-row">
+        <div class="t">${esc(row.label)}${Shell.grade(row.grade, row.grade_text)}</div>
+        <div class="d">${esc(row.detail)}</div>
+      </div>`).join('');
+  }
+
+  /** 카드 색 — 계열 슬롯을 **순서대로** 고정 배정한다. 정렬이 바뀌어도 색은 항목을 따라간다. */
+  const CARD_COLOR = {
+    kospi: 'c1', kosdaq: 'c2', nasdaq: 'c3', sp500: 'c4', usdkrw: 'c5', dgs10: 'c7',
+  };
+
+  async function load() {
+    const cards = document.getElementById('cards');
+    const tempBody = document.getElementById('tempBody');
+    const statusBody = document.getElementById('statusBody');
+
+    try {
+      const data = await App.get('/api/dashboard/summary');
+      const all = [...(data.markets || []), data.rate].filter(Boolean);
+
+      cards.innerHTML = all.map(marketCard).join('');
+      // 스파크라인은 DOM 이 붙은 뒤에 그린다 (실제 픽셀 폭을 재서 그리기 때문이다)
+      all.forEach((card) => {
+        if (!card.ok || !card.spark.length) return;
+        Shell.spark(`spark-${card.key}`, card.spark, {
+          color: App.color(CARD_COLOR[card.key] || 'c1'),
+        });
+      });
+
+      tempBody.innerHTML = temperatureHtml(data.temperature || { ok: false });
+      tempBody.className = '';
+      statusBody.innerHTML = statusHtml(data.data_status || []);
+      document.getElementById('notice').textContent =
+        `${data.notice} · ${data.fetched_at} (${data.source === 'tmp-cache' ? '캐시' : '실시간 조회'})`;
+    } catch (error) {
+      cards.innerHTML = `<div class="stat dead"><div class="stat-label">집계 실패</div>
+        <div class="stat-sub">${esc(error.message)}</div></div>`;
+      tempBody.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+      statusBody.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+    }
+  }
+
+  document.getElementById('reloadBtn').addEventListener('click', load);
+  load();
+})();
+</script>
+</body>
+</html>

@@ -3,39 +3,53 @@
 `static/pages/` 의 HTML 파일을 주소에 연결하기만 하는 얇은 라우터다.
 화면은 기능별로 파일을 나눠 두었고, 파일명만 봐도 무슨 화면인지 알 수 있다.
 
-    /        → index.html   랜딩 (화면 안내 · 상태 요약)
-    /users   → users.html   사용자 CRUD API 테스트
-    /krx     → krx.html     KRX 일별 시세
-    /kosis   → kosis.html   KOSIS 통계 실험실
-    /yf      → yf.html      야후 파이낸스 시세 (scripts/yf.py 와 같은 차트)
-    /stock   → stock.html   종목 통합 조회 (국내·미국 + FRED 거시지표)
-    /quant   → quant.html   퀀트 분석 (스크리닝·투자선·팩터)
-    /tetris  → tetris.html  Canvas 테트리스
+    /          → dashboard.html  대시보드 (시장 카드 그리드 · 데이터 상태)
+    /krx       → krx.html        KRX 일별 시세
+    /kosis     → kosis.html      KOSIS 통계 실험실
+    /yf        → yf.html         야후 파이낸스 시세 (scripts/yf.py 와 같은 차트)
+    /stock     → stock.html      종목 통합 조회 (국내·미국 + FRED 거시지표)
+    /quant     → quant.html      퀀트 분석 (스크리닝·투자선·팩터)
+    /guide     → index.html      프로젝트 안내 (예전 랜딩 · 계층 데이터 흐름도)
+
+M1 에서 바뀐 것
+--------------
+- **`/` 가 대시보드가 됐다.** 예전 랜딩(화면 안내)은 `/guide` 로 옮겼다.
+  사이드바가 화면 목록을 대신하므로, 첫 화면은 안내가 아니라 시장 상황이어야 맞는다.
+- **`/users` · `/tetris` 는 앱에서 내렸다** (미결정 항목 U6 결정).
+  리팩토링 방향과 맞지 않아 메뉴에서 빼고, 수업 자료로 `실습/` 아카이브에 원본 그대로 남겼다.
+  예전 링크가 404 가 되지 않도록 **아카이브로 이동(redirect)** 시킨다.
+  사용자 API 자체(`GET /api/users` 등)는 그대로 살아 있다.
 
 화면 주소를 추가할 때는 아래 `PAGES` 에 한 줄만 넣으면 된다.
-(화면 사이의 내비게이션 목록은 `static/assets/app.js` 의 `PAGES` 배열에 있다.)
+(사이드바 메뉴 목록은 `static/assets/shell.js` 의 `NAV` 배열에 있다.)
 """
 
 from pathlib import Path
 from typing import Callable, Iterable
 
 from fastapi import APIRouter
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 # 이 파일은 app/routers/ 안에 있다. parents[0]=routers, [1]=app, [2]=프로젝트 루트.
 # 실행 위치(cwd)와 무관하게 항상 같은 폴더를 가리키므로 상대경로보다 안전하다.
 PAGES_DIR = Path(__file__).resolve().parents[2] / "static" / "pages"
 
 PAGES = {
-    "/": "index.html",
-    "/users": "users.html",
+    "/": "dashboard.html",
+    "/dashboard": "dashboard.html",
     "/krx": "krx.html",
     "/kosis": "kosis.html",
     "/yf": "yf.html",
     "/stock": "stock.html",
     "/quant": "quant.html",
-    "/tetris": "tetris.html",
+    "/guide": "index.html",
     "/ui": "index.html",       # 기존 링크 호환용
+}
+
+# 앱에서 내린 화면 — 실습 아카이브의 같은 화면으로 보낸다 (예전 북마크·수업 노트 보호)
+ARCHIVED = {
+    "/users": "/practice/pages/users.html",
+    "/tetris": "/practice/pages/tetris.html",
 }
 
 
@@ -48,6 +62,17 @@ def _page(filename: str) -> Callable:
     def handler():
         # FileResponse 는 파일을 열어 스트리밍으로 내려주고, 확장자로 Content-Type 을 자동 판단한다.
         return FileResponse(PAGES_DIR / filename)
+    return handler
+
+
+def _redirect(target: str) -> Callable:
+    """다른 주소로 보내는 처리기를 만든다.
+
+    308 이 아니라 **302(임시)** 를 쓴다. 브라우저가 영구 이동을 캐시해 버리면
+    나중에 화면을 되살릴 때 사용자 쪽에서 예전 주소가 계속 막힌다.
+    """
+    def handler():
+        return RedirectResponse(target, status_code=302)
     return handler
 
 
@@ -66,4 +91,6 @@ def build_router(exclude: Iterable[str] = ()) -> APIRouter:
             continue
         # 데코레이터(@router.get) 대신 router.get(...)(함수) 형태로 직접 호출하는 방식이다.
         router.get(path, include_in_schema=False)(_page(filename))
+    for path, target in ARCHIVED.items():
+        router.get(path, include_in_schema=False)(_redirect(target))
     return router

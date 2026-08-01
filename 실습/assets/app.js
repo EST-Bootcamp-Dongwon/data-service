@@ -1,11 +1,10 @@
 /* 화면 공통 유틸 (App)
  *
- * 모든 화면이 함께 쓰는 작은 도구 모음이다.
+ * 화면 4개가 함께 쓰는 작은 도구 모음이다.
  * - API 호출과 에러 처리
  * - 숫자·금액·등락 표기 (한국 증시 관행: 상승 빨강 · 하락 파랑)
- * - ApexCharts 생성/파괴 관리 + 차트 공통 기본값 (M1 디자인 토큰 반영)
- *
- * 화면 간 내비게이션은 M1 에서 `shell.js` 로 옮겼다. (사이드바 + 티커바)
+ * - ApexCharts 생성/파괴 관리
+ * - 화면 간 내비게이션
  *
  * 전역을 더럽히지 않도록 `App` 하나만 window 에 붙인다.
  */
@@ -95,19 +94,8 @@ window.App = (() => {
 
   /** 등락률에 맞는 차트 색 (상승 빨강 · 하락 파랑 · 보합 회색) */
   function signColor(rate) {
-    if (rate == null || rate === 0) return color('flat');
+    if (rate == null || rate === 0) return color('muted');
     return rate > 0 ? color('up') : color('down');
-  }
-
-  /**
-   * 범주형 색을 **슬롯 순서대로** 앞에서 n개 돌려준다.
-   *
-   * 순서가 곧 색맹 안전성 장치라서, 돌려쓰거나(cycle) 순위에 따라 다시 칠하면 안 된다.
-   * 계열이 9개를 넘으면 색을 만들지 말고 '기타'로 접거나 차트를 나눈다. (app.css 상단 U3 규칙)
-   */
-  function series(n = 8) {
-    const slots = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8'];
-    return slots.slice(0, Math.max(1, Math.min(n, slots.length))).map(color);
   }
 
   // ── 차트 ──────────────────────────────
@@ -125,15 +113,11 @@ window.App = (() => {
     el.innerHTML = '';
 
     // 모든 차트에 공통으로 적용할 기본값. options 가 우선한다.
-    // 색·굵기·격자는 U3 규칙을 따른다 — 격자는 표면에서 한 단계 뜬 1px **실선**(점선 금지),
-    // 선은 2px, 계열 색은 슬롯 순서. 데이터만 진하고 나머지는 뒤로 물러난다.
-    const dark = matchMedia('(prefers-color-scheme: dark)').matches;
     const base = {
-      theme: { mode: dark ? 'dark' : 'light' },
+      theme: { mode: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light' },
       chart: { fontFamily: 'inherit', background: 'transparent' },
-      colors: series(8),
-      grid: { borderColor: color('grid'), strokeDashArray: 0 },
-      tooltip: { theme: dark ? 'dark' : 'light' },
+      grid: { borderColor: color('border'), strokeDashArray: 3 },
+      tooltip: { theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light' },
     };
     const merged = { ...base, ...options, chart: { ...base.chart, ...(options.chart || {}) } };
 
@@ -153,15 +137,33 @@ window.App = (() => {
     };
   }
 
-  /** 예전 상단 가로 메뉴 자리. M1 부터는 셸(사이드바)이 대신하므로 그쪽으로 넘긴다.
-   *
-   * 화면 목록은 `shell.js` 의 `NAV` 하나로 모았다. 이 함수는 예전 호출부가 남아 있어도
-   * 깨지지 않게 두는 다리이며, 새 코드는 `Shell.render(key)` 를 직접 부른다.
-   */
+  // 화면 목록 — 새 화면을 추가하면 여기에만 한 줄 넣으면 모든 화면의 메뉴에 반영된다.
+  //
+  // [실습 아카이브 사본] 이 파일은 M1 리팩토링 이전 원본을 그대로 얼려 둔 것이다.
+  // 아카이브는 서버 라우트(`/krx` 등)에 기대지 않고 **파일끼리만** 이동해야 하므로
+  // href 만 상대경로로 바꿨다. 나머지 코드는 원본과 동일하다.
+  const PAGES = [
+    { key: 'home', href: 'index.html', label: '홈' },
+    { key: 'kosis', href: 'kosis.html', label: 'KOSIS 통계' },
+    { key: 'krx', href: 'krx.html', label: 'KRX 일별 시세' },
+    { key: 'stock', href: 'stock.html', label: '종목 통합 조회' },
+    { key: 'yf', href: 'yf.html', label: '야후 파이낸스' },
+    { key: 'quant', href: 'quant.html', label: '퀀트 분석' },
+    { key: 'users', href: 'users.html', label: '사용자 API' },
+    { key: 'tetris', href: 'tetris.html', label: '테트리스' },
+    { key: 'docs', href: '/docs', label: 'API 문서' },
+    { key: 'back', href: '/', label: '↩ 현재 앱으로' },
+  ];
+
+  /** 현재 화면을 표시한 내비게이션을 그린다. */
   function renderNav(current) {
-    if (window.Shell) Shell.render(current);
+    const nav = document.getElementById('nav');
+    if (!nav) return;
+    nav.innerHTML = PAGES.map((p) =>
+      `<a href="${p.href}" class="${p.key === current ? 'on' : ''}">${p.label}</a>`
+    ).join('');
   }
 
   return { API_BASE, get, post, num, signed, won, isoDate, signClass, color, signColor,
-           series, draw, debounce, renderNav };
+           draw, debounce, renderNav, PAGES };
 })();

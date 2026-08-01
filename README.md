@@ -88,8 +88,9 @@ api-test/
 │   └── kosis_rss.py        KOSIS 공지 크롤러 → RSS 2.0 변환
 ├── test.sh                 KOSIS 공지 범위 수집 실행 스크립트
 ├── static/
-│   ├── pages/              화면 8종 (index · stock · kosis · krx · yf · quant · users · tetris)
-│   └── assets/             공통 app.css · app.js
+│   ├── pages/              화면 7종 (dashboard · stock · kosis · krx · yf · quant · index)
+│   └── assets/             공통 app.css(디자인 토큰) · app.js(유틸) · shell.js(사이드바·티커바)
+├── 실습/                    수업 자료 아카이브 — M1 이전 화면 8종 원본 (`/practice/`)
 ├── data/
 │   ├── stock_master.json   국내 2,764종목 — 코드·이름·시장·시총순위 (111KB, **포함**)
 │   ├── us_master.json      미국 12,650종목 — 티커·이름·거래소·S&P500 (751KB, **포함**)
@@ -172,9 +173,14 @@ app/clients/yf_data.py    app/repositories/          app/clients/fred_data.py   
 | `scripts/kosis_rss.py` | 439 | KOSIS 공지 크롤링 → RSS 2.0 변환 (표준 라이브러리만 사용) |
 | `app/routers/user_router.py` | 163 | 사용자 CRUD 의 DTO 와 엔드포인트 |
 | `app/repositories/user_store.py` | 67 | 실습용 사용자 30명을 메모리 리스트로 보관 |
-| `app/routers/page_router.py` | 67 | 화면(HTML) 라우트. 라이브러리가 없는 화면은 빼고 등록 |
+| `app/routers/page_router.py` | 96 | 화면(HTML) 라우트. 라이브러리가 없는 화면은 빼고 등록 |
 | `app/core/api_docs.py` | 113 | Swagger 태그 설명·API 개요 (동작에는 영향 없음) |
-| `main.py` | 135 | **앱 조립만** — 라우터 등록 · 정적 서빙 · CORS · `/health` |
+| `main.py` | 175 | **앱 조립만** — 라우터 등록 · 정적 서빙 · CORS · `/health` |
+| `static/assets/app.css` | 489 | **디자인 토큰** — 색·타이포·간격 + 셸·카드·표 공통 스타일 |
+| `static/assets/shell.js` | 297 | **셸** — 사이드바·티커바 조립, 스파크라인(SVG), 상태등급 배지 |
+| `app/services/dashboard_data.py` | 353 | 대시보드 집계 — 지수·금리·시장온도 병렬 수집, `/tmp` 캐시 |
+| `app/routers/dashboard_router.py` | 122 | 대시보드 API 의 DTO 와 엔드포인트 |
+| `static/pages/dashboard.html` | 195 | 대시보드 화면 — 카드 그리드 · 시장 온도 · 데이터 상태 |
 
 > 루트에는 `main.py` 만 둔다. 강의에서 쓰는 `uvicorn main:app` 명령을 그대로 쓰기 위해서이고,
 > 나머지 실행 스크립트는 전부 `scripts/` 안에 있다. `main.py` 는 **앱을 조립하기만** 하고
@@ -290,11 +296,13 @@ uvicorn main:app --reload
 
 | 주소 | 설명 |
 |------|------|
-| http://127.0.0.1:8000 | 홈 · 사용자 API 테스트 |
+| http://127.0.0.1:8000 | **대시보드** — 지수·환율·금리·시장온도 카드 + 데이터 상태 |
+| http://127.0.0.1:8000/stock | 종목 통합 조회 (국내·미국 + FRED) |
 | http://127.0.0.1:8000/krx | KRX 일별 시세 화면 |
 | http://127.0.0.1:8000/yf | 야후 파이낸스 시세 화면 |
 | http://127.0.0.1:8000/quant | 퀀트 분석 화면 |
-| http://127.0.0.1:8000/tetris | Canvas 테트리스 |
+| http://127.0.0.1:8000/guide | 프로젝트 안내 (계층 데이터 흐름도) |
+| http://127.0.0.1:8000/practice/ | 실습 아카이브 (사용자 API · 테트리스 포함) |
 | http://127.0.0.1:8000/docs | Swagger UI (자동 생성 문서) |
 | http://127.0.0.1:8000/redoc | ReDoc 문서 |
 
@@ -314,34 +322,50 @@ hostname -I            # 표시된 IP 로 http://서버_IP:8000/ 접속
 기능별로 파일을 나눴다. 파일명만 봐도 무슨 화면인지 알 수 있고, 각 화면은 자기 API만 호출한다.
 화면(HTML)은 `static/pages/`, 공통 스타일·유틸은 `static/assets/` 로 분리해 중복을 없앴다.
 
+**M1(2026-08-01)부터 모든 화면이 같은 셸을 쓴다** — 왼쪽 사이드바 + 상단 티커바.
+페이지는 `Shell.render('키')` 한 줄만 부르면 되고, 셸은 페이지의 기존 내용을 그대로 감싼다.
+
 | 주소 | 파일 | 화면 |
 |------|------|------|
-| `/` | `static/pages/index.html` | **랜딩** — 화면 안내 · 서버/인증키/캐시 상태 |
+| `/` | `static/pages/dashboard.html` | **대시보드** — 지수·환율·금리·시장온도 카드 + 데이터 상태 |
 | `/stock` | `static/pages/stock.html` | **종목 통합 조회** — 국내·미국 주가 + FRED 거시지표 |
-| `/kosis` | `static/pages/kosis.html` | KOSIS 통계 실험실 |
-| `/krx` | `static/pages/krx.html` | KRX 일별 시세 |
 | `/yf` | `static/pages/yf.html` | 야후 파이낸스 시세 |
+| `/krx` | `static/pages/krx.html` | KRX 일별 시세 |
+| `/kosis` | `static/pages/kosis.html` | KOSIS 통계 실험실 |
 | `/quant` | `static/pages/quant.html` | 퀀트 분석 |
-| `/users` | `static/pages/users.html` | 사용자 API 테스트 (CRUD) |
-| `/tetris` | `static/pages/tetris.html` | Canvas 테트리스 |
-| — | `static/assets/app.css` · `app.js` | 8개 화면 공통 스타일·유틸 |
+| `/guide` | `static/pages/index.html` | 프로젝트 안내 (예전 랜딩 · 계층 데이터 흐름도) |
+| `/practice/` | `실습/` | 실습 아카이브 — M1 이전 화면 8종 원본 |
+| — | `static/assets/app.css` | 디자인 토큰 + 공통 스타일 (라이트/다크) |
+| — | `static/assets/app.js` | API 호출 · 숫자 표기 · 차트 기본값 |
+| — | `static/assets/shell.js` | 사이드바 · 티커바 · 스파크라인 · 상태등급 |
 
-> 화면 목록은 `static/assets/app.js` 의 `PAGES` 배열 **한 곳**에만 있다.
-> 새 화면을 추가하면 여기 한 줄만 넣으면 모든 화면의 내비게이션에 반영된다.
+> 화면 목록(사이드바)은 `static/assets/shell.js` 의 `NAV` 배열 **한 곳**에만 있다.
+> 새 화면을 추가하면 여기 한 줄만 넣으면 모든 화면의 사이드바에 반영된다.
+> (주소 등록은 `app/routers/page_router.py` 의 `PAGES` 에 한 줄)
 
-### `/` — 랜딩
+### `/` — 대시보드
 
-어디로 갈지 고르는 화면. 상단 배지로 **서버 · KRX 인증키 · 시세 캐시 · KOSIS 인증키** 상태를 한눈에 보여준다.
-세 상태 요청은 서로 무관하므로 `Promise.allSettled` 로 한꺼번에 보내고, **하나가 실패해도 나머지는 표시**한다.
+시장 상황을 카드 그리드로 본다. 카드마다 **값 + 스파크라인 + 상태등급**이 함께 있다.
 
-### `/users` — 사용자 API 테스트
+- 지수 4종(코스피·코스닥·나스닥·S&P 500) · 원/달러 — 야후 파이낸스, 등급은 3개월 수익률 기준
+- 미 국채 10년 금리 — FRED, 등급은 4개월 변화폭(%p) 기준
+- **시장 온도** — KRX 일별매매정보의 상승 종목 비율. 지수는 대형주에 좌우되지만 등락 종목 수는 시장 전체를 센다
+- **데이터 상태** — 예전 화면 상단 배지를 카드로 올렸다. 인증키 값은 응답에 담기지 않고 출처·길이만 나온다
 
-FastAPI의 기본기를 눌러보는 화면.
+카드 하나가 실패해도 나머지는 그대로 뜬다. 실패한 카드는 그 자리에서 사유를 말한다.
 
-- `GET /health` — 서버 상태 (초록/빨강 점으로 표시)
-- `GET /api/users` — Mock 30명 조회, 화면 내 검색, 평균 나이 등 통계 타일
-- `GET /api/users/{id}` — 단건 조회 + **`404`·`422` 를 일부러 내보는 버튼**
-- `POST /api/users` — 생성 후 목록 자동 갱신, 방금 만든 행을 강조
+### `/users` · `/tetris` — 실습 아카이브로 이동
+
+M1 리팩토링에서 **앱 메뉴에서는 내렸다**(미결정 항목 U6 결정). 수업에서 만든 결과물이라 지우지 않고
+`실습/` 폴더에 원본 그대로 얼려 두었고, 예전 주소로 들어오면 그쪽으로 이동시킨다.
+
+| 예전 주소 | 이동 위치 |
+|---|---|
+| `/users` | `/practice/pages/users.html` |
+| `/tetris` | `/practice/pages/tetris.html` |
+
+**사용자 CRUD API(`/api/users`) 자체는 그대로 살아 있다.** 화면만 아카이브로 옮긴 것이다.
+강사님 원본(`lecture/`)은 서브모듈이라 내 파일을 넣으면 pull 때 충돌하므로, 아카이브는 별도 폴더에 둔다.
 
 ### `/kosis` — KOSIS 통계 실험실 ★
 
@@ -495,7 +519,7 @@ python3 scripts/yf.py --english                # 축·제목을 영어로 (한�
 **③ 팩터 방사형** — 모멘텀 · 안정성 · 유동성 · 규모 · 추세 · 회전율 6축.
 각 점수는 **전 종목 대비 백분위(0~100)** 다. 유동성 98 이면 거래대금 상위 2% 라는 뜻이다.
 
-### `/tetris` — Canvas 테트리스
+### `/practice/pages/tetris.html` — Canvas 테트리스 (아카이브)
 
 HTML5 `<canvas>` 2D 컨텍스트만으로 만든 게임. 외부 라이브러리 없음.
 
@@ -525,6 +549,18 @@ HTML5 `<canvas>` 2D 컨텍스트만으로 만든 게임. 외부 라이브러리 
 > 강의 원본은 `/users` 였지만 **`/api` 를 붙였다.** 같은 주소를 화면(`/users`)이 쓰고 있어
 > 둘 다 `GET /users` 로 두면 먼저 등록된 쪽이 이기고 나머지는 호출되지 않는다.
 > 다른 API 가 전부 `/api/...` 인 것과도 규칙이 맞는다.
+> (M1 에서 `/users` 화면은 아카이브로 옮겼지만, **API 규칙은 그대로 둔다.**)
+
+### 대시보드 — `/api/dashboard/...`
+
+| Method | Path | 설명 | 성공 |
+|--------|------|------|------|
+| GET | `/api/dashboard/ticker` | 티커바 — 지수 3종 + 환율 (값·등락만) | 200 |
+| GET | `/api/dashboard/summary` | 카드 그리드 — 값 + 스파크라인 + 상태등급 + 데이터 상태 | 200 |
+
+> **이 둘은 500 을 내지 않는다.** 야후 요청 한도·인증키 없음·캐시 없음은 흔한 상황이라
+> 카드마다 `ok` 와 `error` 를 두고 200 으로 돌려준다. 화면은 실패한 카드만 접는다.
+> 결과는 `/tmp` 에 3~5분 캐시한다 (있으면 쓰고 없으면 다시 부르는 best-effort).
 
 ### KRX 일별 시세 — `/api/krx/...`
 
@@ -995,9 +1031,10 @@ vercel env ls                       # 등록 확인 (값은 Encrypted 로만 보
 
 | 화면 | 배포본 |
 |------|--------|
+| `/` **대시보드** | ✅ 지수·환율은 야후, 금리는 FRED 키가 있으면. 시장 온도는 KRX 라이브 조회 |
 | `/stock` **종목 통합 조회** | ✅ 국내·미국 주가 전부 (야후는 인증키 불필요) |
 | `/stock` 거시지표 겹쳐 보기 | ✅ `FRED_API_KEY` 를 넣었다면 |
-| `/yf` · `/users` · `/tetris` · `/docs` | ✅ |
+| `/yf` · `/guide` · `/practice/` · `/docs` | ✅ |
 | `/kosis` | ✅ `KOSIS_API_KEY` 를 넣었다면 |
 | `/krx` · `/quant` | ❌ `503` — 96MB 시세 캐시가 배포본에 없다 |
 
