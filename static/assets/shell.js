@@ -44,6 +44,9 @@ window.Shell = (() => {
         { key: 'krx', href: '/krx', label: 'KRX 시세', ico: '📈' },
         { key: 'kosis', href: '/kosis', label: 'KOSIS 통계', ico: '📊' },
         { key: 'quant', href: '/quant', label: '퀀트 분석', ico: '🧮' },
+        // M3 — numpy 로 직접 구현한 시계열 엔진(`/api/ts/*`)을 눈으로 보는 화면.
+        // 명세 §7.1 IA 에는 없던 화면이라 변경 노트 N26 으로 남긴다.
+        { key: 'timeseries', href: '/timeseries', label: '시계열 분석', ico: '🌊' },
       ],
     },
     {

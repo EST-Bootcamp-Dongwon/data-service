@@ -10,6 +10,7 @@
     /yf        → yf.html         야후 파이낸스 시세 (scripts/yf.py 와 같은 차트)
     /stock     → stock.html      종목 통합 조회 (국내·미국 + FRED 거시지표)
     /quant     → quant.html      퀀트 분석 (스크리닝·투자선·팩터)
+    /timeseries → timeseries.html 시계열 분석 (분해·정상성·상관도·예측 3단)
     /guide     → index.html      프로젝트 안내 (예전 랜딩 · 계층 데이터 흐름도)
 
 M1 에서 바뀐 것
@@ -44,6 +45,7 @@ PAGES = {
     "/yf": "yf.html",
     "/stock": "stock.html",
     "/quant": "quant.html",
+    "/timeseries": "timeseries.html",
     "/guide": "index.html",
     "/ui": "index.html",       # 기존 링크 호환용
 }

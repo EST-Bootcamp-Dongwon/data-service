@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>시계열 분석 — G.I.C Lab</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/assets/app.css" />
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts@4/dist/apexcharts.min.js"></script>
+  <style>
+    /* 이 화면에서만 쓰는 규칙 — 공통 부품은 app.css 에 있다 */
+
+    /* 차트 칸. 높이에 **x축 라벨 자리까지** 포함시킨다 —
+       플롯만큼만 잡으면 카드 안에 작은 세로 스크롤이 생긴다 */
+    .chart-tall { height: 420px; }
+    .chart-mid  { height: 300px; }
+    .chart-small { height: 150px; }
+
+    /* 분해 4단 — small multiples. 관측(26만)과 계절(±0.3)은 축이 달라서
+       한 차트에 못 겹친다. 이중축은 금지이므로 차트를 나눈다 (U3 규칙) */
+    .stack { display: grid; gap: 2px; }
+    .stack .panel { background: var(--surface-2); border: 1px solid var(--border); }
+    .stack .panel:first-child { border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+    .stack .panel:last-child { border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
+    .stack .panel h3 {
+      margin: 0; padding: 8px 12px 0; font-size: var(--t-sm); font-weight: 600;
+      color: var(--muted); display: flex; align-items: center; gap: 7px;
+    }
+    .stack .panel h3 .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+
+    /* 기간·탭 토글 — /market 과 같은 관례 */
+    .period-bar { display: flex; flex-wrap: wrap; gap: 2px; background: var(--surface-3); padding: 3px; border-radius: var(--radius-sm); }
+    .period-bar button {
+      border: 0; background: transparent; color: var(--muted); cursor: pointer;
+      padding: 5px 11px; border-radius: calc(var(--radius-sm) - 2px);
+      font-size: var(--t-sm); font-weight: 600; font-family: inherit;
+    }
+    .period-bar button:hover { color: var(--text); }
+    .period-bar button[aria-pressed="true"] { background: var(--surface); color: var(--accent); box-shadow: 0 1px 2px rgb(0 0 0 / .06); }
+
+    .view-tabs { display: flex; gap: var(--sp-1); border-bottom: 1px solid var(--border); margin-bottom: var(--sp-4); flex-wrap: wrap; }
+    .view-tabs button {
+      border: 0; border-bottom: 2px solid transparent; background: transparent;
+      color: var(--muted); cursor: pointer; padding: 9px 14px;
+      font-size: var(--t-md); font-weight: 600; font-family: inherit;
+    }
+    .view-tabs button:hover { color: var(--text); }
+    .view-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+
+    /* 값 타일 */
+    .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-4); }
+    .stat-tile { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; }
+    .stat-tile .k { font-size: var(--t-xs); color: var(--muted); margin-bottom: 2px; }
+    /* 큰 수는 비례폭 — tabular-nums 는 표·축에서만 쓴다 (U3) */
+    .stat-tile .v { font-size: var(--t-xl); font-weight: 700; }
+    .stat-tile .s { font-size: var(--t-xs); color: var(--muted); margin-top: 2px; }
+
+    /* 시나리오 3단 — 차트가 아니라 값 카드다.
+       "몇 개 안 되는 헤드라인 숫자" 는 막대그래프가 아니라 타일이 맞는다 */
+    .scenario-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--sp-3); }
+    .scenario {
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: var(--sp-4); display: flex; flex-direction: column; gap: 8px;
+    }
+    .scenario .head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2); }
+    .scenario .nm { font-size: var(--t-md); font-weight: 700; }
+    .scenario .tg { font-size: var(--t-2xl); font-weight: 700; }
+    .scenario .pc { font-size: var(--t-sm); font-weight: 600; }
+    /* 확률 미터 — 시퀀셜 램프 한 색상. 크기(magnitude)를 나타내므로 범주형 색을 쓰지 않는다 */
+    .meter { height: 8px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+    .meter i { display: block; height: 100%; background: var(--s5); }
+    .scenario dl { margin: 0; display: grid; gap: 6px; }
+    .scenario dt { font-size: var(--t-xs); color: var(--muted); font-weight: 600; }
+    .scenario dd { margin: 0; font-size: var(--t-sm); line-height: 1.55; }
+
+    /* 표 보기 — 모든 차트에 값을 글자로도 닿을 수 있는 길을 둔다 */
+    .table-toggle { border: 0; background: none; color: var(--accent); cursor: pointer; font-family: inherit; font-size: var(--t-xs); font-weight: 600; padding: 0; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
+    .data-table th, .data-table td { text-align: right; padding: 5px 9px; border-bottom: 1px solid var(--border-soft); }
+    .data-table th:first-child, .data-table td:first-child { text-align: left; }
+    .data-table th { font-size: var(--t-xs); color: var(--muted); font-weight: 600; }
+    .table-wrap { max-height: 320px; overflow: auto; margin-top: var(--sp-3); }
+
+    /* 알림 · 한계 */
+    .caveats { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; }
+    .caveats li { font-size: var(--t-sm); color: var(--muted); line-height: 1.6; }
+    .caveats li.lead { color: var(--text); font-weight: 600; }
+    .banner {
+      display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3);
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 10px 14px; margin-bottom: var(--sp-4);
+      font-size: var(--t-sm);
+    }
+    .banner .sep { color: var(--border); }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label { font-size: var(--t-xs); color: var(--muted); font-weight: 600; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: flex-end; margin-bottom: var(--sp-4); }
+    .note-line { font-size: var(--t-xs); color: var(--muted); margin: var(--sp-2) 0 0; line-height: 1.6; }
+    .empty { border: 1px dashed var(--border); border-radius: var(--radius); padding: var(--sp-5); text-align: center; color: var(--muted); font-size: var(--t-md); }
+    .hidden { display: none; }
+    /* 다시 불러오는 동안 이전 그림을 흐리게 붙잡아 둔다 (골격 깜빡임·레이아웃 점프 방지) */
+    .loading { opacity: .45; transition: opacity .15s; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page-head">
+    <div>
+      <h1>시계열 분석</h1>
+      <p><b>numpy 로 직접 구현한</b> 정상성·상관도·ARIMA·예측을 실제 시세에 돌린다.
+        결과는 언제나 <b>확률보행과 겨룬 성적</b>과 함께 나온다.</p>
+    </div>
+    <div class="pillbar">
+      <button class="ghost" id="reloadBtn" type="button">다시 불러오기</button>
+    </div>
+  </header>
+
+  <!-- ── 한 줄 필터 — 아래 모든 차트를 같은 구간으로 묶는다 ── -->
+  <div class="toolbar">
+    <div class="field">
+      <label for="tickerInput">종목</label>
+      <input id="tickerInput" type="text" value="005930" placeholder="005930 · 삼성전자 · AAPL" style="width: 190px" />
+    </div>
+    <div class="field">
+      <label>학습 기간</label>
+      <div class="period-bar" id="yearBar"></div>
+    </div>
+    <div class="field">
+      <label for="goBtn">&nbsp;</label>
+      <button class="primary" id="goBtn" type="button">분석</button>
+    </div>
+  </div>
+
+  <!-- ── 데이터 품질 배너 (전처리 결과 · partial-continue 안내) ── -->
+  <div class="banner" id="qualityBanner">불러오는 중…</div>
+
+  <!-- ── 보기 전환 ── -->
+  <div class="view-tabs" id="viewTabs" role="tablist">
+    <button role="tab" data-view="diagnostics" aria-selected="true">진단 · 정상성 · 상관도</button>
+    <button role="tab" data-view="decompose" aria-selected="false">분해</button>
+    <button role="tab" data-view="forecast" aria-selected="false">예측 3단</button>
+  </div>
+
+  <!-- ══ 1. 진단 ══════════════════════════════ -->
+  <section id="viewDiagnostics">
+    <div class="stat-row" id="adfStats"></div>
+
+    <section class="card">
+      <h2>추천 차수</h2>
+      <div id="orderBody" class="empty">불러오는 중…</div>
+    </section>
+
+    <section class="card">
+      <h2>ACF — 자기상관 <span class="muted">로그수익률 · Bartlett 신뢰띠</span></h2>
+      <p class="hint">k일 전과 얼마나 닮았는지를 <b>중간 경로까지 포함해</b> 잰다.
+        띠를 벗어난 마지막 시차가 <b>MA 차수 q</b> 의 후보다. 띠 안쪽 값은 0과 구별되지 않는다.</p>
+      <div class="chart-mid" id="acfChart"></div>
+      <button class="table-toggle" data-table="acfTable" type="button">표로 보기</button>
+      <div class="table-wrap hidden" id="acfTable"></div>
+    </section>
+
+    <section class="card">
+      <h2>PACF — 편자기상관 <span class="muted">Durbin-Levinson</span></h2>
+      <p class="hint">같은 것을 재되 <b>중간 경로를 걷어낸다.</b> 오늘과 그제가 어제를 거쳐
+        저절로 닮아 보이는 부분을 뺀 값이다. 띠를 벗어난 마지막 시차가 <b>AR 차수 p</b> 의 후보다.</p>
+      <div class="chart-mid" id="pacfChart"></div>
+      <button class="table-toggle" data-table="pacfTable" type="button">표로 보기</button>
+      <div class="table-wrap hidden" id="pacfTable"></div>
+    </section>
+  </section>
+
+  <!-- ══ 2. 분해 ══════════════════════════════ -->
+  <section id="viewDecompose" class="hidden">
+    <div class="toolbar">
+      <div class="field">
+        <label for="periodSel">계절 주기</label>
+        <select id="periodSel">
+          <option value="5" selected>5거래일 (주간)</option>
+          <option value="21">21거래일 (월간)</option>
+          <option value="63">63거래일 (분기)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="modelSel">분해 방식</label>
+        <select id="modelSel">
+          <option value="additive" selected>가법 (y = 추세 + 계절 + 잔차)</option>
+          <option value="multiplicative">승법 (y = 추세 × 계절 × 잔차)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="stat-row" id="decomposeStats"></div>
+
+    <section class="card">
+      <h2>4단 분해</h2>
+      <p class="hint">네 칸으로 나눠 그린다. 관측(수십만 원)과 계절(±몇 원)은 <b>축이 달라서</b>
+        한 차트에 겹칠 수 없다 — 이중축은 쓰지 않는 것이 이 프로젝트의 규칙이다.</p>
+      <div class="stack" id="decomposeStack"></div>
+      <p class="note-line" id="decomposeNote"></p>
+    </section>
+  </section>
+
+  <!-- ══ 3. 예측 3단 ══════════════════════════ -->
+  <section id="viewForecast" class="hidden">
+    <div class="toolbar">
+      <div class="field">
+        <label for="horizonSel">예측 기간</label>
+        <select id="horizonSel">
+          <option value="5">5거래일</option>
+          <option value="10">10거래일</option>
+          <option value="20" selected>20거래일 (약 1개월)</option>
+          <option value="60">60거래일 (약 3개월)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 1단 통계 -->
+    <div class="stat-row" id="modelStats"></div>
+    <section class="card">
+      <h2>점예측과 95% 신뢰구간</h2>
+      <p class="hint">점예측만 보면 안 된다. <b>틀릴 것이 확실한 숫자</b>이기 때문이다.
+        의미가 있는 것은 띠의 폭이며, 그 폭이 이 모형이 인정하는 불확실성이다.</p>
+      <div class="chart-tall" id="forecastChart"></div>
+      <button class="table-toggle" data-table="forecastTable" type="button">표로 보기</button>
+      <div class="table-wrap hidden" id="forecastTable"></div>
+    </section>
+
+    <!-- 2단 확률 -->
+    <section class="card">
+      <h2>백테스트 <span class="muted">— 확률보행과 겨룬 성적</span></h2>
+      <p class="hint">과거 시점에 서서 그 다음을 맞혀 보게 하고 실제와 견줬다(확장창).
+        <b>"내일도 오늘과 같다"</b>는 아무 모형도 아닌 예측을 이기지 못하면 그 모형은 쓸모가 없다.</p>
+      <div class="stat-row" id="backtestStats"></div>
+      <p class="note-line" id="backtestVerdict"></p>
+    </section>
+
+    <!-- 3단 시나리오 -->
+    <section class="card">
+      <h2>시나리오 3단</h2>
+      <p class="hint" id="scenarioRule"></p>
+      <div class="scenario-grid" id="scenarioGrid"></div>
+    </section>
+
+    <section class="card">
+      <h2>이 예측을 읽을 때 알아야 할 것</h2>
+      <ul class="caveats" id="caveatList"></ul>
+    </section>
+  </section>
+</div>
+
+<script src="/static/assets/app.js"></script>
+<script src="/static/assets/shell.js"></script>
+<script>
+/* 시계열 분석 화면
+ *
+ * `/api/ts/*` 네 엔드포인트를 그린다. 계산은 전부 서버(`app/services/timeseries/`)가 하고
+ * 여기서는 **보여 주는 일**만 한다 — 화면에서 통계를 다시 계산하지 않는다.
+ * (두 벌이 되면 반드시 어긋나고, 어느 쪽이 맞는지 아무도 모르게 된다)
+ *
+ * 차트 형태를 이렇게 고른 이유 (dataviz 절차 · U3 규칙)
+ *   ACF/PACF  값 하나짜리 계열이고 이야기는 "어느 시차가 띠를 벗어났나" 하나다.
+ *             그래서 8색을 쓰지 않고 **강조(emphasis)** 를 쓴다 — 유의한 막대만 계열색,
+ *             나머지는 회색. 띠는 rangeArea 로 깔아 색 없이도 읽히게 한다.
+ *   예측      관측·예측·신뢰띠 셋 다 **같은 단위(가격)** 라 한 차트에 올려도 된다.
+ *   분해      관측과 계절은 축이 100만 배 다르다. 이중축은 금지이므로 **네 칸으로 나눈다.**
+ *   시나리오  숫자 세 개짜리 헤드라인이다. 막대그래프가 아니라 **값 타일**이 맞는다.
+ */
+(() => {
+  'use strict';
+  Shell.render('timeseries');
+
+  const $ = (id) => document.getElementById(id);
+  const esc = Shell.esc;
+  const charts = {};                 // ApexCharts 인스턴스 (다시 그릴 때 파괴용)
+
+  const YEARS = [1, 2, 3, 5];
+  let state = { ticker: '005930', years: 2, view: 'diagnostics' };
+  let cache = { series: null, diagnostics: null, decompose: null, forecast: null };
+
+  // ── 표기 도우미 ────────────────────────────
+  const money = (v, cur) => (cur === 'USD' ? `$${App.num(v, 2)}` : `${App.num(v)}원`);
+  const pctText = (v, digits = 1) => (v == null ? '-' : `${(v * 100).toFixed(digits)}%`);
+
+  /** 차트 공통 뼈대 — 격자는 1px 실선, 축은 물러나게 (U3 차트 크롬) */
+  function baseOptions(height) {
+    return {
+      chart: { height, toolbar: { show: false }, animations: { enabled: false }, zoom: { enabled: false } },
+      grid: { borderColor: App.color('grid'), strokeDashArray: 0, padding: { left: 12, right: 12 } },
+      dataLabels: { enabled: false },              // 점마다 숫자를 찍지 않는다
+      legend: { position: 'top', horizontalAlign: 'left', fontSize: '12px', markers: { size: 6 } },
+    };
+  }
+
+  // ==================================================
+  // 표 보기 — 값을 글자로도 닿을 수 있게 한다
+  // ==================================================
+  function renderTable(elementId, columns, rows) {
+    const head = columns.map((c) => `<th>${esc(c)}</th>`).join('');
+    const body = rows.map((r) => `<tr>${r.map((v) => `<td>${v}</td>`).join('')}</tr>`).join('');
+    $(elementId).innerHTML =
+      `<table class="data-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  }
+
+  document.querySelectorAll('.table-toggle').forEach((button) => {
+    button.addEventListener('click', () => {
+      const target = $(button.dataset.table);
+      const showing = target.classList.toggle('hidden');
+      button.textContent = showing ? '표로 보기' : '표 접기';
+    });
+  });
+
+  // ==================================================
+  // 1. 진단
+  // ==================================================
+  /** ADF 결과 타일 — 판정은 색만이 아니라 **글자**로 말한다 */
+  function adfTile(label, adf) {
+    if (!adf || !adf.available) {
+      return `<div class="stat-tile"><div class="k">${esc(label)}</div>
+        <div class="v">—</div><div class="s">${esc((adf && adf.verdict_text) || '검정 불가')}</div></div>`;
+    }
+    const verdict = { stationary: '정상', weak: '약한 정상', 'non-stationary': '비정상',
+                      insufficient: '표본 부족' }[adf.verdict] || adf.verdict;
+    return `<div class="stat-tile">
+      <div class="k">${esc(label)}</div>
+      <div class="v">${adf.stat.toFixed(3)}</div>
+      <div class="s">${esc(verdict)} · 5% 임계 ${adf.crit_5.toFixed(3)} · 시차 ${adf.lag}</div>
+    </div>`;
+  }
+
+  /** ACF·PACF 공통 — 컬럼 + 신뢰띠(rangeArea) */
+  function correlogramChart(elementId, result, title) {
+    const significant = new Set(result.significant_lags || []);
+    const strong = App.color('c1');
+    const weak = App.color('flat');
+
+    // 유의한 시차만 계열색, 나머지는 회색 — "어느 시차가 띠를 벗어났나" 가 이 차트의 전부다
+    const bars = result.lags.map((lag, i) => ({
+      x: lag,
+      y: Number(result.values[i].toFixed(4)),
+      fillColor: significant.has(lag) ? strong : weak,
+    }));
+    const band = result.lags.map((lag, i) => ({
+      x: lag,
+      y: [Number(result.conf_lower[i].toFixed(4)), Number(result.conf_upper[i].toFixed(4))],
+    }));
+
+    App.draw(charts, elementId, {
+      ...baseOptions($(elementId).clientHeight || 300),
+      series: [
+        { name: '95% 신뢰띠', type: 'rangeArea', data: band },
+        { name: title, type: 'column', data: bars },
+      ],
+      colors: [App.color('flat'), strong],
+      fill: { opacity: [0.14, 1] },
+      stroke: { width: [0, 0] },
+      plotOptions: { bar: { columnWidth: '55%', borderRadius: 2, borderRadiusApplication: 'end' } },
+      xaxis: { type: 'numeric', tickAmount: Math.min(result.lags.length, 15),
+               title: { text: '시차 (거래일)', style: { fontSize: '11px', color: App.color('muted') } },
+               labels: { formatter: (v) => Math.round(v) } },
+      yaxis: { labels: { formatter: (v) => v.toFixed(2) }, tickAmount: 5 },
+      tooltip: {
+        shared: true, intersect: false,
+        y: { formatter: (v) => (Array.isArray(v) ? `${v[0].toFixed(3)} ~ ${v[1].toFixed(3)}` : v.toFixed(4)) },
+      },
+      annotations: { yaxis: [{ y: 0, borderColor: App.color('axis'), strokeDashArray: 0 }] },
+    });
+  }
+
+  function renderDiagnostics(data) {
+    if (data.status === 'partial-continue') {
+      $('adfStats').innerHTML = '';
+      $('orderBody').innerHTML = `<div class="empty">${esc(data.reason)}</div>`;
+      ['acfChart', 'pacfChart'].forEach((id) => { $(id).innerHTML = ''; });
+      return;
+    }
+
+    $('adfStats').innerHTML =
+      adfTile('ADF — 가격 수준', data.adf_price) +
+      adfTile('ADF — 로그수익률', data.adf_returns) +
+      `<div class="stat-tile"><div class="k">연율 변동성</div>
+        <div class="v">${pctText(data.returns_stats.annualized_vol)}</div>
+        <div class="s">일간 표준편차 × √252 · 표본 ${App.num(data.returns_stats.count)}일</div></div>` +
+      `<div class="stat-tile"><div class="k">표본</div>
+        <div class="v">${App.num(data.n)}</div>
+        <div class="s">거래일 · 출처 ${esc(data.source)}</div></div>`;
+
+    const order = data.suggested_order;
+    $('orderBody').className = '';
+    $('orderBody').innerHTML = `
+      <div class="stat-row" style="margin-bottom:var(--sp-3)">
+        <div class="stat-tile"><div class="k">AIC 격자탐색 결과</div>
+          <div class="v">${esc(order.label || '-')}</div>
+          <div class="s">ACF·PACF 가 읽은 후보 p=${data.p_hint} · q=${data.q_hint}</div></div>
+      </div>
+      <p class="note-line"><b>차분 차수 d</b> — ${esc(order.d_reason || '-')}</p>
+      <p class="note-line"><b>(p, q) 선택</b> — ${esc(order.reason || '-')}</p>
+      <p class="note-line"><b>ACF·PACF 읽기</b> — ${esc(data.reading || '-')}</p>
+      <p class="note-line">⚠️ ${esc((data.limitations || [])[0] || '')}</p>`;
+
+    correlogramChart('acfChart', data.acf, '자기상관');
+    correlogramChart('pacfChart', data.pacf, '편자기상관');
+
+    const mark = (result) => (lag) => (result.significant_lags || []).includes(lag) ? '✓ 유의' : '띠 안';
+    renderTable('acfTable', ['시차', '자기상관', '신뢰띠 ±', '판정'],
+      data.acf.lags.map((lag, i) => [lag, data.acf.values[i].toFixed(4),
+        data.acf.conf_upper[i].toFixed(4), mark(data.acf)(lag)]));
+    renderTable('pacfTable', ['시차', '편자기상관', '신뢰띠 ±', '판정'],
+      data.pacf.lags.map((lag, i) => [lag, data.pacf.values[i].toFixed(4),
+        data.pacf.conf_upper[i].toFixed(4), mark(data.pacf)(lag)]));
+  }
+
+  // ==================================================
+  // 2. 분해
+  // ==================================================
+  function renderDecompose(data) {
+    const stack = $('decomposeStack');
+    if (data.status === 'partial-continue' || !data.available) {
+      $('decomposeStats').innerHTML = '';
+      stack.innerHTML = `<div class="empty">${esc(data.reason || '분해할 수 없습니다.')}</div>`;
+      $('decomposeNote').textContent = '';
+      return;
+    }
+
+    $('decomposeStats').innerHTML = `
+      <div class="stat-tile"><div class="k">계절 세기</div>
+        <div class="v">${data.seasonal_strength == null ? '—' : data.seasonal_strength.toFixed(2)}배</div>
+        <div class="s">계절 진폭 ÷ 잔차 표준편차</div></div>
+      <div class="stat-tile"><div class="k">계절 진폭</div>
+        <div class="v">${App.num(data.seasonal_amplitude, 2)}</div>
+        <div class="s">주기 ${data.period}거래일 · ${data.model === 'additive' ? '가법' : '승법'}</div></div>
+      <div class="stat-tile"><div class="k">잔차 표준편차</div>
+        <div class="v">${App.num(data.resid_sd, 2)}</div>
+        <div class="s">설명되지 않은 변동</div></div>
+      <div class="stat-tile"><div class="k">추세 구간</div>
+        <div class="v">${App.num(data.trend_points)}</div>
+        <div class="s">앞뒤 각 ${Math.floor(data.period / 2)}개는 계산 불가</div></div>`;
+
+    // 네 칸을 만들고 각각 한 계열씩 그린다 (small multiples)
+    const panels = [
+      { key: 'observed', label: '관측', color: 'c1', height: 170 },
+      { key: 'trend', label: '추세 (중심이동평균)', color: 'c2', height: 150 },
+      { key: 'seasonal', label: `계절 (주기 ${data.period})`, color: 'c3', height: 150 },
+      { key: 'resid', label: '잔차', color: 'c4', height: 150 },
+    ];
+    stack.innerHTML = panels.map((p) => `
+      <div class="panel">
+        <h3><span class="dot" style="background:var(--${p.color})"></span>${esc(p.label)}</h3>
+        <div id="dc-${p.key}" style="height:${p.height}px"></div>
+      </div>`).join('');
+
+    panels.forEach((p) => {
+      App.draw(charts, `dc-${p.key}`, {
+        ...baseOptions(p.height),
+        chart: { type: 'line', height: p.height, toolbar: { show: false },
+                 animations: { enabled: false }, zoom: { enabled: false }, sparkline: { enabled: false } },
+        series: [{ name: p.label, data: data[p.key] }],
+        colors: [App.color(p.color)],
+        stroke: { width: 2, curve: 'straight' },
+        legend: { show: false },                 // 계열이 하나뿐이라 제목이 이름을 맡는다
+        xaxis: { categories: data.dates, type: 'category', tickAmount: 8,
+                 labels: { rotate: 0, hideOverlappingLabels: true } },
+        yaxis: { labels: { formatter: (v) => App.num(v, Math.abs(v) < 10 ? 2 : 0) }, tickAmount: 3 },
+        tooltip: { x: { show: true } },
+      });
+    });
+
+    $('decomposeNote').innerHTML =
+      `<b>${esc(data.strength_text)}</b><br>⚠️ ${esc(data.limitation)}`;
+  }
+
+  // ==================================================
+  // 3. 예측 3단
+  // ==================================================
+  function renderForecast(data) {
+    if (data.status === 'partial-continue') {
+      $('modelStats').innerHTML = '';
+      $('forecastChart').innerHTML = `<div class="empty">${esc(data.reason)}</div>`;
+      $('backtestStats').innerHTML = '';
+      $('scenarioGrid').innerHTML = '';
+      $('caveatList').innerHTML = `<li class="lead">${esc(data.reason)}</li>`;
+      return;
+    }
+
+    const st = data.statistical;
+    const cur = data.currency;
+
+    // ── 1단 통계 ──
+    $('modelStats').innerHTML = `
+      <div class="stat-tile"><div class="k">모형</div>
+        <div class="v">${esc(st.model)}</div>
+        <div class="s">${esc(st.method)} · AIC ${App.num(st.aic, 1)}</div></div>
+      <div class="stat-tile"><div class="k">마지막 종가</div>
+        <div class="v">${money(data.last_close, cur)}</div>
+        <div class="s">${esc(data.last_date)}</div></div>
+      <div class="stat-tile"><div class="k">${data.horizon_days}일 점예측</div>
+        <div class="v">${money(st.point[st.point.length - 1], cur)}</div>
+        <div class="s">${App.signed((st.point[st.point.length - 1] / data.last_close - 1) * 100, 2)}%</div></div>
+      <div class="stat-tile"><div class="k">95% 구간</div>
+        <div class="v" style="font-size:var(--t-md)">${money(st.lower95[st.lower95.length - 1], cur)}
+          ~ ${money(st.upper95[st.upper95.length - 1], cur)}</div>
+        <div class="s">폭 ${money(st.upper95[st.upper95.length - 1] - st.lower95[st.lower95.length - 1], cur)}</div></div>`;
+
+    // ── 팬차트 — 관측 꼬리 + 예측 + 95% 띠 ──
+    // 관측을 전부 그리면 예측 20점이 눌려 안 보인다. 최근 구간만 붙인다.
+    const tail = Math.min(80, cache.series.dates.length);
+    const histDates = cache.series.dates.slice(-tail);
+    const histClose = cache.series.close.slice(-tail);
+    const allDates = histDates.concat(data.future_dates);
+    const pad = new Array(histDates.length - 1).fill(null);
+
+    // 예측선을 마지막 관측점에 이어 붙인다 (안 그러면 선이 공중에서 시작한다)
+    const observedLine = histClose.concat(new Array(data.future_dates.length).fill(null));
+    const forecastLine = pad.concat([histClose[histClose.length - 1]], st.point);
+    const bandArea = pad.concat(
+      [[histClose[histClose.length - 1], histClose[histClose.length - 1]]],
+      st.point.map((_, i) => [st.lower95[i], st.upper95[i]]));
+
+    App.draw(charts, 'forecastChart', {
+      ...baseOptions($('forecastChart').clientHeight || 420),
+      series: [
+        { name: '95% 신뢰구간', type: 'rangeArea', data: bandArea.map((v, i) => ({ x: allDates[i], y: v })) },
+        { name: '관측', type: 'line', data: observedLine.map((v, i) => ({ x: allDates[i], y: v })) },
+        { name: '예측', type: 'line', data: forecastLine.map((v, i) => ({ x: allDates[i], y: v })) },
+      ],
+      colors: [App.color('c2'), App.color('c1'), App.color('c2')],
+      fill: { opacity: [0.16, 1, 1] },
+      stroke: { width: [0, 2, 2], curve: 'straight', dashArray: [0, 0, 0] },
+      xaxis: { type: 'category', tickAmount: 10, labels: { rotate: 0, hideOverlappingLabels: true } },
+      yaxis: { labels: { formatter: (v) => App.num(v, 0) }, tickAmount: 6 },
+      tooltip: {
+        shared: true, intersect: false,
+        y: { formatter: (v) => (v == null ? '-' : Array.isArray(v)
+              ? `${money(v[0], cur)} ~ ${money(v[1], cur)}` : money(v, cur)) },
+      },
+      annotations: {
+        xaxis: [{
+          x: histDates[histDates.length - 1],
+          borderColor: App.color('axis'),
+          label: { text: '예측 시작', style: { fontSize: '11px', background: 'transparent',
+                    color: App.color('muted') }, orientation: 'horizontal' },
+        }],
+      },
+    });
+
+    renderTable('forecastTable', ['날짜', '점예측', '하한 95%', '상한 95%', '표준오차'],
+      data.future_dates.map((d, i) => [d, App.num(st.point[i]), App.num(st.lower95[i]),
+        App.num(st.upper95[i]), App.num(st.se[i], 1)]));
+
+    // ── 2단 확률 ──
+    const bt = data.probability.backtest;
+    if (!bt.available) {
+      $('backtestStats').innerHTML = `<div class="empty">${esc(bt.reason || '백테스트 불가')}</div>`;
+      $('backtestVerdict').textContent = '';
+    } else {
+      const beat = bt.beats_random_walk;
+      $('backtestStats').innerHTML = `
+        <div class="stat-tile"><div class="k">상승확률 (${data.horizon_days}일)</div>
+          <div class="v">${pctText(data.probability.up_prob)}</div>
+          <div class="s">현재가 대비 · 정규 가정</div></div>
+        <div class="stat-tile"><div class="k">방향 적중률</div>
+          <div class="v">${pctText(bt.hit_rate)}</div>
+          <div class="s">${bt.folds}폴드 · ${App.num(bt.points)}개 예측</div></div>
+        <div class="stat-tile"><div class="k">RMSE</div>
+          <div class="v">${App.num(bt.rmse, 0)}</div>
+          <div class="s">확률보행 ${App.num(bt.random_walk_rmse, 0)}</div></div>
+        <div class="stat-tile"><div class="k">확률보행 대비</div>
+          <div class="v" style="color:var(--text)">${esc(bt.vs_random_walk)}</div>
+          <div class="s">${beat ? '✓ 이겼습니다' : '✗ 이기지 못했습니다'}</div></div>`;
+      $('backtestVerdict').innerHTML = `<b>${esc(bt.verdict)}</b>`;
+    }
+
+    // ── 3단 시나리오 ──
+    $('scenarioRule').textContent = (data.scenario_meta && data.scenario_meta.rule) || '';
+    const items = data.scenarios || [];
+    if (!items.length) {
+      $('scenarioGrid').innerHTML =
+        `<div class="empty">${esc((data.scenario_meta || {}).reason || '시나리오를 만들지 못했습니다.')}</div>`;
+    } else {
+      // 화면 순서는 Bull → Base → Bear (위가 좋은 쪽)
+      const ordered = ['Bull', 'Base', 'Bear']
+        .map((name) => items.find((s) => s.name === name)).filter(Boolean);
+      $('scenarioGrid').innerHTML = ordered.map((s) => {
+        const cls = App.signClass(s.target_pct);
+        const arrow = s.target_pct > 0 ? '▲' : s.target_pct < 0 ? '▼' : '−';
+        return `<div class="scenario">
+          <div class="head">
+            <span class="nm">${esc(s.name)} · ${esc(s.label)}</span>
+            <span class="pc ${cls}">${arrow} ${App.signed(s.target_pct, 2)}%</span>
+          </div>
+          <div class="tg">${money(s.target, cur)}</div>
+          <div>
+            <div class="meter" role="img" aria-label="확률 ${pctText(s.prob)}"><i style="width:${(s.prob * 100).toFixed(1)}%"></i></div>
+            <div class="s" style="font-size:var(--t-xs);color:var(--muted);margin-top:4px">
+              확률 ${pctText(s.prob)} · 경계 근거: ${esc(s.boundary_reason)}</div>
+          </div>
+          <dl>
+            <dt>트리거 (이 시나리오로 간다는 신호)</dt><dd>${esc(s.trigger)}</dd>
+            <dt>무효화 (가설을 폐기하는 조건)</dt><dd>${esc(s.invalidation)}</dd>
+          </dl>
+        </div>`;
+      }).join('');
+    }
+
+    // ── caveats — 맨 앞이 백테스트 결론이라 강조한다 ──
+    $('caveatList').innerHTML = (data.caveats || [])
+      .map((c, i) => `<li class="${i === 0 ? 'lead' : ''}">${esc(c)}</li>`).join('');
+  }
+
+  // ==================================================
+  // 품질 배너
+  // ==================================================
+  function renderBanner(series) {
+    const q = series.quality || {};
+    const calendar = q.calendar_source === 'calendar'
+      ? '거래소 캘린더' : '근사 (주말 제외)';
+    const verdictText = { usable: '사용 가능', 'usable-with-caveat': '사용 가능 (주의)',
+                          insufficient: '자료 부족' }[series.verdict] || series.verdict;
+
+    $('qualityBanner').innerHTML = `
+      <b>${esc(series.name)}</b> <span class="muted">${esc(series.ticker)}</span>
+      <span class="sep">|</span> ${App.num(q.rows_clean)}행 · ${esc(q.date_first)} ~ ${esc(q.date_last)}
+      <span class="sep">|</span> 전처리 <b>${esc(verdictText)}</b> · 충실도 ${((q.coverage_ratio || 0) * 100).toFixed(0)}%
+      <span class="sep">|</span> 결측 기준 ${esc(calendar)}
+      <span class="sep">|</span> 출처 <b>${esc(series.source)}</b>
+      ${series.modelable ? '' : `<span class="sep">|</span> <b>모델링 건너뜀</b> — ${esc(series.skip_reason)}`}
+      ${(series.notes || []).length ? `<span class="sep">|</span> ${esc(series.notes[0])}` : ''}`;
+  }
+
+  // ==================================================
+  // 불러오기 · 보기 전환
+  // ==================================================
+  async function loadAll() {
+    const ticker = encodeURIComponent(state.ticker);
+    const y = state.years;
+    document.querySelectorAll('.card, .stat-row').forEach((el) => el.classList.add('loading'));
+
+    try {
+      cache.series = await App.get(`/api/ts/series?ticker=${ticker}&years=${y}`);
+      renderBanner(cache.series);
+    } catch (error) {
+      $('qualityBanner').innerHTML = `<b>불러오지 못했습니다</b> <span class="sep">|</span> ${esc(error.message)}`;
+      document.querySelectorAll('.card, .stat-row').forEach((el) => el.classList.remove('loading'));
+      return;
+    }
+
+    cache.diagnostics = cache.decompose = cache.forecast = null;
+    await renderView();
+    document.querySelectorAll('.card, .stat-row').forEach((el) => el.classList.remove('loading'));
+  }
+
+  async function renderView() {
+    const ticker = encodeURIComponent(state.ticker);
+    const y = state.years;
+    try {
+      if (state.view === 'diagnostics') {
+        cache.diagnostics = cache.diagnostics || await App.get(`/api/ts/diagnostics?ticker=${ticker}&years=${y}`);
+        renderDiagnostics(cache.diagnostics);
+      } else if (state.view === 'decompose') {
+        const period = $('periodSel').value;
+        const model = $('modelSel').value;
+        cache.decompose = await App.get(
+          `/api/ts/decompose?ticker=${ticker}&years=${y}&period=${period}&model=${model}`);
+        renderDecompose(cache.decompose);
+      } else {
+        const horizon = $('horizonSel').value;
+        cache.forecast = await App.get(
+          `/api/ts/forecast?ticker=${ticker}&years=${y}&horizon=${horizon}`);
+        renderForecast(cache.forecast);
+      }
+    } catch (error) {
+      const target = { diagnostics: 'orderBody', decompose: 'decomposeStack', forecast: 'forecastChart' }[state.view];
+      $(target).innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+    }
+  }
+
+  // ── 컨트롤 배선 ────────────────────────────
+  $('yearBar').innerHTML = YEARS.map((v) =>
+    `<button type="button" data-years="${v}" aria-pressed="${v === state.years}">${v}년</button>`).join('');
+  $('yearBar').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-years]');
+    if (!button) return;
+    state.years = Number(button.dataset.years);
+    $('yearBar').querySelectorAll('button').forEach((b) =>
+      b.setAttribute('aria-pressed', String(Number(b.dataset.years) === state.years)));
+    loadAll();
+  });
+
+  $('viewTabs').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-view]');
+    if (!button) return;
+    state.view = button.dataset.view;
+    $('viewTabs').querySelectorAll('button').forEach((b) =>
+      b.setAttribute('aria-selected', String(b.dataset.view === state.view)));
+    $('viewDiagnostics').classList.toggle('hidden', state.view !== 'diagnostics');
+    $('viewDecompose').classList.toggle('hidden', state.view !== 'decompose');
+    $('viewForecast').classList.toggle('hidden', state.view !== 'forecast');
+    renderView();
+  });
+
+  const run = () => { state.ticker = $('tickerInput').value.trim() || '005930'; loadAll(); };
+  $('goBtn').addEventListener('click', run);
+  $('reloadBtn').addEventListener('click', run);
+  $('tickerInput').addEventListener('keydown', (event) => { if (event.key === 'Enter') run(); });
+  $('periodSel').addEventListener('change', renderView);
+  $('modelSel').addEventListener('change', renderView);
+  $('horizonSel').addEventListener('change', renderView);
+
+  loadAll();
+})();
+</script>
+</body>
+</html>
