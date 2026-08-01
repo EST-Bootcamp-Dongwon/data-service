@@ -24,7 +24,13 @@
       "Bash(.venv/bin/python -c \"import json,sys; [print\\(p\\) for p in sorted\\(json.load\\(sys.stdin\\)['paths']\\)]\")",
       "Bash(grep -n \"fetch_krx\\\\.py\\\\|krx_cache\\\\.db\\\\|static/[a-z]*\\\\.\\\\\\(html\\\\|css\\\\|js\\\\\\)\\\\|\\\\`krx_data\\\\.py\\\\`\\\\|\\\\`krx_store\\\\.py\\\\`\\\\|\\\\`market_data\\\\.py\\\\`\\\\|\\\\`market_router\\\\.py\\\\`\\\\|\\\\`krx_router\\\\.py\\\\`\\\\|\\\\`trading_calendar\\\\.py\\\\`\" README.md)",
       "Bash(sed -i 's#python3 fetch_krx\\\\.py#python3 scripts/fetch_krx.py#g' app/routers/market_router.py app/routers/krx_router.py app/services/market_data.py main.py static/pages/krx.html)",
-      "Bash(sed -i 's#`fetch_krx\\\\.py` | 캐시를 채우는 수집 스크립트#`scripts/fetch_krx.py` | 캐시를 채우는 수집 스크립트#' main.py)"
+      "Bash(sed -i 's#`fetch_krx\\\\.py` | 캐시를 채우는 수집 스크립트#`scripts/fetch_krx.py` | 캐시를 채우는 수집 스크립트#' main.py)",
+      "Bash(git rm *)",
+      "Bash(curl -s -o /dev/null -w \"/health %{http_code}\\\\n\" http://127.0.0.1:8000/health)",
+      "Bash(curl -s -L -A \"Mozilla/5.0\" \"https://kosis.kr/serviceInfo/noticeList.do\" -o /tmp/claude-1000/-mnt-c-Users-kik32-workspace-EST-Camp-AI-Quant-projects-api-test/31dddb57-a5e1-47a2-bdf8-1c004fb46132/scratchpad/kosis_notice.html -w \"%{http_code}\\\\n\")",
+      "Bash(curl -s -L -A \"Mozilla/5.0\" \"https://kosis.kr/rss/notice_rss.jsp\" -w \"\\\\n[HTTP %{http_code} | type: %{content_type}]\\\\n\")",
+      "Bash(python3 scripts/fetch_kosis_rss.py)",
+      "Bash(curl -s -L -A \"Mozilla/5.0\" \"https://kosis.kr/serviceInfo/noticeDetail.do?boardIdx=2200\" -o detail_2200.html -w \"%{http_code} %{size_download}\\\\n\")"
     ],
     "additionalDirectories": [
       "/mnt/c/Users/kik32/workspace/EST-Camp-AI-Quant/projects/api-test/static/pages"
