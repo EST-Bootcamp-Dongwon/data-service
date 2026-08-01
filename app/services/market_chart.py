@@ -37,7 +37,7 @@ import numpy as np
 
 from app.clients import ecos_data, fred_data
 from app.core.trading_calendar import to_iso
-from app.repositories import krx_store, tmp_cache
+from app.repositories import krx_bundle, krx_store, tmp_cache
 
 KST = timezone(timedelta(hours=9))
 
@@ -309,8 +309,15 @@ def breadth(days: int = 120) -> Dict:
     "지수는 올랐는데 내 종목은 다 빠졌다" 가 그래서 생긴다.
     상승 종목 수는 시장 전체를 한 표씩 세므로 그 착시가 없다.
 
-    로컬 캐시(`krx_cache.db`)로만 만든다. 배포 환경에는 캐시가 없어 빈 결과가 오는데,
-    그건 오류가 아니라 **그 환경에서 못 만드는 것**이라 `available=False` 로 알린다.
+    데이터를 얻는 길이 둘이고, **더 긴 구간을 덮는 쪽**을 쓴다.
+
+    | | 어디서 | 덮는 구간 |
+    |---|---|---|
+    | 직접 세기 | 원본 캐시(`krx_cache.db`)의 전종목 × N일을 훑어 센다 | 로컬 282거래일 |
+    | 사전집계 | `krx_derived.json` 의 날짜별 집계를 그대로 읽는다 | 어디서나 282거래일 |
+
+    사전집계는 **날짜별 숫자 다섯 개**뿐이라 종목별 원본이 필요 없다. 그래서 13KB 로
+    배포 번들에 실린다. 예전에는 배포본에서 이 차트가 통째로 비어 있었다.
     """
     days = max(20, min(int(days), 300))
     cache_key = f"breadth_{days}"
@@ -321,18 +328,10 @@ def breadth(days: int = 120) -> Dict:
 
     try:
         rows = krx_store.window(days=days, columns=("bas_dd", "change_rate", "value", "close"))
-    except Exception as error:
-        return {"available": False, "reason": str(error), "days": days,
-                "dates": [], "rows": [], "fetched_at": _now_kst()}
+    except Exception:
+        rows = []                              # 원본을 못 읽으면 사전집계로 넘어간다
 
-    if not rows:
-        return {
-            "available": False,
-            "reason": "KRX 시세 캐시가 비어 있습니다. 로컬에서 `python3 scripts/fetch_krx.py` 로 채울 수 있습니다.",
-            "days": days, "dates": [], "rows": [], "fetched_at": _now_kst(),
-        }
-
-    # 날짜별로 모은다
+    # 원본에서 직접 센다 (날짜별로 모은다)
     buckets: Dict[str, Dict] = {}
     for row in rows:
         day = buckets.setdefault(row["bas_dd"], {"up": 0, "down": 0, "flat": 0, "value": 0})
@@ -340,11 +339,33 @@ def breadth(days: int = 120) -> Dict:
         day["up" if rate > 0 else "down" if rate < 0 else "flat"] += 1
         day["value"] += row.get("value") or 0
 
-    dates = sorted(buckets)
-    up = [buckets[d]["up"] for d in dates]
-    down = [buckets[d]["down"] for d in dates]
-    flat = [buckets[d]["flat"] for d in dates]
-    values = [buckets[d]["value"] for d in dates]
+    counted = [
+        {"date": to_iso(d), "up": b["up"], "down": b["down"], "flat": b["flat"],
+         "value": b["value"], "total": b["up"] + b["down"] + b["flat"]}
+        for d, b in sorted(buckets.items())
+    ]
+    precomputed = krx_bundle.breadth_series(days)
+
+    # 더 많은 거래일을 덮는 쪽을 쓴다. 배포본에서는 축약본 DB(150일)보다
+    # 사전집계(282일)가 길고, 로컬에서는 원본이 길거나 같다.
+    series_rows = counted if len(counted) >= len(precomputed) else precomputed
+    # 직접 셌더라도 **무엇을 세었는지**를 그대로 밝힌다.
+    # 축약본에서 센 것을 `cache` 라고 부르면 화면이 원본을 본 것으로 오해한다.
+    origin = krx_store.source() if series_rows is counted else "precomputed"
+
+    if not series_rows:
+        return {
+            "available": False,
+            "reason": "KRX 시세 자료가 없습니다. 로컬에서 `python3 scripts/fetch_krx.py` 로 채우거나 "
+                      "`python3 scripts/build_krx_bundle.py` 로 배포용 집계를 만들 수 있습니다.",
+            "days": days, "dates": [], "rows": [], "fetched_at": _now_kst(),
+        }
+
+    dates = [r["date"] for r in series_rows]
+    up = [r["up"] for r in series_rows]
+    down = [r["down"] for r in series_rows]
+    flat = [r["flat"] for r in series_rows]
+    values = [r["value"] for r in series_rows]
 
     # 상승 비율 — 등락한 종목 중 오른 비율 (보합은 분모에서 뺀다)
     ratios = [round(u / (u + d) * 100, 2) if (u + d) else 50.0 for u, d in zip(up, down)]
@@ -360,7 +381,7 @@ def breadth(days: int = 120) -> Dict:
     payload = {
         "available": True,
         "days": len(dates),
-        "dates": [to_iso(d) for d in dates],
+        "dates": dates,
         "up": up,
         "down": down,
         "flat": flat,
@@ -368,15 +389,19 @@ def breadth(days: int = 120) -> Dict:
         "advance_decline": advance_decline,
         "value": values,
         "latest": {
-            "date": to_iso(dates[-1]),
+            "date": dates[-1],
             "up": up[-1], "down": down[-1], "flat": flat[-1],
             "ratio": ratios[-1],
-            "total": up[-1] + down[-1] + flat[-1],
+            "total": series_rows[-1]["total"],
         },
         "note": "상승 종목 비율은 지수와 다르게 움직일 수 있습니다. "
-                "지수는 시가총액 가중이라 대형주에 끌리지만, 여기서는 종목마다 한 표씩 셉니다.",
+                "지수는 시가총액 가중이라 대형주에 끌리지만, 여기서는 종목마다 한 표씩 셉니다."
+                + {"cache": "",
+                   "bundle": " · 배포용 축약본(최근 150거래일)에서 셌습니다.",
+                   "precomputed": " · 사전집계(`krx_derived.json`)를 읽었습니다 — 배포본에는 원본 캐시가 없습니다.",
+                   "live": ""}.get(origin, ""),
         "fetched_at": _now_kst(),
-        "source": "cache",
+        "source": origin,
     }
     tmp_cache.write("market", cache_key, payload)
     return payload

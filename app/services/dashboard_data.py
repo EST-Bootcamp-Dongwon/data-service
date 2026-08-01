@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from app.clients import fred_data
+from app.core.trading_calendar import to_iso
 from app.repositories import krx_store, snapshot_store, tmp_cache
 
 KST = timezone(timedelta(hours=9))
@@ -308,21 +309,37 @@ def _data_status() -> List[dict]:
     """
     rows: List[dict] = []
 
-    # ── KRX 시세 캐시 ────────────────────────
+    # ── KRX 시세 ────────────────────────────
+    # 원본 캐시(로컬 123MB) · 배포용 축약본 · 라이브 조회 셋 중 어느 것으로 도는지 밝힌다.
+    # 예전에는 배포본에서 무조건 "캐시가 비어 있다" 경고만 떠서, 축약본으로 멀쩡히
+    # 돌고 있는데도 고장난 것처럼 보였다.
     try:
         stats = krx_store.stats()
-        has_cache = bool(stats.get("days"))
-        rows.append({
-            "key": "krx-cache", "label": "KRX 시세 캐시",
-            "ok": True,
-            "grade": "good" if has_cache else "warning",
-            "grade_text": "캐시 사용" if has_cache else "라이브 조회",
-            "detail": (f"{stats.get('first_date')} ~ {stats.get('last_date')} · "
-                       f"{stats.get('days')}거래일 · {stats.get('rows'):,}행")
-            if has_cache else "캐시가 비어 있어 요청할 때 KRX 를 직접 부릅니다.",
-        })
+        mode = stats.get("mode", "live")
+        span = (f"{to_iso(stats['first_date'])} ~ {to_iso(stats['last_date'])} · "
+                f"{stats.get('days')}거래일 · {stats.get('rows'):,}행"
+                if stats.get("days") else "")
+
+        if mode == "cache":
+            grade, grade_text = "good", "원본 캐시"
+            detail = f"{span} · {stats.get('db_size_mb')}MB"
+        elif mode == "bundle":
+            grade, grade_text = "good", "배포 번들"
+            calendar_days = stats.get("calendar_days") or 0
+            detail = (f"{span} · {stats.get('db_size_mb')}MB · "
+                      f"거래일 캘린더 {calendar_days}일 · 생성 {stats.get('generated_at')} — "
+                      "배포본에는 원본 캐시(123MB)를 올릴 수 없어 축약본을 씁니다. "
+                      "그보다 앞선 구간은 없습니다.")
+        else:
+            grade, grade_text = "warning", "라이브 조회"
+            detail = ("원본 캐시도 배포용 축약본도 없어 요청할 때 KRX 를 직접 부릅니다. "
+                      "하루치 전 종목은 되지만 여러 날치가 필요한 화면(`/quant` · 캔들)은 막힙니다. "
+                      "`python3 scripts/build_krx_bundle.py` 로 축약본을 만들 수 있습니다.")
+
+        rows.append({"key": "krx-cache", "label": "KRX 시세", "ok": True,
+                     "grade": grade, "grade_text": grade_text, "detail": detail})
     except Exception as error:
-        rows.append({"key": "krx-cache", "label": "KRX 시세 캐시", "ok": False,
+        rows.append({"key": "krx-cache", "label": "KRX 시세", "ok": False,
                      "grade": "critical", "grade_text": "확인 실패", "detail": str(error)})
 
     # ── 시장 스냅샷 ─────────────────────────

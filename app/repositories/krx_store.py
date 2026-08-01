@@ -28,6 +28,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from app.clients import krx_data as api                 # KRX 호출·정규화 (외부 통신 담당)
 from app.core.trading_calendar import today_kst, to_iso, trading_days   # 거래일 계산 (공통 유틸)
+from app.repositories import krx_bundle                 # 배포용 축약본 (원본이 없을 때의 대타)
 
 # 이 파일은 app/repositories/ 안에 있으므로 parents[2] 가 프로젝트 루트다.
 # (parents[0]=repositories, parents[1]=app, parents[2]=프로젝트 루트)
@@ -249,6 +250,34 @@ def sync(days: int = 250, workers: int = 6, end: Optional[str] = None,
 # ==================================================
 # 3. 조회 (DB → 서비스)
 # ==================================================
+# 원본 캐시가 비어 있으면 **배포용 축약본**(`krx_bundle`)에게 넘긴다.
+#
+# 왜 필요한가 — 배포 환경에는 123MB 원본을 올릴 수 없어 캐시가 늘 비어 있다.
+# 예전에는 그 상태에서 `/quant` 4종 · `/krx` 캔들 · `/market` 시장의 폭이 전부 503·빈 화면이었다.
+# 축약본(전종목 150거래일)을 읽기 전용으로 함께 실으면 같은 화면이 그대로 살아난다.
+#
+# 아래 조회 함수들은 전부 같은 규칙을 따른다.
+#   1) 원본 캐시에 있으면 그것을 쓴다 (로컬 — 가장 정확하고 구간도 길다)
+#   2) 없으면 축약본에게 묻는다 (배포본)
+#   3) 축약본도 없으면 빈 결과 — 부르는 쪽이 라이브 조회나 안내로 넘어간다
+def _cache_is_empty() -> bool:
+    """원본 캐시에 데이터가 한 줄이라도 있는지. (기본키 인덱스만 타므로 값싸다)"""
+    init_db()
+    with connect() as conn:
+        row = conn.execute("SELECT MAX(bas_dd) FROM daily_price").fetchone()
+    return not (row and row[0])
+
+
+def source() -> str:
+    """지금 어느 데이터를 보고 있는지 — `cache`(원본) · `bundle`(축약본) · `live`(둘 다 없음).
+
+    화면 배지와 리포트가 "무엇을 근거로 말하고 있는지" 를 밝힐 때 쓴다.
+    """
+    if not _cache_is_empty():
+        return "cache"
+    return "bundle" if krx_bundle.available() else "live"
+
+
 def _rows_to_dicts(rows: Iterable[sqlite3.Row]) -> List[Dict]:
     """sqlite3.Row 를 평범한 딕셔너리로 바꾸고 날짜 표기를 화면용으로 맞춘다."""
     out = []
@@ -261,21 +290,34 @@ def _rows_to_dicts(rows: Iterable[sqlite3.Row]) -> List[Dict]:
 
 
 def latest_date() -> Optional[str]:
-    """DB 에 데이터가 있는 가장 최근 거래일 (YYYYMMDD). 비어 있으면 None."""
+    """데이터가 있는 가장 최근 거래일 (YYYYMMDD). 원본·축약본 어디에도 없으면 None."""
     init_db()
     with connect() as conn:
         row = conn.execute("SELECT MAX(bas_dd) FROM daily_price").fetchone()
-    return row[0] if row and row[0] else None
+    if row and row[0]:
+        return row[0]
+    return krx_bundle.latest_date()
 
 
 def available_dates(limit: int = 400) -> List[str]:
-    """데이터가 있는 거래일 목록 (최근순). 화면의 날짜 선택 범위로 쓴다."""
+    """데이터가 있는 거래일 목록 (최근순). 화면의 날짜 선택 범위로 쓴다.
+
+    원본이 비면 **파생 캘린더**(`krx_derived.json`)를 먼저 본다. 축약본 DB 는 150거래일뿐이지만
+    파생 캘린더는 캐시 전 구간(282거래일)을 담고 있어, 전처리에 넘길 거래일 축이 더 길다.
+    """
     init_db()
     with connect() as conn:
         rows = conn.execute(
             "SELECT DISTINCT bas_dd FROM daily_price ORDER BY bas_dd DESC LIMIT ?", (limit,)
         ).fetchall()
-    return [r[0] for r in rows]
+    if rows:
+        return [r[0] for r in rows]
+
+    # 파생 캘린더는 `YYYY-MM-DD` 오름차순이라 이 함수의 계약(`YYYYMMDD` 최근순)에 맞춰 돌려준다
+    calendar = krx_bundle.trading_days(limit=limit)
+    if calendar:
+        return [d.replace("-", "") for d in reversed(calendar)]
+    return krx_bundle.available_dates(limit=limit)
 
 
 def snapshot(bas_dd: str, market: Optional[str] = None) -> List[Dict]:
@@ -287,7 +329,8 @@ def snapshot(bas_dd: str, market: Optional[str] = None) -> List[Dict]:
         sql += " AND market = ?"
         params.append(market)
     with connect() as conn:
-        return _rows_to_dicts(conn.execute(sql, params).fetchall())
+        rows = _rows_to_dicts(conn.execute(sql, params).fetchall())
+    return rows or _rows_to_dicts(krx_bundle.snapshot(bas_dd, market))
 
 
 # 라이브 조회 결과를 담아 두는 메모리 캐시. {(거래일, 시장): (저장시각, 행 목록)}
@@ -361,7 +404,10 @@ def series(code: str, days: int = 250, end: Optional[str] = None) -> List[Dict]:
 
     with connect() as conn:
         rows = conn.execute(sql, params).fetchall()
-    return list(reversed(_rows_to_dicts(rows)))
+    if rows:
+        return list(reversed(_rows_to_dicts(rows)))
+    # 축약본도 내림차순으로 주므로 같은 방식으로 뒤집는다 (차트는 왼쪽이 과거)
+    return list(reversed(_rows_to_dicts(krx_bundle.series(code, days=days, end=end))))
 
 
 def universe(bas_dd: Optional[str] = None, market: Optional[str] = None) -> List[Dict]:
@@ -413,6 +459,9 @@ def window(days: int = 60, columns: Sequence[str] = ("code", "bas_dd", "close", 
     종목별 묶음은 파이썬에서 하고, 날짜 오름차순으로 읽으므로 각 묶음도 자동으로 날짜순이 된다.
     """
     init_db()
+    if _cache_is_empty():
+        return krx_bundle.window(days=days, columns=columns)
+
     dates = available_dates(limit=days)
     if not dates:
         return []
@@ -427,7 +476,11 @@ def window(days: int = 60, columns: Sequence[str] = ("code", "bas_dd", "close", 
 
 
 def stats() -> Dict:
-    """캐시 현황 — 화면 배지와 README 확인용."""
+    """캐시 현황 — 화면 배지와 README 확인용.
+
+    원본이 비어 있으면 **축약본의 현황**을 대신 돌려주고 `mode` 로 어느 쪽인지 밝힌다.
+    화면이 "0거래일" 만 보고 고장으로 오해하지 않게 하기 위함이다.
+    """
     init_db()
     with connect() as conn:
         row = conn.execute(
@@ -435,10 +488,30 @@ def stats() -> Dict:
             " COUNT(DISTINCT code) AS codes, MIN(bas_dd) AS first, MAX(bas_dd) AS last"
             " FROM daily_price"
         ).fetchone()
-    size = DB_PATH.stat().st_size if DB_PATH.exists() else 0
+
+    if row["days"]:
+        size = DB_PATH.stat().st_size if DB_PATH.exists() else 0
+        return {
+            "rows": row["rows"], "days": row["days"], "codes": row["codes"],
+            "first_date": row["first"], "last_date": row["last"],
+            "db_path": DB_PATH.name,
+            "db_size_mb": round(size / 1024 / 1024, 1),
+            "mode": "cache",
+            "notes": [],
+        }
+
+    bundle = krx_bundle.stats()
+    calendar = krx_bundle.derived_stats()
     return {
-        "rows": row["rows"], "days": row["days"], "codes": row["codes"],
-        "first_date": row["first"], "last_date": row["last"],
-        "db_path": DB_PATH.name,
-        "db_size_mb": round(size / 1024 / 1024, 1),
+        "rows": bundle["rows"], "days": bundle["days"], "codes": bundle["codes"],
+        "first_date": bundle["first_date"], "last_date": bundle["last_date"],
+        "db_path": bundle["path"] if bundle["available"] else DB_PATH.name,
+        "db_size_mb": bundle["size_mb"],
+        "mode": "bundle" if bundle["available"] else "live",
+        "generated_at": bundle["generated_at"],
+        "calendar_days": calendar["days"],
+        "notes": bundle["notes"] if bundle["available"] else [
+            "원본 캐시도 배포용 축약본도 없습니다. "
+            "`python3 scripts/build_krx_bundle.py` 로 축약본을 만들 수 있습니다.",
+        ],
     }

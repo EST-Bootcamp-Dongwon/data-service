@@ -29,15 +29,27 @@ docs/
 !README.md
 
 # 로컬 데이터
-# ⚠️ 아래 네 파일은 **반드시 올라가야 한다** (명세서 §8 배포 포함 데이터).
+# ⚠️ 아래 여섯 파일은 **반드시 올라가야 한다** (명세서 §8 배포 포함 데이터).
 #      data/stock_master.json         국내 티커 판별 · 자동완성
 #      data/us_master.json            미국 티커 판별 · S&P 500 표시
 #      data/corp_code.json            DART 고유번호 매핑 — 없으면 재무·공시 전부 막힌다
 #      data/market_snapshot.json.gz   스크리닝용 사전계산 (3,266종목)
-#    합쳐서 1.4MB 수준이라 번들에 부담이 없다. 아래는 그 넷을 뺀 나머지만 제외한다.
+#      data/krx_derived.json          거래일 캘린더 · 시장의 폭 (13KB) — M3 전처리와 `/market`
+#      data/krx_bundle.db             전종목 150거래일 축약본 (30MB) — `/quant`·`/krx` 캔들
+#
+#    앞의 넷은 git 에도 있지만 `krx_bundle.db` 는 **git 에는 없고 여기만 있다**
+#    (데이터 원본이라 커밋하지 않는다 — `.gitignore` 참고).
+#    `vercel deploy` 는 git 이 아니라 로컬 폴더를 그대로 올리므로 이렇게 갈라 둘 수 있다.
+#    ⚠️ 그래서 **배포 전에 `python3 scripts/build_krx_bundle.py` 를 돌려야** 한다.
+#       빼먹으면 배포본에서 `/quant` 4종과 `/krx` 캔들이 다시 죽는다.
+#
+#    번들 DB(30MB)를 왜 올리나 — 원본 캐시는 123MB 라 못 올리고, 그렇다고 빼면
+#    전종목 × 여러 날치가 필요한 화면이 통째로 빈다. 파이썬 함수 한도는 500MB 다.
 data/krx_cache.db
 data/krx_cache.db-wal
 data/krx_cache.db-shm
+data/krx_bundle.db-wal
+data/krx_bundle.db-shm
 data/kosis_rss/
 data/yf/
 

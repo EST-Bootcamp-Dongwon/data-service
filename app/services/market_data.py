@@ -444,7 +444,11 @@ def monte_carlo_frontier(samples: int = DEFAULT_FRONTIER_SAMPLES,
         "frontier": frontier,
         "max_sharpe": max(portfolios, key=lambda p: p["sharpe"]),
         "min_variance": min(portfolios, key=lambda p: p["volatility"]),
-        "note": None,
+        # 창을 요청한 만큼 못 채웠으면 그대로 밝힌다. 배포본은 축약본(150거래일)을 보므로
+        # 250일을 물어도 149개 수익률로 계산된다 — 변동성 추정이 그만큼 거칠어진다.
+        "note": (f"요청한 {window}거래일 중 {n_obs + 1}일치만 있어 일간수익률 {n_obs}개로 계산했습니다. "
+                 f"자료 출처: {store.source()}. 관측이 짧으면 변동성·상관 추정이 거칠어집니다."
+                 if n_obs + 1 < window * 0.9 else None),
     }
     _frontier_cache[key] = result
     return result
