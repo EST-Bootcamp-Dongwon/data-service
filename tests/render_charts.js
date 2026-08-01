@@ -125,16 +125,27 @@ async function runPage(page) {
 
   // ── 요청은 진짜 서버로 넘긴다 ──
   let inflight = 0;
+  let lastActivity = Date.now();
   window.fetch = async (url, init) => {
     inflight += 1;
+    lastActivity = Date.now();
+    const target = new URL(String(url), BASE);
     try {
-      return await fetch(new URL(String(url), BASE), init);
+      return await fetch(target, init);
+    } catch (error) {
+      // 요청 자체가 실패하면(네트워크·타임아웃) 페이지는 조용히 빈 화면이 된다. 여기서 밝힌다.
+      windowErrors.push(`요청 실패 ${target.pathname}${target.search} — ${error.message}`);
+      throw error;
     } finally {
       inflight -= 1;
+      lastActivity = Date.now();
     }
   };
 
   window.addEventListener('error', (e) => windowErrors.push(e.message));
+  window.addEventListener('unhandledrejection', (e) => {
+    windowErrors.push(`처리 안 된 예외 — ${(e.reason && e.reason.message) || e.reason}`);
+  });
 
   // ── ApexCharts 로드 + 예외를 잡아 두는 껍데기 ──
   window.eval(apexSource);
@@ -182,11 +193,18 @@ async function runPage(page) {
     return { failures, drawn, windowErrors };
   }
 
-  /** 요청이 다 끝날 때까지 기다린다 (야후는 느리다). */
-  async function settle(maxMs = 30000) {
+  /** 요청이 다 끝나고 **조용해질 때까지** 기다린다.
+   *
+   * 단순히 `inflight === 0` 만 보면 안 된다 — 요청과 요청 사이 빈틈에 걸려
+   * 아직 시작도 안 한 화면을 "다 됐다" 로 판정한다 (배포본 콜드스타트에서 실제로 겪었다).
+   * 그래서 **마지막 요청 이후 조용한 시간**까지 함께 본다. */
+  async function settle(quietMs = 900, maxMs = 45000) {
     const started = Date.now();
-    await sleep(120);
-    while (inflight > 0 && Date.now() - started < maxMs) await sleep(120);
+    await sleep(150);
+    while (Date.now() - started < maxMs) {
+      if (inflight === 0 && Date.now() - lastActivity > quietMs) break;
+      await sleep(150);
+    }
     await sleep(250);                                  // 응답 처리 · 렌더까지 조금 더
   }
 
@@ -208,7 +226,9 @@ async function runPage(page) {
     if (verdict.note) notes.push(verdict.note);
   }
 
-  dom.window.close();
+  // 창은 일부러 닫지 않는다. 배포본처럼 느린 서버에서는 settle 뒤에도 응답이 늦게 오는데,
+  // 그때 창이 닫혀 있으면 페이지 스크립트가 `document` 를 잃고 통째로 죽는다.
+  // 검사가 끝나면 process.exit 으로 한 번에 정리한다.
   return { failures, drawn, windowErrors, notes };
 }
 
