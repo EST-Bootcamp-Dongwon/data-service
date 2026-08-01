@@ -37,14 +37,16 @@ from app.routers import page_router                             # 화면 (HTML)
 # 자동완성 색인 — 서버가 뜰 때 메모리에 올려 둔다 (아래 lifespan 참고)
 from app.services import search_service
 
-# 야후 파이낸스를 쓰는 두 기능(야후 시세·종목 통합 조회)은 외부 라이브러리(yfinance)에 기댄다.
+# 야후 파이낸스를 쓰는 세 기능(야후 시세·종목 통합 조회·시장 상세 차트)은
+# 외부 라이브러리(yfinance)에 기댄다.
 # 설치돼 있지 않아도 나머지 화면·API 는 그대로 뜨도록 import 실패를 흡수한다.
 # (설치: pip install yfinance matplotlib)
 try:
     from app.routers.yf_router import router as yf_router       # 야후 파이낸스 시세 (/api/yf/...)
     from app.routers.stock_router import router as stock_router # 종목 통합 조회   (/api/stock/...)
+    from app.routers.chart_router import router as chart_router # 시장 상세 차트   (/api/chart/...)
 except ModuleNotFoundError as error:
-    yf_router = stock_router = None
+    yf_router = stock_router = chart_router = None
     print(f"[안내] 야후 파이낸스 기능을 끕니다 — {error}. 쓰려면 `pip install yfinance` 하세요.")
 
 
@@ -125,13 +127,15 @@ app.include_router(kosis_router)
 app.include_router(fred_router)
 app.include_router(search_router)
 app.include_router(dashboard_router)
-if yf_router is not None:                # yfinance 가 없으면 이 두 라우터만 빠진다
+if yf_router is not None:                # yfinance 가 없으면 이 세 라우터만 빠진다
     app.include_router(yf_router)
     app.include_router(stock_router)
+    app.include_router(chart_router)
 app.include_router(market_router)
 
 # 화면 라우트. API 를 못 붙인 화면은 빼고 등록한다 (열어 봐야 조회가 전부 실패한다).
-app.include_router(page_router.build_router(exclude=() if yf_router else ("/yf", "/stock")))
+app.include_router(page_router.build_router(
+    exclude=() if yf_router else ("/yf", "/stock", "/market")))
 
 
 # --------------------------------------------------

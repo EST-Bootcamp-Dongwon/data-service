@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>시장 상세 — G.I.C Lab</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/assets/app.css" />
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts@4/dist/apexcharts.min.js"></script>
+  <style>
+    /* 이 화면에서만 쓰는 규칙 — 공통 부품은 app.css 에 있다 */
+
+    /* 차트를 크게 쓰는 것이 이 화면의 존재 이유다.
+       대시보드 카드는 작아서 모양이 안 보이고 기간도 못 바꾼다. 여기서는 반대로 간다. */
+    .chart-main { height: 460px; }
+    .chart-sub { height: 150px; }
+    .chart-wide { height: 380px; }
+
+    /* 기간 토글 — 단기부터 장기까지 한 줄에 둔다 */
+    .period-bar { display: flex; flex-wrap: wrap; gap: 2px; background: var(--surface-3); padding: 3px; border-radius: var(--radius-sm); }
+    .period-bar button {
+      border: 0; background: transparent; color: var(--muted); cursor: pointer;
+      padding: 5px 11px; border-radius: calc(var(--radius-sm) - 2px);
+      font-size: var(--t-sm); font-weight: 600; font-family: inherit;
+    }
+    .period-bar button:hover { color: var(--text); }
+    .period-bar button[aria-pressed="true"] { background: var(--surface); color: var(--accent); box-shadow: 0 1px 2px rgb(0 0 0 / .06); }
+
+    /* 보기 전환 탭 (캔들 · 겹쳐보기 · 시장의 폭 · 비교) */
+    .view-tabs { display: flex; gap: var(--sp-1); border-bottom: 1px solid var(--border); margin-bottom: var(--sp-4); flex-wrap: wrap; }
+    .view-tabs button {
+      border: 0; border-bottom: 2px solid transparent; background: transparent;
+      color: var(--muted); cursor: pointer; padding: 9px 14px;
+      font-size: var(--t-md); font-weight: 600; font-family: inherit;
+    }
+    .view-tabs button:hover { color: var(--text); }
+    .view-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+
+    /* 구간 통계 타일 — 값은 크게, 라벨은 작게 */
+    .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-4); }
+    .stat-tile { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; }
+    .stat-tile .k { font-size: var(--t-xs); color: var(--muted); margin-bottom: 2px; }
+    .stat-tile .v { font-size: var(--t-xl); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+    /* 겹쳐볼 지표 고르기 — 체크박스를 칩처럼 */
+    .chip-grid { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+    .chip-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+      border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px;
+      font-size: var(--t-sm); background: var(--surface-2); user-select: none; }
+    .chip-check:hover { border-color: var(--accent); }
+    .chip-check input { accent-color: var(--accent); margin: 0; }
+    .chip-check[data-on="1"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+    .chip-check.disabled { opacity: .45; cursor: not-allowed; }
+
+    /* 상관계수 표 */
+    .corr-table { width: 100%; border-collapse: collapse; font-size: var(--t-md); }
+    .corr-table th, .corr-table td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--border-soft); }
+    .corr-table td.n { text-align: right; font-variant-numeric: tabular-nums; }
+    .corr-table th { font-size: var(--t-sm); color: var(--muted); font-weight: 600; }
+    /* 계열 정체성은 옆의 점이 맡는다 — 글자에 계열색을 칠하지 않는다 (U3 규칙) */
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label { font-size: var(--t-xs); color: var(--muted); font-weight: 600; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: flex-end; margin-bottom: var(--sp-4); }
+    .note-line { font-size: var(--t-xs); color: var(--muted); margin: var(--sp-2) 0 0; line-height: 1.6; }
+    .empty { border: 1px dashed var(--border); border-radius: var(--radius); padding: var(--sp-5); text-align: center; color: var(--muted); font-size: var(--t-md); }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page-head">
+    <div>
+      <h1>시장 상세</h1>
+      <p>기간을 바꿔 가며 <b>큰 차트</b>로 본다. 대시보드 카드가 못 보여 주는 것을 여기서 본다.</p>
+    </div>
+    <div class="pillbar">
+      <button class="ghost" id="reloadBtn" type="button">다시 불러오기</button>
+    </div>
+  </header>
+
+  <!-- ── 대상 · 기간 고르기 ─────────────────── -->
+  <div class="toolbar">
+    <div class="field">
+      <label for="targetSel">대상</label>
+      <select id="targetSel"></select>
+    </div>
+    <div class="field">
+      <label for="tickerInput">직접 입력</label>
+      <input id="tickerInput" type="text" placeholder="005930 · AAPL" style="width: 150px" />
+    </div>
+    <div class="field">
+      <label>기간</label>
+      <div class="period-bar" id="periodBar"></div>
+    </div>
+  </div>
+
+  <!-- ── 보기 전환 ─────────────────────────── -->
+  <div class="view-tabs" id="viewTabs" role="tablist">
+    <button role="tab" data-view="candle" aria-selected="true">캔들 · 이동평균</button>
+    <button role="tab" data-view="overlay" aria-selected="false">거시지표 겹쳐보기</button>
+    <button role="tab" data-view="breadth" aria-selected="false">시장의 폭</button>
+    <button role="tab" data-view="compare" aria-selected="false">종목 비교</button>
+  </div>
+
+  <!-- ── 1. 캔들 ──────────────────────────── -->
+  <section id="viewCandle">
+    <div class="stat-row" id="candleStats"></div>
+    <section class="card">
+      <h2 id="candleTitle">가격</h2>
+      <div class="chart-main" id="candleChart"></div>
+    </section>
+    <section class="card">
+      <h2>거래량</h2>
+      <div class="chart-sub" id="volumeChart"></div>
+    </section>
+  </section>
+
+  <!-- ── 2. 겹쳐보기 ──────────────────────── -->
+  <section id="viewOverlay" class="hidden">
+    <section class="card">
+      <h2>겹쳐 볼 지표 <span class="hint" id="overlayCount"></span></h2>
+      <div class="chip-grid" id="overlayChips"></div>
+    </section>
+    <section class="card">
+      <h2>가격 + 거시지표</h2>
+      <div class="chart-wide" id="overlayChart"></div>
+      <p class="note-line" id="overlayNote"></p>
+    </section>
+    <section class="card">
+      <h2>상관계수 <span class="hint">일간 변화율 기준</span></h2>
+      <div id="corrBox"></div>
+    </section>
+  </section>
+
+  <!-- ── 3. 시장의 폭 ─────────────────────── -->
+  <section id="viewBreadth" class="hidden">
+    <div class="stat-row" id="breadthStats"></div>
+    <section class="card">
+      <h2>상승 · 하락 종목 수</h2>
+      <div class="chart-wide" id="breadthChart"></div>
+    </section>
+    <section class="card">
+      <h2>누적 등락선 (A/D Line)</h2>
+      <div class="chart-sub" id="adChart"></div>
+      <p class="note-line" id="breadthNote"></p>
+    </section>
+  </section>
+
+  <!-- ── 4. 종목 비교 ─────────────────────── -->
+  <section id="viewCompare" class="hidden">
+    <section class="card">
+      <h2>비교할 종목</h2>
+      <div class="toolbar" style="margin-bottom: 0">
+        <div class="field" style="flex: 1; min-width: 260px">
+          <label for="compareInput">티커를 쉼표로 구분해 넣으세요</label>
+          <input id="compareInput" type="text" value="005930.KS,000660.KS,^KS11" />
+        </div>
+        <button class="primary" id="compareBtn" type="button">비교</button>
+      </div>
+    </section>
+    <section class="card">
+      <h2>100 기준 지수화 비교</h2>
+      <div class="chart-wide" id="compareChart"></div>
+      <p class="note-line" id="compareNote"></p>
+    </section>
+  </section>
+</div>
+
+<script src="/static/assets/app.js"></script>
+<script src="/static/assets/shell.js"></script>
+<script>
+/* 시장 상세 화면
+ *
+ * 보기 네 개가 **소스가 다르다.** 하나를 열 때 나머지를 부르지 않는다 —
+ * 전부 미리 받으면 첫 화면이 느려지고, 안 볼 차트 때문에 야후를 두드리게 된다.
+ * 그래서 탭을 누르는 순간 그 보기만 받고, 받은 것은 다시 부르지 않는다(`loaded`).
+ */
+(() => {
+  'use strict';
+  Shell.render('market');
+
+  const charts = {};              // ApexCharts 인스턴스 (다시 그릴 때 파괴용)
+  const loaded = {};              // 이미 받아 그린 보기 — 탭을 오갈 때 다시 부르지 않는다
+  let meta = null;                // /presets 응답 (선택 목록)
+  let view = 'candle';
+  let period = '1y';
+  let ticker = '^KS11';
+  const chosen = new Set();       // 겹쳐 볼 지표 id
+
+  const $ = (id) => document.getElementById(id);
+
+  // ── 공통 차트 옵션 ─────────────────────
+  // 축·격자는 U3 규칙을 따른다. 데이터만 진하고 나머지는 뒤로 물러난다.
+  function axes(extra = {}) {
+    return {
+      xaxis: {
+        type: 'category',
+        labels: { rotate: 0, hideOverlappingLabels: true, style: { colors: App.color('ink-muted'), fontSize: '11px' } },
+        axisBorder: { color: App.color('axis') },
+        axisTicks: { color: App.color('axis') },
+        tooltip: { enabled: false },
+        ...(extra.xaxis || {}),
+      },
+      yaxis: {
+        labels: { style: { colors: App.color('ink-muted'), fontSize: '11px' } },
+        ...(extra.yaxis || {}),
+      },
+      grid: { borderColor: App.color('grid'), strokeDashArray: 0, padding: { left: 6, right: 6 } },
+      legend: { position: 'top', horizontalAlign: 'left', fontSize: '12px', markers: { size: 6 } },
+      dataLabels: { enabled: false },
+    };
+  }
+
+  /** 점이 많으면 x축 라벨이 겹친다. 대략 8개만 남기고 나머지는 빈 문자열로 만든다. */
+  function thinLabels(dates) {
+    const step = Math.max(1, Math.ceil(dates.length / 8));
+    return dates.map((d, i) => (i % step === 0 || i === dates.length - 1 ? d : ''));
+  }
+
+  function tile(label, value, cls = '') {
+    return `<div class="stat-tile"><div class="k">${label}</div><div class="v ${cls}">${value}</div></div>`;
+  }
+
+  // ── 1. 캔들 ────────────────────────────
+  async function loadCandle() {
+    $('candleStats').innerHTML = '<div class="stat-tile"><div class="k">불러오는 중…</div></div>';
+    let data;
+    try {
+      data = await App.get(`/api/chart/series?ticker=${encodeURIComponent(ticker)}&period=${period}`);
+    } catch (error) {
+      $('candleStats').innerHTML = `<div class="stat-tile"><div class="k">실패</div><div class="v">${error.message}</div></div>`;
+      return;
+    }
+
+    const s = data.stats || {};
+    $('candleTitle').textContent = `${data.label} · ${data.period_label}`;
+    $('candleStats').innerHTML = [
+      tile('종가', App.num(s.last, 2)),
+      tile('구간 수익률', `${App.signed(s.change_rate, 2)}%`, App.signClass(s.change_rate)),
+      tile('최고', App.num(s.max, 2)),
+      tile('최저', App.num(s.min, 2)),
+      tile('연율 변동성', s.volatility_annual != null ? `${App.num(s.volatility_annual, 1)}%` : '-'),
+      tile('최대 낙폭', s.mdd != null ? `${App.num(s.mdd, 1)}%` : '-', s.mdd != null ? 'down' : ''),
+    ].join('');
+
+    const labels = thinLabels(data.dates);
+
+    // 캔들 + 이동평균을 한 차트에. 이동평균은 선으로 얹는다.
+    const maSeries = (data.moving_averages || []).map((m) => ({
+      name: m.label, type: 'line', data: m.values,
+    }));
+
+    App.draw(charts, 'candleChart', {
+      chart: { type: 'candlestick', height: '100%', toolbar: { show: true, tools: { download: false } }, animations: { enabled: false } },
+      series: [{ name: data.label, type: 'candlestick', data: data.candles.map((c, i) => ({ x: labels[i] || data.dates[i], y: c })) }, ...maSeries],
+      // 상승 빨강 · 하락 파랑 (국내 증시 관행 — U3 결정)
+      plotOptions: { candlestick: { colors: { upward: App.color('up'), downward: App.color('down') } } },
+      stroke: { width: [1, 2, 2, 2], curve: 'straight' },
+      colors: [App.color('flat'), ...App.series(3)],
+      ...axes({ xaxis: { categories: labels } }),
+    });
+
+    App.draw(charts, 'volumeChart', {
+      chart: { type: 'bar', height: '100%', toolbar: { show: false }, animations: { enabled: false } },
+      series: [{ name: '거래량', data: data.volumes }],
+      colors: [App.color('c1')],
+      plotOptions: { bar: { columnWidth: '70%' } },
+      ...axes({ xaxis: { categories: labels }, yaxis: { labels: { formatter: (v) => App.num(Math.round(v)) } } }),
+      legend: { show: false },
+    });
+  }
+
+  // ── 2. 겹쳐보기 ────────────────────────
+  function renderChips() {
+    const atLimit = chosen.size >= (meta.max_overlays || 4);
+    $('overlayCount').textContent = `최대 ${meta.max_overlays}개 · 지금 ${chosen.size}개`;
+    $('overlayChips').innerHTML = meta.overlays.map((o) => {
+      const on = chosen.has(o.id);
+      const blocked = !on && atLimit;
+      return `<label class="chip-check ${blocked ? 'disabled' : ''}" data-on="${on ? 1 : 0}">
+        <input type="checkbox" value="${o.id}" ${on ? 'checked' : ''} ${blocked ? 'disabled' : ''} />
+        ${o.label} <span class="hint">${o.source}</span>
+      </label>`;
+    }).join('');
+
+    $('overlayChips').querySelectorAll('input').forEach((box) => {
+      box.addEventListener('change', () => {
+        if (box.checked) chosen.add(box.value); else chosen.delete(box.value);
+        renderChips();
+        loadOverlay();
+      });
+    });
+  }
+
+  async function loadOverlay() {
+    if (!chosen.size) {
+      $('overlayChart').innerHTML = '<div class="empty">위에서 겹쳐 볼 지표를 골라 주세요.</div>';
+      $('corrBox').innerHTML = '';
+      $('overlayNote').textContent = '';
+      return;
+    }
+    const ids = [...chosen].join(',');
+    let data;
+    try {
+      data = await App.get(`/api/chart/overlay?ticker=${encodeURIComponent(ticker)}&period=${period}&ids=${encodeURIComponent(ids)}`);
+    } catch (error) {
+      $('overlayChart').innerHTML = `<div class="empty">${error.message}</div>`;
+      return;
+    }
+
+    const labels = thinLabels(data.dates);
+    const colors = App.series(data.lines.length);
+
+    App.draw(charts, 'overlayChart', {
+      chart: { type: 'line', height: '100%', toolbar: { show: true, tools: { download: false } }, animations: { enabled: false } },
+      series: data.lines.map((l) => ({ name: l.label, data: l.indexed })),
+      colors,
+      stroke: { width: 2, curve: 'straight' },
+      ...axes({
+        xaxis: { categories: labels },
+        // 모든 계열이 100 기준이라 축 하나로 충분하다 (이중축 금지 — U3 규칙)
+        yaxis: { labels: { formatter: (v) => App.num(v, 0) }, title: { text: '첫날 = 100', style: { color: App.color('ink-muted'), fontSize: '11px', fontWeight: 500 } } },
+      }),
+      tooltip: {
+        shared: true,
+        // 툴팁에는 지수가 아니라 **원래 값**을 보여 준다. 지수는 비교용이고 실제 수치는 따로 필요하다.
+        y: {
+          formatter: (value, { seriesIndex, dataPointIndex }) => {
+            const line = data.lines[seriesIndex];
+            const raw = line && line.raw ? line.raw[dataPointIndex] : null;
+            if (raw == null) return App.num(value, 1);
+            return `${App.num(raw, 2)}${line.raw_unit || ''} (지수 ${App.num(value, 1)})`;
+          },
+        },
+      },
+    });
+
+    $('overlayNote').textContent = data.note;
+
+    // 주가(기준선)를 뺀 나머지를 전부 싣는다. 상관을 못 낸 지표도 **사유와 함께** 보여 준다 —
+    // 표에서 조용히 빠지면 "왜 이것만 없지?" 가 되고, 값이 0 인 것과도 구분되지 않는다.
+    const rows = data.lines.filter((l) => !l.id.startsWith('price:'));
+    $('corrBox').innerHTML = rows.length
+      ? `<table class="corr-table">
+          <thead><tr><th>지표</th><th>출처</th><th style="text-align:right">상관계수</th><th>해석</th></tr></thead>
+          <tbody>${rows.map((l) => {
+            const idx = data.lines.indexOf(l);
+            const c = l.correlation;
+            if (c == null) {
+              return `<tr>
+                <td><i class="dot" style="background:${colors[idx]}"></i>${l.label}</td>
+                <td class="hint">${l.source}</td>
+                <td class="n hint">—</td>
+                <td class="hint">${l.correlation_note || '잴 수 없음'}</td>
+              </tr>`;
+            }
+            const abs = Math.abs(c);
+            const strength = abs >= 0.5 ? '뚜렷' : abs >= 0.3 ? '약함' : '거의 없음';
+            return `<tr>
+              <td><i class="dot" style="background:${colors[idx]}"></i>${l.label}</td>
+              <td class="hint">${l.source}</td>
+              <td class="n ${App.signClass(c)}">${App.signed(c, 3)}</td>
+              <td class="hint">${c > 0 ? '같은 방향' : '반대 방향'} · ${strength}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>`
+      : '<div class="empty">겹쳐 볼 지표를 골라 주세요.</div>';
+
+    if (data.errors && data.errors.length) {
+      $('corrBox').insertAdjacentHTML('beforeend',
+        `<p class="note-line">불러오지 못한 지표: ${data.errors.map((e) => `${e.label} (${e.error})`).join(' · ')}</p>`);
+    }
+  }
+
+  // ── 3. 시장의 폭 ───────────────────────
+  async function loadBreadth() {
+    let data;
+    try {
+      data = await App.get('/api/chart/breadth?days=120');
+    } catch (error) {
+      $('breadthChart').innerHTML = `<div class="empty">${error.message}</div>`;
+      return;
+    }
+
+    if (!data.available) {
+      $('breadthStats').innerHTML = '';
+      $('breadthChart').innerHTML = `<div class="empty">${data.reason || '자료가 없습니다.'}</div>`;
+      $('adChart').innerHTML = '';
+      $('breadthNote').textContent = '';
+      return;
+    }
+
+    const lt = data.latest;
+    $('breadthStats').innerHTML = [
+      tile('기준일', lt.date),
+      tile('상승', App.num(lt.up), 'up'),
+      tile('하락', App.num(lt.down), 'down'),
+      tile('보합', App.num(lt.flat)),
+      tile('상승 비율', `${App.num(lt.ratio, 1)}%`, lt.ratio >= 50 ? 'up' : 'down'),
+    ].join('');
+
+    const labels = thinLabels(data.dates);
+
+    App.draw(charts, 'breadthChart', {
+      chart: { type: 'bar', height: '100%', stacked: true, toolbar: { show: false }, animations: { enabled: false } },
+      series: [
+        { name: '상승', data: data.up },
+        { name: '하락', data: data.down.map((v) => -v) },   // 아래로 그려 0선을 기준으로 갈라 본다
+      ],
+      colors: [App.color('up'), App.color('down')],
+      plotOptions: { bar: { columnWidth: '85%' } },
+      ...axes({
+        xaxis: { categories: labels },
+        yaxis: { labels: { formatter: (v) => App.num(Math.abs(Math.round(v))) } },
+      }),
+      tooltip: { shared: true, y: { formatter: (v) => `${App.num(Math.abs(v))}종목` } },
+    });
+
+    App.draw(charts, 'adChart', {
+      chart: { type: 'area', height: '100%', toolbar: { show: false }, animations: { enabled: false } },
+      series: [{ name: '누적 등락선', data: data.advance_decline }],
+      colors: [App.color('c7')],
+      stroke: { width: 2, curve: 'straight' },
+      fill: { type: 'gradient', gradient: { opacityFrom: .25, opacityTo: 0 } },
+      ...axes({ xaxis: { categories: labels }, yaxis: { labels: { formatter: (v) => App.num(Math.round(v)) } } }),
+      legend: { show: false },
+    });
+
+    $('breadthNote').textContent = data.note;
+  }
+
+  // ── 4. 종목 비교 ───────────────────────
+  async function loadCompare() {
+    const tickers = $('compareInput').value.trim();
+    if (!tickers) return;
+    let data;
+    try {
+      data = await App.get(`/api/chart/compare?tickers=${encodeURIComponent(tickers)}&period=${period}`);
+    } catch (error) {
+      $('compareChart').innerHTML = `<div class="empty">${error.message}</div>`;
+      return;
+    }
+
+    if (!data.lines.length) {
+      $('compareChart').innerHTML = '<div class="empty">그릴 수 있는 종목이 없습니다.</div>';
+      $('compareNote').textContent = (data.errors || []).map((e) => `${e.ticker}: ${e.error}`).join(' · ');
+      return;
+    }
+
+    const labels = thinLabels(data.dates);
+    App.draw(charts, 'compareChart', {
+      chart: { type: 'line', height: '100%', toolbar: { show: true, tools: { download: false } }, animations: { enabled: false } },
+      series: data.lines.map((l) => ({ name: l.label, data: l.indexed })),
+      colors: App.series(data.lines.length),
+      stroke: { width: 2, curve: 'straight' },
+      ...axes({
+        xaxis: { categories: labels },
+        yaxis: { labels: { formatter: (v) => App.num(v, 0) }, title: { text: '첫날 = 100', style: { color: App.color('ink-muted'), fontSize: '11px', fontWeight: 500 } } },
+      }),
+      tooltip: {
+        shared: true,
+        y: {
+          formatter: (value, { seriesIndex, dataPointIndex }) => {
+            const raw = data.lines[seriesIndex]?.raw?.[dataPointIndex];
+            const pct = value != null ? `${App.signed(value - 100, 1)}%` : '';
+            return raw != null ? `${App.num(raw, 2)} (${pct})` : App.num(value, 1);
+          },
+        },
+      },
+    });
+
+    const errors = (data.errors || []).map((e) => `${e.ticker}: ${e.error}`).join(' · ');
+    $('compareNote').textContent = data.note + (errors ? ` — 실패: ${errors}` : '');
+  }
+
+  // ── 보기 전환 ──────────────────────────
+  const LOADERS = { candle: loadCandle, overlay: loadOverlay, breadth: loadBreadth, compare: loadCompare };
+
+  function showView(next) {
+    view = next;
+    $('viewTabs').querySelectorAll('button').forEach((b) => {
+      b.setAttribute('aria-selected', b.dataset.view === next ? 'true' : 'false');
+    });
+    ['candle', 'overlay', 'breadth', 'compare'].forEach((key) => {
+      const section = $(`view${key[0].toUpperCase()}${key.slice(1)}`);
+      section.classList.toggle('hidden', key !== next);
+    });
+
+    // 처음 여는 보기만 받는다. 이미 그린 것은 그대로 둔다.
+    if (!loaded[next]) {
+      loaded[next] = true;
+      LOADERS[next]();
+    }
+  }
+
+  /** 대상·기간이 바뀌면 지금 보기만 다시 받고, 나머지는 '다시 받아야 함'으로 표시만 해 둔다. */
+  function invalidate() {
+    Object.keys(loaded).forEach((k) => { loaded[k] = false; });
+    loaded[view] = true;
+    LOADERS[view]();
+  }
+
+  // ── 시작 ───────────────────────────────
+  async function init() {
+    meta = await App.get('/api/chart/presets');
+
+    // 대상 선택 상자 — 묶음별로 그룹을 만든다
+    const groups = {};
+    meta.presets.forEach((p) => { (groups[p.group] ||= []).push(p); });
+    $('targetSel').innerHTML = Object.entries(groups).map(([name, items]) =>
+      `<optgroup label="${name}">${items.map((p) =>
+        `<option value="${p.key}" ${p.key === ticker ? 'selected' : ''}>${p.label}</option>`).join('')}</optgroup>`
+    ).join('');
+
+    // 기간 토글
+    $('periodBar').innerHTML = meta.periods.map((p) =>
+      `<button type="button" data-period="${p.key}" aria-pressed="${p.key === period}">${p.label}</button>`).join('');
+
+    renderChips();
+    showView('candle');
+  }
+
+  // ── 이벤트 ─────────────────────────────
+  $('targetSel').addEventListener('change', (e) => {
+    ticker = e.target.value;
+    $('tickerInput').value = '';
+    invalidate();
+  });
+
+  $('tickerInput').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const value = e.target.value.trim();
+    if (!value) return;
+    ticker = value;
+    invalidate();
+  });
+
+  $('periodBar').addEventListener('click', (e) => {
+    const button = e.target.closest('button[data-period]');
+    if (!button) return;
+    period = button.dataset.period;
+    $('periodBar').querySelectorAll('button').forEach((b) => {
+      b.setAttribute('aria-pressed', b === button ? 'true' : 'false');
+    });
+    invalidate();
+  });
+
+  $('viewTabs').addEventListener('click', (e) => {
+    const button = e.target.closest('button[data-view]');
+    if (button) showView(button.dataset.view);
+  });
+
+  $('compareBtn').addEventListener('click', loadCompare);
+  $('reloadBtn').addEventListener('click', invalidate);
+
+  init().catch((error) => {
+    document.querySelector('.wrap').insertAdjacentHTML('beforeend',
+      `<div class="empty">화면을 준비하지 못했습니다 — ${error.message}</div>`);
+  });
+})();
+</script>
+</body>
+</html>

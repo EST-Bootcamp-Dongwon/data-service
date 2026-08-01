@@ -45,13 +45,28 @@ PRICE_FIELDS: Tuple[Tuple[str, str, str], ...] = (
 )
 
 # 기간별 시세에서 허용하는 조회 구간. yfinance 가 받는 값 중 실습에 쓸 만한 것만 남겼다.
+#
+# M2 에서 `1d`·`ytd`·`10y`·`max` 를 더했다. 시장 상세 화면(`/market`)이
+# "단기부터 장기까지" 를 한 축에서 오가야 하는데, 5년이 상한이면 사이클을 볼 수 없어서다.
+# (`1d` 는 일봉으로는 점이 하나뿐이라 분봉으로 받는다 — 아래 `INTRADAY_PERIODS` 참고)
 PERIODS: Dict[str, str] = {
+    "1d": "1일",
     "5d": "5일",
     "1mo": "1개월",
     "3mo": "3개월",
     "6mo": "6개월",
+    "ytd": "연초 이후",
     "1y": "1년",
     "5y": "5년",
+    "10y": "10년",
+    "max": "전체",
+}
+
+# 일봉으로 받으면 점이 너무 적어 분봉으로 받는 구간. 값은 yfinance 의 `interval` 이다.
+# 야후는 분봉 보관 기간이 짧다(1분봉 최대 7일). 그 한도 안에서만 쓴다.
+INTRADAY_PERIODS: Dict[str, str] = {
+    "1d": "5m",     # 하루를 5분 간격으로 → 78점 안팎
+    "5d": "30m",    # 닷새를 30분 간격으로 → 65점 안팎
 }
 
 CACHE_TTL = 60                      # 같은 티커를 다시 물었을 때 캐시를 쓰는 시간(초)
@@ -254,8 +269,10 @@ def fetch_history(ticker: str, period: str = "3mo") -> dict:
 
 def _fetch_history_uncached(symbol: str, period: str) -> dict:
     started = time.monotonic()
+    # 짧은 구간은 일봉으로 받으면 점이 한두 개뿐이라 차트가 그려지지 않는다.
+    interval = INTRADAY_PERIODS.get(period, "1d")
     try:
-        frame = yf.Ticker(symbol).history(period=period, interval="1d")
+        frame = yf.Ticker(symbol).history(period=period, interval=interval)
     except Exception as error:
         raise _wrap_error(error, "야후 파이낸스 시세 조회에 실패했습니다")
 
@@ -272,7 +289,8 @@ def _fetch_history_uncached(symbol: str, period: str) -> dict:
         if close is None:
             continue                                    # 결측 행은 차트에 구멍을 내므로 건너뛴다
         rows.append({
-            "date": stamp.strftime("%Y-%m-%d"),
+            # 분봉은 날짜만 찍으면 같은 라벨이 수십 개가 되므로 시각까지 적는다
+            "date": stamp.strftime("%Y-%m-%d %H:%M" if interval != "1d" else "%Y-%m-%d"),
             "open": _number(row.get("Open")),
             "high": _number(row.get("High")),
             "low": _number(row.get("Low")),
@@ -280,11 +298,16 @@ def _fetch_history_uncached(symbol: str, period: str) -> dict:
             "volume": _number(row.get("Volume")),
         })
 
+    if not rows:
+        raise YahooError(
+            f"'{symbol}' 의 {PERIODS[period]} 시세에 쓸 수 있는 값이 없습니다.", status=404)
+
     first, last = rows[0]["close"], rows[-1]["close"]
     return {
         "ticker": symbol,
         "period": period,
         "period_label": PERIODS[period],
+        "interval": interval,
         "rows": rows,
         "count": len(rows),
         # 구간 수익률 — 화면 상단 요약 타일에 쓴다

@@ -20,7 +20,13 @@ window.Shell = (() => {
   // `soon: true` 는 아직 만들지 않은 화면이다. 링크를 죽여 두고 '준비중'을 글자로 밝힌다.
   // (메뉴에 보여 주는 이유 — 앞으로 무엇이 생기는지가 정보구조의 일부라서다)
   const NAV = [
-    { items: [{ key: 'dashboard', href: '/', label: '대시보드', ico: '◈' }] },
+    {
+      items: [
+        { key: 'dashboard', href: '/', label: '대시보드', ico: '◈' },
+        // 대시보드 카드는 작아서 모양이 안 보이고 기간도 못 바꾼다. 그 둘을 여기서 푼다.
+        { key: 'market', href: '/market', label: '시장 상세', ico: '📉' },
+      ],
+    },
     {
       title: '리서치',
       items: [
@@ -108,7 +114,7 @@ window.Shell = (() => {
     shell.className = 'shell';
     shell.innerHTML = `
       <aside class="side" id="shellSide">
-        <a class="side-brand" href="/">⚡ QuantLab<small>api-test</small></a>
+        <a class="side-brand" href="/">⚡ G.I.C Lab<small>api-test</small></a>
         ${navHtml(current)}
         <div class="side-foot">
           교육·리서치용 · 투자자문 아님<br />데이터는 15분 이상 지연됩니다

@@ -29,8 +29,12 @@ docs/
 !README.md
 
 # 로컬 데이터
-# ⚠️ data/stock_master.json 은 티커 판별에 필요하므로 반드시 올라가야 한다.
-#    아래는 그 파일을 제외한 나머지만 뺀다.
+# ⚠️ 아래 네 파일은 **반드시 올라가야 한다** (명세서 §8 배포 포함 데이터).
+#      data/stock_master.json         국내 티커 판별 · 자동완성
+#      data/us_master.json            미국 티커 판별 · S&P 500 표시
+#      data/corp_code.json            DART 고유번호 매핑 — 없으면 재무·공시 전부 막힌다
+#      data/market_snapshot.json.gz   스크리닝용 사전계산 (3,266종목)
+#    합쳐서 1.4MB 수준이라 번들에 부담이 없다. 아래는 그 넷을 뺀 나머지만 제외한다.
 data/krx_cache.db
 data/krx_cache.db-wal
 data/krx_cache.db-shm
@@ -43,6 +47,9 @@ data/yf/
 # 수집·차트 스크립트 — 웹 서버가 import 하지 않는다
 scripts/
 test.sh
+
+# 회귀 검사 (node + jsdom) — 로컬에서만 돌린다
+tests/
 
 # 에디터·OS
 .vscode/

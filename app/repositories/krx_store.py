@@ -376,8 +376,14 @@ def universe(bas_dd: Optional[str] = None, market: Optional[str] = None) -> List
 def closes_matrix(codes: Sequence[str], days: int = 250) -> Dict[str, List[int]]:
     """여러 종목의 종가를 **공통 거래일**로 맞춰 돌려준다.
 
-    수익률·상관계수를 계산하려면 종목마다 날짜가 정확히 같아야 한다.
+    상관계수·공분산처럼 **종목끼리 날짜를 맞춰야 하는** 계산에 쓴다.
     상장폐지·거래정지로 일부 날짜가 빠진 종목이 있으므로, 모든 종목에 존재하는 날짜만 남긴다.
+
+    ⚠️ **종목별 수익률에는 쓰지 말 것.** 교집합이라 종목을 많이 넣을수록 축이 급격히 짧아진다.
+    실측(2026-08) — 400종목이면 22일, 2,763종목 전부면 **5일**로 줄어든다.
+    상장한 지 얼마 안 된 종목 하나가 전체 축을 자르기 때문이다.
+    종목마다 독립적으로 계산할 때는 `window()` 로 한 번에 읽어 코드별로 나눠 쓴다
+    (`scripts/build_market_snapshot.py` 의 `build_domestic` 이 그 예다).
     """
     per_code: Dict[str, Dict[str, int]] = {}
     for code in codes:

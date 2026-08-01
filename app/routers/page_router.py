@@ -4,6 +4,7 @@
 화면은 기능별로 파일을 나눠 두었고, 파일명만 봐도 무슨 화면인지 알 수 있다.
 
     /          → dashboard.html  대시보드 (시장 카드 그리드 · 데이터 상태)
+    /market    → market.html     시장 상세 (큰 차트 · 기간 토글 · 겹쳐보기 · 시장의 폭)
     /krx       → krx.html        KRX 일별 시세
     /kosis     → kosis.html      KOSIS 통계 실험실
     /yf        → yf.html         야후 파이낸스 시세 (scripts/yf.py 와 같은 차트)
@@ -37,6 +38,7 @@ PAGES_DIR = Path(__file__).resolve().parents[2] / "static" / "pages"
 PAGES = {
     "/": "dashboard.html",
     "/dashboard": "dashboard.html",
+    "/market": "market.html",
     "/krx": "krx.html",
     "/kosis": "kosis.html",
     "/yf": "yf.html",

@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from app.clients import fred_data
-from app.repositories import krx_store
+from app.repositories import krx_store, snapshot_store, tmp_cache
 
 KST = timezone(timedelta(hours=9))
 
@@ -301,10 +301,14 @@ def summary() -> dict:
 
 
 def _data_status() -> List[dict]:
-    """데이터 상태 — 인증키·캐시 현황. 예전 화면 상단 배지를 대시보드 카드로 올린 것이다."""
+    """데이터 상태 — 인증키·캐시·스냅샷 현황. 예전 화면 상단 배지를 대시보드 카드로 올린 것이다.
+
+    M2 에서 **DART · ECOS 인증키**와 **시장 스냅샷 · corp_code 매핑 · /tmp 캐시**를 더했다.
+    데이터 소스가 늘어난 만큼 "지금 무엇을 쓸 수 있는가" 를 한자리에서 봐야 하기 때문이다.
+    """
     rows: List[dict] = []
 
-    # KRX 캐시
+    # ── KRX 시세 캐시 ────────────────────────
     try:
         stats = krx_store.stats()
         has_cache = bool(stats.get("days"))
@@ -321,11 +325,58 @@ def _data_status() -> List[dict]:
         rows.append({"key": "krx-cache", "label": "KRX 시세 캐시", "ok": False,
                      "grade": "critical", "grade_text": "확인 실패", "detail": str(error)})
 
-    # 인증키 — 값은 절대 싣지 않고 있는지 · 어디서 읽었는지만 알린다
+    # ── 시장 스냅샷 ─────────────────────────
+    # 기준일이 뒤처지면 스크리닝 결과가 옛날 이야기가 된다. 그 판정은 저장소가 한다.
+    try:
+        snap = snapshot_store.stats()
+        if not snap.get("available"):
+            rows.append({
+                "key": "snapshot", "label": "시장 스냅샷", "ok": True,
+                "grade": "warning", "grade_text": "없음",
+                "detail": "스크리닝용 사전계산 파일이 없습니다. "
+                          "`python3 scripts/build_market_snapshot.py` 로 만들 수 있습니다.",
+            })
+        else:
+            markets = " · ".join(f"{m['market']} {m['count']:,}" for m in snap["markets"])
+            behind = snap.get("trading_days_behind")
+            rows.append({
+                "key": "snapshot", "label": "시장 스냅샷", "ok": True,
+                "grade": "warning" if snap.get("stale") else "good",
+                "grade_text": f"{behind}거래일 전" if snap.get("stale") else "최신",
+                "detail": f"기준일 {snap['as_of']} · {snap['count']:,}종목 ({markets}) · "
+                          f"{snap['size_kb']}KB"
+                          + (f" — {snap['gap']['message']}" if snap.get("gap") else ""),
+            })
+    except Exception as error:
+        rows.append({"key": "snapshot", "label": "시장 스냅샷", "ok": False,
+                     "grade": "critical", "grade_text": "확인 실패", "detail": str(error)})
+
+    # ── DART 고유번호 매핑 ───────────────────
+    # 이게 없으면 DART 를 종목코드로 조회할 수 없다 (재무·공시 전부가 막힌다).
+    try:
+        status = _dart_status()
+        loaded = bool(status.get("corp_code_loaded"))
+        rows.append({
+            "key": "corp-code", "label": "DART 고유번호 매핑", "ok": True,
+            "grade": "good" if loaded else "warning",
+            "grade_text": "정상" if loaded else "없음",
+            "detail": (f"{status.get('corp_code_count'):,}개 상장사 · {status.get('corp_code_file')}"
+                       if loaded else
+                       "매핑이 없어 DART 를 종목코드로 조회할 수 없습니다. "
+                       "`python3 scripts/build_corp_code.py` 로 만드세요."),
+        })
+    except Exception as error:
+        rows.append({"key": "corp-code", "label": "DART 고유번호 매핑", "ok": False,
+                     "grade": "critical", "grade_text": "확인 실패", "detail": str(error)})
+
+    # ── 인증키 ──────────────────────────────
+    # 값은 절대 싣지 않고 있는지 · 어디서 읽었는지만 알린다
     for key, label, loader in (
-        ("fred", "FRED 인증키", fred_data.get_status),
         ("krx", "KRX 인증키", _krx_status),
         ("kosis", "KOSIS 인증키", _kosis_status),
+        ("fred", "FRED 인증키", fred_data.get_status),
+        ("dart", "DART 인증키", _dart_status),
+        ("ecos", "ECOS 인증키", _ecos_status),
     ):
         try:
             status = loader()
@@ -340,9 +391,29 @@ def _data_status() -> List[dict]:
         except Exception as error:
             rows.append({"key": key, "label": label, "ok": False,
                          "grade": "critical", "grade_text": "확인 실패", "detail": str(error)})
+
+    # ── /tmp 캐시 ───────────────────────────
+    # 서버리스는 경로가 있어도 못 쓰는 경우가 있어 실제로 써 보고 판단한다.
+    try:
+        cache = tmp_cache.stats()
+        writable = cache.get("writable")
+        used = " · ".join(f"{n['namespace']} {n['count']}개" for n in cache["namespaces"])
+        rows.append({
+            "key": "tmp-cache", "label": "/tmp 캐시", "ok": True,
+            "grade": "good" if writable else "warning",
+            "grade_text": "쓰기 가능" if writable else "쓰기 불가",
+            "detail": (f"{cache['root']} · {cache['total_files']}개 파일"
+                       + (f" ({used})" if used else " (비어 있음)")) if writable else
+                      f"{cache['root']} 에 쓸 수 없습니다. 속도만 느려지고 결과는 같습니다.",
+        })
+    except Exception as error:
+        rows.append({"key": "tmp-cache", "label": "/tmp 캐시", "ok": False,
+                     "grade": "critical", "grade_text": "확인 실패", "detail": str(error)})
+
     return rows
 
 
+# 클라이언트를 늦게 부르는 이유 — 하나가 import 에 실패해도 나머지 카드는 떠야 한다.
 def _krx_status() -> dict:
     from app.clients import krx_data
     return krx_data.get_status()
@@ -351,3 +422,13 @@ def _krx_status() -> dict:
 def _kosis_status() -> dict:
     from app.clients import kosis_data
     return kosis_data.get_status()
+
+
+def _dart_status() -> dict:
+    from app.clients import dart_data
+    return dart_data.get_status()
+
+
+def _ecos_status() -> dict:
+    from app.clients import ecos_data
+    return ecos_data.get_status()
