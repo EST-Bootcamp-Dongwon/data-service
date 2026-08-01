@@ -729,11 +729,42 @@ TES   → TSLA
 응답에는 늘 `limitation` 문장이 함께 실린다 — ADF 임계값은 하드코딩한 근사값이고,
 신뢰구간은 계수 추정오차가 빠져 실제보다 좁으며, Ljung-Box p값은 Wilson–Hilferty 근사다.
 
+### GIC 리서치 하네스 — `/api/research/...` ★
+
+12상태(H00~H11)를 한 번에 하나씩 실행한다. **서버는 상태를 갖지 않는다** — 브라우저가
+Context Pack 을 들고 다니고 서버는 받은 것을 고쳐 돌려준다 (명세 §1.3).
+
+| Method | Path | 설명 | 성공 |
+|--------|------|------|------|
+| GET | `/api/research/workstreams` | 작업 4종 메타 (CORP-R 만 구현) | 200 |
+| GET | `/api/research/plan/CORP-R` | 12상태 · 가중치 · 질문 지점 | 200 |
+| POST | `/api/research/runs` | H00 실행 — run_header + 초기 Context Pack | 200 |
+| POST | `/api/research/runs/steps/{state_id}` | H01~H11 단일 상태 실행 | 200 |
+| POST | `/api/research/export/md` | Context Pack → GIC 양식 마크다운 | 200 |
+
+**리서치 API 는 오류로 중단하지 않는다.** 자료가 없으면 200 으로 답하되
+`stage_result.status = "partial-continue"` 와 Gap Log 를 싣는다. 4xx 는 요청 자체가
+말이 안 될 때만 낸다 (모르는 워크스트림·모르는 상태).
+
+`stage_result` 는 GIC 공통계약 §7 의 봉투를 **필드명 그대로** 쓴다 (21개 필드).
+더하지도 빼지도 않는다 — 나중에 4차 루프 엔지니어링을 붙일 때 계약이 깨지지 않게 하기 위함이다.
+
+전구간 실측 (삼성전자 · 2026-08-01)
+
+```
+H00~H11  2.2초 (H02 가 2.0초 — DART 공시·재무·사업보고서 원문)
+근거 22건 · 데이터 45건 · 계산 2건 · Gap 3건
+최대 Context Pack 90KB · 11왕복 전송 합계 1.3MB
+리포트 14장 (상한 15장) · 마크다운 11.2KB
+```
+
+검사: `node tests/run_harness.js [종목코드]` (서버 8000 필요)
+
 ### 에러 응답
 
 | 코드 | 발생 조건 |
 |------|-----------|
-| 404 | 없는 사용자 ID · 캐시에 없는 종목코드 · 캐시에 없는 거래일 |
+| 404 | 없는 사용자 ID · 캐시에 없는 종목코드 · 캐시에 없는 거래일 · 모르는 워크스트림/상태 |
 | 422 | 타입/형식 불일치, 정렬 불가 필드, 이동평균 기간 > 거래일 수, 프론티어 종목 2개 미만 |
 | 503 | **시세 캐시가 비어 있음** → `python3 scripts/fetch_krx.py` 안내 |
 

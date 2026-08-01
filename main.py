@@ -33,6 +33,7 @@ from app.routers.fred_router import router as fred_router       # FRED 거시지
 from app.routers.search_router import router as search_router   # 종목 자동완성  (/api/search)
 from app.routers.dashboard_router import router as dashboard_router  # 대시보드 집계 (/api/dashboard/...)
 from app.routers.ts_router import router as ts_router            # 시계열 엔진   (/api/ts/...)
+from app.routers.research_router import router as research_router  # GIC 하네스  (/api/research/...)
 from app.routers import page_router                             # 화면 (HTML)
 
 # 자동완성 색인 — 서버가 뜰 때 메모리에 올려 둔다 (아래 lifespan 참고)
@@ -129,6 +130,7 @@ app.include_router(fred_router)
 app.include_router(search_router)
 app.include_router(dashboard_router)
 app.include_router(ts_router)
+app.include_router(research_router)
 if yf_router is not None:                # yfinance 가 없으면 이 세 라우터만 빠진다
     app.include_router(yf_router)
     app.include_router(stock_router)

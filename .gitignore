@@ -52,3 +52,6 @@ data/yf/
 *.swo
 *~
 .vercel
+
+# 개발 서버 로그 (uvicorn 을 nohup 으로 띄울 때 생긴다)
+uvicorn.log
