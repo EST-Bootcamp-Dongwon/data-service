@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import time
 from typing import Callable, Dict, List, Optional
 
 from ...clients import dart_data, dart_report
@@ -132,6 +133,17 @@ def h01_scope(pack: Dict, request: Dict) -> Dict:
 # 정책은 실측 후 확정한다 (사용자 결정 대기 중이라 기본값을 여기 하나로 모아 둔다).
 EVIDENCE_PER_CATEGORY = 3
 
+# H02 시간 예산 (초).
+#
+# ⚠️ 배포본에서 DART 가 로컬보다 **훨씬 느리다.** 실측 — 재무제표 한 번 호출이
+#    로컬 0.3초 · Vercel 약 9초 (H03 이 18.4초 걸렸다). 공시목록·원문까지 더하면
+#    서버리스 상한 60초를 넘겨 `FUNCTION_INVOCATION_TIMEOUT` 으로 통째로 죽는다.
+#
+# 그래서 H02 는 **필수(공시·재무) → 선택(사업보고서 원문)** 순으로 하고,
+# 예산을 넘기면 선택 항목을 건너뛴 뒤 Gap 을 남긴다. 한 소스가 느리다고 리서치 전체가
+# 죽으면 안 된다 (GIC 불변원칙 §2-2 — 부분 결과라도 계속 낸다).
+H02_BUDGET_SECONDS = 25
+
 
 def h02_evidence(pack: Dict, request: Dict) -> Dict:
     workstream = pack["C0_charter"]["workstream_id"]
@@ -141,6 +153,8 @@ def h02_evidence(pack: Dict, request: Dict) -> Dict:
 
     code = pack["C0_charter"]["target"].get("code", "")
     name = pack["C0_charter"]["target"].get("name", "")
+    started = time.monotonic()
+    rows: List[Dict] = []
 
     # 1) 공시 목록 — 카테고리별 최신 N건만 E- 로 만든다
     try:
@@ -191,9 +205,32 @@ def h02_evidence(pack: Dict, request: Dict) -> Dict:
     except Exception as error:
         contracts.downgrade(result, f"재무제표 조회 실패 — {error}")
 
-    # 3) 사업보고서 원문 (slot 3·4·5·7 재료)
+    # 3) 사업보고서 원문 (slot 3·4·5·7 재료) — **선택 항목이다**
+    #
+    # 여기까지 오는 데 이미 예산을 다 썼으면 건너뛴다. 원문은 있으면 좋은 것이지
+    # 없으면 리서치가 안 되는 것이 아니다. 반대로 이것 때문에 함수가 죽으면
+    # 앞에서 모은 근거까지 전부 날아간다.
+    elapsed = time.monotonic() - started
+    if elapsed > H02_BUDGET_SECONDS:
+        _stash(pack, "report_facts", {"available": False,
+                                      "reason": f"시간 예산 초과로 건너뛰었다 ({elapsed:.0f}초)"})
+        gap = contracts.add_gap(
+            pack, "G-DATA", "사업보고서 원문",
+            f"필수 수집에 {elapsed:.0f}초가 걸려 원문 파싱을 건너뛰었다 "
+            f"(예산 {H02_BUDGET_SECONDS}초)",
+            "사업부·점유율·생산능력 장을 자료 없이 낸다",
+            "잠시 뒤 H02 를 다시 실행하면 캐시가 남아 빨라진다",
+            severity="medium", owner="EVID")
+        result["gap_ids"].append(gap)
+        contracts.downgrade(result, f"사업보고서 원문을 건너뛰었다 — 필수 수집에 {elapsed:.0f}초")
+        result["verified_result"] = [f"근거 {len(result['evidence_ids'])}건 발급"]
+        result["next_state_input"] = ["H03 이 이 근거들을 D- 로 정규화한다"]
+        return result
+
     try:
-        facts = dart_report.fetch_report_facts(code)
+        # 공시 목록을 이미 받아 뒀다 — 사업보고서를 찾겠다고 **다시 부르지 않는다**.
+        # (배포본에서 DART 한 번이 9초다. 같은 목록을 두 번 받으면 그만큼 그냥 버린다)
+        facts = dart_report.fetch_report_facts(code, rows=rows)
         _stash(pack, "report_facts", facts)
         if facts.get("available"):
             evidence_id = ledger.add_evidence(

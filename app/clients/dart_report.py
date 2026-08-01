@@ -36,7 +36,7 @@ from . import dart_data
 from ..repositories import tmp_cache
 
 DOCUMENT_URL = "https://opendart.fss.or.kr/api/document.xml"
-REQUEST_TIMEOUT = 60
+REQUEST_TIMEOUT = 20                        # 서버리스 상한이 60초라 여기서 오래 붙들면 안 된다
 CACHE_TTL = 24 * 3600                       # 사업보고서는 1년에 한 번 나온다. 하루 캐시면 넉넉하다
 
 # 표를 고르는 열쇠말. 회사마다 표 제목이 달라서 **여러 개를 OR 로** 본다.
@@ -112,15 +112,20 @@ def _fetch_document(rcept_no: str) -> str:
     return body
 
 
-def find_business_report(code: str, months: int = 15) -> Optional[Dict]:
+def find_business_report(code: str, months: int = 15,
+                         rows: Optional[List[Dict]] = None) -> Optional[Dict]:
     """최근 사업보고서 한 건을 찾는다 (없으면 None).
+
+    이미 받아 둔 공시 목록이 있으면 `rows` 로 넘긴다 — **다시 부르지 않기 위해서**다.
+    배포본에서 DART 한 번이 9초라(실측) 같은 목록을 두 번 받으면 그만큼 그냥 버린다.
 
     ⚠️ `"사업보고서" in report_name` 으로 거르면 안 된다. 신한지주 실측에서
     `해외증권거래소등에신고한사업보고서등의국내신고` 가 먼저 잡혀 빈 문서를 받았다.
     **이름이 `사업보고서 (` 로 시작하는 것**만 고른다.
     """
-    listing = dart_data.fetch_disclosures(code, months=months, limit=100)
-    for row in listing.get("rows", []):
+    if rows is None:
+        rows = dart_data.fetch_disclosures(code, months=months, limit=100).get("rows", [])
+    for row in rows:
         name = (row.get("report_name") or "").strip()
         if name.startswith("사업보고서 (") or name == "사업보고서":
             return row
@@ -174,7 +179,7 @@ def _numeric_rows(rows: List[List[str]], label_max: int = 30) -> List[Dict]:
     return parsed
 
 
-def _parse_segments(body: str) -> Dict:
+def _parse_segments(tables: List[Dict]) -> Dict:
     """부문별 매출 표를 찾아 {부문, 값들} 목록으로 만든다.
 
     고르는 규칙 — 머리행이 짧고(문단이 아니고), 머리행에 금액 칸이 있고,
@@ -182,7 +187,7 @@ def _parse_segments(body: str) -> Dict:
     """
     best: Optional[Dict] = None
     best_score = 0
-    for entry in _tables_with_context(body):
+    for entry in tables:
         table = entry["table"]
         if not any(key in table for key in SEGMENT_KEYS):
             continue
@@ -211,7 +216,7 @@ def _parse_segments(body: str) -> Dict:
     }
 
 
-def _parse_share(body: str) -> Dict:
+def _parse_share(tables: List[Dict]) -> Dict:
     """시장점유율 표.
 
     문맥에 '점유율' 이 있다는 것만으로는 부족했다 — 옆에 있던 매출 비중표·광고시장 규모표가
@@ -219,7 +224,7 @@ def _parse_share(body: str) -> Dict:
     점유율은 반드시 % 로 적히고, 매출액 표는 그렇지 않다.
     """
     picked: List[Dict] = []
-    for entry in _tables_with_context(body):
+    for entry in tables:
         table = entry["table"]
         near = table + " " + entry["context"]
         if "점유율" not in near:
@@ -248,7 +253,7 @@ def _parse_share(body: str) -> Dict:
             "reason": f"시장점유율 표 {len(picked)}개 · 행 {sum(len(t['rows']) for t in picked)}개"}
 
 
-def _parse_labelled(body: str, keys: tuple, label: str) -> Dict:
+def _parse_labelled(tables: List[Dict], keys: tuple, label: str) -> Dict:
     """머리행이나 첫 칸에 **열쇠말이 직접 박힌** 표만 모은다 (생산능력 · 연구개발).
 
     문맥으로 고르면 엉뚱한 것이 딸려 온다 — 실측에서 '연구개발' 문맥에
@@ -256,15 +261,20 @@ def _parse_labelled(body: str, keys: tuple, label: str) -> Dict:
     잡혔다. 틀린 사실을 싣느니 없다고 하는 편이 낫다 (불변원칙 §2-1).
     """
     picked: List[Dict] = []
-    for entry in _tables_with_context(body):
+    for entry in tables:
         rows = _rows_of(entry["table"])
         if len(rows) < 2 or not _is_clean_header(rows[0]):
             continue
         header_hit = any(any(key in cell for key in keys) for cell in rows[0])
-        # 첫 칸으로만 고를 때는 **두 줄 이상** 맞아야 한다.
-        # 한 줄만 보면 소송 목록의 '연구개발 관련 소송' 한 줄에 표 전체가 딸려 온다 (신한지주 실측).
-        label_hits = sum(1 for row in rows[1:] if row and any(key in row[0] for key in keys))
-        if not (header_hit or label_hits >= 2):
+        # 첫 칸으로 고를 때는 **그 칸이 항목 이름이어야** 한다 — 짧고, 열쇠말로 시작한다.
+        #
+        # 문장 안에 열쇠말이 섞여 있는 것까지 세면 소송 목록의
+        # `…연구개발…` 한 줄에 표 전체가 딸려 온다 (신한지주 실측).
+        # 반대로 두 줄 이상을 요구하면 `생산능력` 한 줄짜리 진짜 표를 놓친다 (삼성전자 실측).
+        label_hits = sum(1 for row in rows[1:]
+                         if row and len(row[0].strip()) <= 20
+                         and any(row[0].strip().startswith(key) for key in keys))
+        if not (header_hit or label_hits >= 1):
             continue
         parsed = _numeric_rows(rows[1:])
         if parsed:
@@ -287,13 +297,15 @@ def _parse_business_summary(body: str) -> str:
     return text[:800]
 
 
-def fetch_report_facts(code: str) -> Dict:
+def fetch_report_facts(code: str, rows: Optional[List[Dict]] = None) -> Dict:
     """사업보고서 원문에서 slot 3·4·5·7 재료를 뽑아 한 덩어리로 돌려준다.
 
     **없는 것은 없다고 말한다.** 회사마다 서식이 달라 다 나오지 않는 것이 정상이고,
     그 사실 자체가 리포트의 Gap 이 된다.
+
+    `rows` 에 이미 받아 둔 공시 목록을 넘기면 DART 를 한 번 덜 부른다.
     """
-    report = find_business_report(code)
+    report = find_business_report(code, rows=rows)
     if not report:
         return {"available": False, "reason": "최근 15개월 안에 사업보고서가 없습니다",
                 "code": code}
@@ -305,9 +317,14 @@ def fetch_report_facts(code: str) -> Dict:
         return {"available": False, "reason": f"원문을 받지 못했습니다 — {error}",
                 "code": code, "rcept_no": rcept_no}
 
+    # 표와 문맥은 **한 번만** 뽑아 네 파서가 나눠 쓴다.
+    # 파서마다 다시 훑으면 9MB 짜리 본문을 네 번 정규식으로 지나간다.
+    tables = _tables_with_context(body)
+
     return {
         "available": True,
         "code": code,
+        "table_count": len(tables),
         "corp_name": report.get("corp_name", ""),
         "report_name": report.get("report_name", ""),
         "rcept_no": rcept_no,
@@ -315,8 +332,8 @@ def fetch_report_facts(code: str) -> Dict:
         "url": report.get("url", ""),
         "size_mb": round(len(body) / 1e6, 1),
         "business_summary": _parse_business_summary(body),
-        "segments": _parse_segments(body),
-        "market_share": _parse_share(body),
-        "capacity": _parse_labelled(body, CAPACITY_KEYS, "생산능력·가동률"),
-        "rnd": _parse_labelled(body, RND_KEYS, "연구개발"),
+        "segments": _parse_segments(tables),
+        "market_share": _parse_share(tables),
+        "capacity": _parse_labelled(tables, CAPACITY_KEYS, "생산능력·가동률"),
+        "rnd": _parse_labelled(tables, RND_KEYS, "연구개발"),
     }
