@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import os
 import time
 from typing import Callable, Dict, List, Optional
 
@@ -145,6 +146,37 @@ EVIDENCE_PER_CATEGORY = 3
 H02_BUDGET_SECONDS = 25
 
 
+def _serverless() -> bool:
+    """배포본(Vercel 서버리스)인가."""
+    return bool(os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"))
+
+
+def _report_document_allowed(request: Dict) -> tuple:
+    """사업보고서 원문을 받을지 정한다 → (받을까, 사유).
+
+    ⚠️ **배포본에서는 기본으로 끈다.** 실측한 사실만 적는다.
+
+        로컬     원문 내려받기 0.28초 · 9MB 파싱 0.4초 → H02 전체 2.7초
+        배포본   H02 가 60초를 넘겨 `FUNCTION_INVOCATION_TIMEOUT` (재시도해도 같음)
+                 같은 인스턴스에서 H03(재무제표)은 콜드 15초 · 웜 0.3초로 멀쩡하다
+                 → DART 조회가 아니라 **원문(0.8MB ZIP) 내려받기**가 붙들고 있다
+
+    끄면 slot 4·5·7 이 비지만, **켜 두면 H02 가 통째로 죽어 근거까지 전부 날아간다.**
+    부분 결과라도 계속 내는 쪽이 GIC 원칙에 맞다 (불변원칙 §2-2).
+
+    필요하면 요청에서 켤 수 있다 — `options: {"include_report_document": true}`.
+    """
+    option = (request.get("options") or {}).get("include_report_document")
+    if option is True:
+        return True, "요청이 원문 파싱을 켰다"
+    if option is False:
+        return False, "요청이 원문 파싱을 껐다"
+    if _serverless():
+        return False, ("배포본에서는 기본으로 끈다 — 원문 내려받기가 서버리스 60초 제한을 넘긴다 "
+                       "(로컬은 0.3초). 켜려면 options.include_report_document=true")
+    return True, "로컬이라 원문을 받는다"
+
+
 def h02_evidence(pack: Dict, request: Dict) -> Dict:
     workstream = pack["C0_charter"]["workstream_id"]
     result = contracts.new_stage_result(request.get("run_id", ""), workstream, "H02", "EVID")
@@ -211,18 +243,19 @@ def h02_evidence(pack: Dict, request: Dict) -> Dict:
     # 없으면 리서치가 안 되는 것이 아니다. 반대로 이것 때문에 함수가 죽으면
     # 앞에서 모은 근거까지 전부 날아간다.
     elapsed = time.monotonic() - started
+    allowed, why = _report_document_allowed(request)
     if elapsed > H02_BUDGET_SECONDS:
-        _stash(pack, "report_facts", {"available": False,
-                                      "reason": f"시간 예산 초과로 건너뛰었다 ({elapsed:.0f}초)"})
+        allowed, why = False, (f"필수 수집에 {elapsed:.0f}초가 걸려 건너뛴다 "
+                               f"(예산 {H02_BUDGET_SECONDS}초)")
+    if not allowed:
+        _stash(pack, "report_facts", {"available": False, "reason": why})
         gap = contracts.add_gap(
-            pack, "G-DATA", "사업보고서 원문",
-            f"필수 수집에 {elapsed:.0f}초가 걸려 원문 파싱을 건너뛰었다 "
-            f"(예산 {H02_BUDGET_SECONDS}초)",
-            "사업부·점유율·생산능력 장을 자료 없이 낸다",
-            "잠시 뒤 H02 를 다시 실행하면 캐시가 남아 빨라진다",
+            pack, "G-DATA", "사업보고서 원문 (부문별 매출 · 점유율 · 생산능력)", why,
+            "slot 4·5·7 을 자료 없이 낸다 — 피어 안 순위로 대신한다",
+            "로컬에서 돌리거나 options.include_report_document=true 로 켠다",
             severity="medium", owner="EVID")
         result["gap_ids"].append(gap)
-        contracts.downgrade(result, f"사업보고서 원문을 건너뛰었다 — 필수 수집에 {elapsed:.0f}초")
+        contracts.downgrade(result, f"사업보고서 원문을 건너뛰었다 — {why}")
         result["verified_result"] = [f"근거 {len(result['evidence_ids'])}건 발급"]
         result["next_state_input"] = ["H03 이 이 근거들을 D- 로 정규화한다"]
         return result
