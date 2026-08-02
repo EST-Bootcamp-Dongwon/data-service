@@ -87,6 +87,8 @@ window.Research = (() => {
     terms: null,                // 용어 표기 목록 (툴팁용)
     termCache: new Map(),
     resolver: null,             // 질문 카드가 기다리는 Promise 의 resolve
+    stageId: '',                // 지금 기다리고 있는 상태
+    stageStarted: 0,            // 그 상태를 부른 시각 (경과 시계가 읽는다)
   };
 
   const $ = (id) => document.getElementById(id);
@@ -179,7 +181,7 @@ window.Research = (() => {
       `<b>${esc(heavy.state_id)} ${esc(heavy.name)} ${estimate(state.workstream, heavy).seconds.toFixed(1)}초</b>다. ` +
       `<br />갈라지는 상태: ${forked.length ? forked.map((s) => `${esc(s.state_id)}(${s.substages.length})`).join(' · ') : '없음'} · ` +
       `질문 지점: ${state.plan.asks_at.join(' · ')}` +
-      `<br /><span class="muted">예상 시간 출처: ${esc(source)}</span>`;
+      `<br /><span class="muted">예상 시간 출처: ${esc(source)} · ${esc(state.plan.baseline?.miss_note || '')}</span>`;
   }
 
   /** 산업 목록을 미리 받아 둔다 (IND-* 전용). */
@@ -276,6 +278,9 @@ window.Research = (() => {
     try {
       // H00 — 실행 헤더와 초기 Context Pack
       const started = performance.now();
+      state.stageId = 'H00';
+      state.stageStarted = started;
+      paintModal();
       const created = await App.post('/api/research/runs', {
         workstream_id: state.workstream,
         code: state.target.code,
@@ -284,6 +289,8 @@ window.Research = (() => {
         audience: $('audience').value || undefined,
         questions: ($('objective').value || '').trim() ? [$('objective').value.trim()] : [],
       });
+      state.stageId = '';
+      recordTiming(state.workstream, 'H00', performance.now() - started);
       pushRow('H00', created.stage_result, created.progress, performance.now() - started, null);
       state.header = created.run_header;
       state.pack = created.context_pack;
@@ -297,12 +304,16 @@ window.Research = (() => {
         if (state.aborted) break;
 
         const begin = performance.now();
+        state.stageId = stateId;
+        state.stageStarted = begin;
+        paintModal();
         const response = await App.post(`/api/research/runs/steps/${stateId}`, {
           run_header: state.header,
           context_pack: state.pack,
           feedback,
         });
         const elapsed = performance.now() - begin;
+        state.stageId = '';
         recordTiming(state.workstream, stateId, elapsed);
 
         state.pack = response.context_pack;
@@ -348,13 +359,50 @@ window.Research = (() => {
     $('modalQuestion').hidden = true;
     $('modalProgress').hidden = false;
     paintModal();
+    startTicker();
   }
 
   function closeModal() {
     // 실행 중에 닫으면 **거기서 멈춘다.** 몰래 계속 돌리지 않는다.
     if (state.running) state.aborted = true;
     if (state.resolver) { state.resolver([]); state.resolver = null; }
+    stopTicker();
     $('modalBack').hidden = true;
+  }
+
+  // ── 경과 시계 ────────────────────────────────────────────
+  //
+  // 예상 시간은 예상일 뿐이라 **빗나갈 때가 있다.** 실측 — IND-R 의 H04 는 기준선이
+  // 2.4초인데 처음 보는 산업에서는 9.3초가 나왔다 (캐시가 비어 있었다).
+  // 그때 화면이 예상값만 들고 가만히 있으면 멈춘 것처럼 보인다. 그래서 기다리는 동안
+  // **실제로 흐른 시간을 계속 센다.** 예상을 넘어서면 그 사실도 같이 말한다.
+  let ticker = null;
+
+  function startTicker() {
+    stopTicker();
+    ticker = setInterval(tickRunning, 250);
+  }
+
+  function stopTicker() {
+    if (ticker) { clearInterval(ticker); ticker = null; }
+  }
+
+  /** 진행 중인 줄의 시간과 경과 줄만 고친다 (모달 전체를 다시 그리지 않는다). */
+  function tickRunning() {
+    if (!state.running) { stopTicker(); return; }
+    const cell = document.querySelector('.state-row.now .st-time');
+    if (cell && state.stageId) {
+      const spent = (performance.now() - state.stageStarted) / 1000;
+      const planned = (state.plan?.states || []).find((s) => s.state_id === state.stageId);
+      const guess = planned ? estimate(state.workstream, planned).seconds : 0;
+      cell.textContent = spent > guess + 0.5 && guess
+        ? `${spent.toFixed(1)}초 (예상 ${guess.toFixed(1)}초 넘김)`
+        : `${spent.toFixed(1)} / ${guess.toFixed(1)}초`;
+    }
+    const spentAll = state.rows.reduce((sum, r) => sum + r.ms, 0) / 1000
+      + (state.stageId ? (performance.now() - state.stageStarted) / 1000 : 0);
+    const label = $('progSpent');
+    if (label) label.textContent = spentAll.toFixed(1);
   }
 
   function paintModal() {
@@ -375,7 +423,7 @@ window.Research = (() => {
       .reduce((sum, s) => sum + estimate(state.workstream, s).seconds, 0);
     const spent = state.rows.reduce((sum, r) => sum + r.ms, 0) / 1000;
     $('progEta').innerHTML = state.running
-      ? `경과 ${spent.toFixed(1)}초 · 남은 예상 <b>${remaining.toFixed(0)}초</b>` +
+      ? `경과 <b id="progSpent">${spent.toFixed(1)}</b>초 · 남은 예상 <b>${remaining.toFixed(0)}초</b>` +
         ` <span class="muted">(${esc(estimate(state.workstream, state.plan.states[0]).source)})</span>`
       : (state.rows.length
         ? `전구간 ${spent.toFixed(1)}초 · ${state.rows.length}상태`
@@ -384,8 +432,9 @@ window.Research = (() => {
     $('stateList').innerHTML = state.plan.states.map((s) => {
       const row = done.get(s.state_id);
       const guess = estimate(state.workstream, s);
-      const running = state.running && !row &&
-        state.rows.length === state.plan.states.indexOf(s);
+      // 질문 카드를 띄우고 사람을 기다리는 동안에는 `stageId` 가 비어 있다 —
+      // 그때 어느 줄도 '진행 중' 이 아니어야 맞다. 기다리는 쪽은 우리가 아니라 서버가 아니다.
+      const running = state.running && !row && state.stageId === s.state_id;
 
       let cls = 'wait';
       let icon = '·';
@@ -395,9 +444,9 @@ window.Research = (() => {
         icon = cls === 'done' ? '✓' : cls === 'warn' ? '!' : '✕';
       } else if (running) { cls = 'now'; icon = '▶'; }
 
-      const time = row
-        ? `${(row.ms / 1000).toFixed(1)}초`
-        : `${guess.exact ? '' : '≈'}${guess.seconds.toFixed(1)}초`;
+      const time = row ? `${(row.ms / 1000).toFixed(1)}초`
+        : running ? `0.0 / ${guess.seconds.toFixed(1)}초`
+          : `${guess.exact ? '' : '≈'}${guess.seconds.toFixed(1)}초`;
       const note = row ? (row.note || s.does)
         : running ? `${esc(s.does)} …`
           : (s.asks ? `${s.does} · 질문 있음` : s.does);

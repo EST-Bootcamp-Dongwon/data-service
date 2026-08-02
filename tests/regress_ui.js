@@ -202,9 +202,12 @@ function fakeStageResult(stateId) {
 /** 리서치 화면이 부르는 주소를 전부 흉내 낸다. */
 function fakeFetch(url) {
   const path = String(url).replace(/^https?:\/\/[^/]+/, '');
-  const json = (body) => Promise.resolve({
+  // H02 만 일부러 늦게 답한다 — 기다리는 동안 모달이 **경과 시간을 세는지** 보기 위해서다.
+  // 나머지가 즉답이면 '진행 중' 줄이 화면에 머무는 순간이 없어 그 검사를 못 한다.
+  const delay = /\/runs\/steps\/H02$/.test(path) ? 400 : 0;
+  const json = (body) => new Promise((resolve) => setTimeout(() => resolve({
     ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)),
-  });
+  }), delay));
 
   if (path.startsWith('/api/research/warmup')) return json({ warm: true, was_cold: true, loaded_now: ['glossary'], total_ms: 40, steps: [] });
   if (path.startsWith('/api/research/workstreams')) {
@@ -309,10 +312,19 @@ async function researchChecks() {
     doc.getElementById('runBtn').disabled = false;
     doc.getElementById('runBtn').click();
 
-    // 질문 카드가 뜨면 추천안을 고르고 넘긴다 — 최대 40번까지 기다린다
+    // 질문 카드가 뜨면 추천안을 고르고 넘긴다. 도는 동안 '진행 중' 줄과
+    // 경과 시계가 실제로 움직이는지도 함께 본다.
     let sawQuestion = false;
-    for (let i = 0; i < 60; i++) {
+    let sawRunningRow = false;
+    let sawLiveClock = false;
+    for (let i = 0; i < 120; i++) {
       await sleep(25);
+      const nowRow = doc.querySelector('.state-row.now .st-time');
+      if (nowRow) {
+        sawRunningRow = true;
+        // `0.3 / 9.1초` 처럼 흐른 시간이 0 을 넘겨 찍혔으면 시계가 도는 것이다
+        if (/^[1-9]|^0\.[1-9]/.test(nowRow.textContent.trim())) sawLiveClock = true;
+      }
       const card = doc.getElementById('modalQuestion');
       if (card && !card.hidden) {
         sawQuestion = true;
@@ -331,6 +343,8 @@ async function researchChecks() {
       ['진행률 100% 도달 (가중치 누적)', percent === '100%'],
       ['진행률이 12등분이 아님 (H02 후 27%)', running.rows[2] && running.rows[2].weight === 27],
       ['질문 카드가 떴다 (H01·H04·H08)', sawQuestion],
+      ['기다리는 상태가 진행 중으로 표시됨', sawRunningRow],
+      ['기다리는 동안 경과 시간이 흐름', sawLiveClock],
       ['답변이 C6 로 갈 feedback 으로 만들어짐', running.rows.length === 12],
       ['리포트가 그려짐', !!doc.querySelector('.rp')],
       ['근거 링크(data-evidence-id)가 붙음', doc.querySelectorAll('[data-evidence-id]').length > 0],
