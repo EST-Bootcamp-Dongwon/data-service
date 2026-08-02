@@ -147,7 +147,14 @@ class FrontierPoint(BaseModel):
 
 
 class FrontierResponse(BaseModel):
-    risk_free_rate: float = Field(..., description="무위험수익률 (상수 — KRX API 미제공)", examples=[0.032])
+    # ⚠️ M5 (U8) 부터 **상수가 아니다.** ECOS 국고채 3년을 실측해 쓰고, 금융감독원
+    #    정기예금 금리로 교차검증한다. 예전 하드코딩 0.032 는 실측(3.758%)과 0.56%p
+    #    어긋나 있었고, 샤프지수가 통째로 그 위에 얹혀 있었다.
+    #    `response_model` 이 모르는 필드를 잘라 내므로 출처도 **여기 선언해야** 응답에 실린다.
+    risk_free_rate: float = Field(..., description="무위험수익률 — ECOS 국고채 3년 실측 (U8)",
+                                  examples=[0.03758])
+    risk_free_source: Optional[dict] = Field(
+        None, description="무위험수익률의 출처·기준일·교차검증 후보 (없으면 대비값을 쓴 것)")
     samples: int = Field(..., description="시뮬레이션한 포트폴리오 개수", examples=[1200])
     window: Optional[int] = Field(None, description="수익률 계산에 쓴 거래일 수", examples=[250])
     observations: Optional[int] = Field(None, description="실제로 사용한 일간 수익률 개수", examples=[249])

@@ -269,8 +269,19 @@
     // 창을 요청한 만큼 못 채웠으면 서버가 note 로 알려 준다 (배포본은 축약본 150거래일).
     // 관측이 짧아진 것을 숨기면 변동성 숫자를 실제보다 믿게 된다.
     const shortfall = data.note ? `<br>⚠️ ${Shell.esc(data.note)}` : '';
+    // 무위험수익률은 M5(U8)부터 상수가 아니라 실측이다. **어디서 온 값인지 밝힌다** —
+    // 샤프지수 전체가 이 숫자 하나에 걸려 있어서, 출처를 숨기면 검증할 방법이 없다.
+    const rf = data.risk_free_source || {};
+    const rfWhere = rf.source
+      ? `${Shell.esc(rf.source)}${rf.as_of ? ` · ${Shell.esc(rf.as_of)}` : ''}`
+      : '대비값 (실측 실패)';
+    const crossCheck = (rf.candidates || [])
+      .filter((c) => c.value != null && c.id !== 'ktb3y')
+      .map((c) => `${Shell.esc(c.name)} ${c.value}%`)
+      .join(' · ');
     $('frontierNote').innerHTML =
-      `무위험수익률 ${(data.risk_free_rate * 100).toFixed(1)}% (상수 — KRX API 미제공) · 기준일 ${data.as_of}<br>
+      `무위험수익률 ${(data.risk_free_rate * 100).toFixed(2)}% — ${rfWhere} · 기준일 ${data.as_of}
+       ${crossCheck ? `<br>교차검증: ${crossCheck}` : ''}<br>
        ⚠️ 기대수익률은 <b>과거 ${data.window}거래일 실적을 단순 연율화</b>한 값이다.
        상승장 구간을 담으면 비현실적으로 커질 수 있으며, 미래 수익률 예측이 아니다.${shortfall}`;
   }
