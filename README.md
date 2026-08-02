@@ -736,11 +736,27 @@ Context Pack 을 들고 다니고 서버는 받은 것을 고쳐 돌려준다 (�
 
 | Method | Path | 설명 | 성공 |
 |--------|------|------|------|
-| GET | `/api/research/workstreams` | 작업 4종 메타 (CORP-R 만 구현) | 200 |
-| GET | `/api/research/plan/CORP-R` | 12상태 · 가중치 · 질문 지점 | 200 |
+| GET | `/api/research/workstreams` | 작업 4종 메타 (**넷 다 구현**) | 200 |
+| GET | `/api/research/plan/{workstream_id}` | 12상태 · 가중치 · 갈라지는 자리 · 질문 지점 | 200 |
+| GET | `/api/research/industries` | 산업 목록 (`?digits=2~5`) — IND-* 대상 선택 | 200 |
+| GET | `/api/research/industries/resolve` | `?q=반도체` · `?q=261` · `?q=삼성전자` → 업종 확정 | 200 |
+| GET | `/api/research/glossary` | 08강 용어 사전 427개 (`?term=` 툴팁 · `?q=` 검색) | 200 |
 | POST | `/api/research/runs` | H00 실행 — run_header + 초기 Context Pack | 200 |
 | POST | `/api/research/runs/steps/{state_id}` | H01~H11 단일 상태 실행 | 200 |
 | POST | `/api/research/export/md` | Context Pack → GIC 양식 마크다운 | 200 |
+
+**네 작업이 같은 12상태를 돈다.** 갈라지는 자리만 다르다 (명세 §5.4).
+
+| 작업 | 대상 | 갈라지는 상태 | 리포트 양식 |
+|---|---|---|---|
+| CORP-R 기업 리서치 | 종목 | `H03` 회계기간 · 재무 · 피어 | 고정 15슬롯 |
+| CORP-TP 기업 Top Pick | 종목 | `H04` 12개월 이벤트 · Quick Score 6차원 · P/W/D | 자유양식 |
+| IND-R 산업 리서치 | 산업 | `H01`~`H04` 경계 · 근거 · 정규화 · (밸류체인·시장/수급·사이클) | 고정 15슬롯 (**구성이 다르다**) |
+| IND-TP 산업 Top Pick | 산업 | `H01`~`H04` (후보군 · 점수 · penalty · 민감도) | 자유양식 |
+
+산업 계열은 대상이 종목이 아니라 `H01`~`H03` 도 갈래가 다르다 —
+`snapshot_store.get("261")` 은 종목이 아니므로 애초에 답이 없다.
+**상태를 더하거나 빼지는 않았다.**
 
 **리서치 API 는 오류로 중단하지 않는다.** 자료가 없으면 200 으로 답하되
 `stage_result.status = "partial-continue"` 와 Gap Log 를 싣는다. 4xx 는 요청 자체가
@@ -749,10 +765,22 @@ Context Pack 을 들고 다니고 서버는 받은 것을 고쳐 돌려준다 (�
 `stage_result` 는 GIC 공통계약 §7 의 봉투를 **필드명 그대로** 쓴다 (21개 필드).
 더하지도 빼지도 않는다 — 나중에 4차 루프 엔지니어링을 붙일 때 계약이 깨지지 않게 하기 위함이다.
 
-전구간 실측 (삼성전자 · 2026-08-01)
+전구간 실측 (로컬 · 2026-08-02)
+
+| 작업 | 대상 | 전구간 | 장수 | 최대 팩 | 근거/데이터/계산/Gap |
+|---|---|---:|---:|---:|---|
+| CORP-R | 005930 삼성전자 | 1.5초 | 14장 | 90.5KB | 22 / 45 / 2 / 2 |
+| CORP-TP | 005930 삼성전자 | 4.5초 | 11장 | 127.1KB | 22 / 45 / 3 / 2 |
+| IND-R | 261 반도체 제조업 | 5.9초 | 14장 | 147.8KB | 4 / 321 / 2 / 11 |
+| IND-TP | 261 반도체 제조업 | 0.4초 | 8장 | 150.5KB | 4 / 321 / 6 / 4 |
+
+**IND-R 의 Gap 11건은 실패가 아니다.** 이익풀 · TAM/SAM/SOM · 생산능력 · ASP ·
+Porter 4힘 · 시장점유율이 공개 API 에 없다는 사실을 그대로 밝힌 것이다.
+없는 것을 만들지 않는 쪽이 명세 §5.4 다.
+
+배포본 실측 (삼성전자 CORP-R · 2026-08-01)
 
 ```
-로컬    H00~H11 1.6초 · 근거 22 · 데이터 45 · Gap 2 · 리포트 14장 · 최대 팩 90KB
 배포본  H00~H11 27.3초 · 근거 20 · 데이터 45 · Gap 3 · 리포트 11장 · 최대 팩 77KB
 ```
 
@@ -769,7 +797,14 @@ Context Pack 을 들고 다니고 서버는 받은 것을 고쳐 돌려준다 (�
 부분 결과라도 계속 내는 쪽이 GIC 원칙에 맞다 (불변원칙 §2-2).
 배포본에서도 굳이 켜려면 `options: {"include_report_document": true}` 를 실어 보낸다.
 
-검사: `node tests/run_harness.js [종목코드] [베이스URL]` (로컬은 서버 8000 필요)
+검사
+
+```bash
+node tests/run_harness.js                 # CORP-R · 삼성전자
+node tests/run_harness.js all             # 네 작업 전부
+node tests/run_harness.js IND-R 261       # 산업 리서치 · 반도체 제조업
+node tests/run_harness.js all https://…   # 배포본에서 네 작업
+```
 
 ### 에러 응답
 

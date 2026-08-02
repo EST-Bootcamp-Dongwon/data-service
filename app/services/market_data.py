@@ -307,7 +307,30 @@ def screening_funnel(window: int = DEFAULT_WINDOW) -> Dict:
 # ==================================================
 # 4. 효율적 투자선 (몬테카를로 포트폴리오 시뮬레이션)
 # ==================================================
-RISK_FREE_RATE = 0.032            # 무위험수익률 (국고채 3년 수준) — KRX API 에 없어 상수로 둔다
+# 무위험수익률 — **하드코딩을 걷어냈다** (U8 결정 · M5).
+#
+# 예전에는 `0.032` 였다. 그런데 실측하면 국고채 3년이 3.758% (ECOS · 2026-07-31) 라
+# **0.56%p 어긋나 있었다.** 이 값 하나에 샤프지수와 효율적 투자선이 통째로 걸려 있다.
+# 이제 `knowledge.macro` 가 ECOS 에서 받아 오고, 금융감독원 예금금리로 교차검증한다.
+# 아래 상수는 실측이 실패했을 때만 쓰는 마지막 대비값이며, 그 사실을 응답에 밝힌다.
+RISK_FREE_FALLBACK = 0.032
+RISK_FREE_RATE = RISK_FREE_FALLBACK      # 하위 호환 — 옛 이름을 쓰던 곳이 있으면 계속 돈다
+
+
+def risk_free_rate() -> Dict:
+    """무위험수익률을 실측해 온다 (U8). 실패하면 대비값과 그 사실을 함께 돌려준다."""
+    from .research.knowledge import macro          # 순환 import 를 피해 함수 안에서 부른다
+
+    row = macro.risk_free_rate()
+    value = row.get("value")
+    if not isinstance(value, (int, float)):
+        return {"rate": RISK_FREE_FALLBACK, "source": "fallback", "as_of": "",
+                "note": "실측에 실패해 대비값을 썼다"}
+    return {"rate": value / 100, "source": row.get("source", ""),
+            "as_of": row.get("as_of", ""),
+            "candidates": row.get("candidates", []),
+            "conflict": row.get("conflict"),
+            "note": row.get("note", "")}
 FRONTIER_SEED = 20260731          # 비중 추첨 시드 고정 → 같은 조건이면 같은 그림이 나온다
 DEFAULT_FRONTIER_SAMPLES = 1200
 DEFAULT_FRONTIER_CODES = ("005930", "000660", "005380", "035420", "035720")
@@ -373,11 +396,15 @@ def monte_carlo_frontier(samples: int = DEFAULT_FRONTIER_SAMPLES,
     if key in _frontier_cache:
         return _frontier_cache[key]
 
+    # 무위험수익률을 **실측해서** 받는다 (U8). 하드코딩 0.032 를 쓰던 자리다.
+    rate_row = risk_free_rate()
+    rate = rate_row["rate"]
+
     # 상관계수를 구하려면 모든 종목의 날짜가 정확히 같아야 한다 (공통 거래일만 사용)
     closes = store.closes_matrix(codes, days=window)
     usable = [c for c in codes if len(closes.get(c, [])) > 2]
     if len(usable) < 2:
-        return {"risk_free_rate": RISK_FREE_RATE, "samples": 0, "assets": [],
+        return {"risk_free_rate": rate, "risk_free_source": rate_row, "samples": 0, "assets": [],
                 "portfolios": [], "frontier": [], "max_sharpe": None, "min_variance": None,
                 "note": "종가 데이터가 부족합니다. python3 scripts/fetch_krx.py 로 캐시를 채우세요."}
 
@@ -405,7 +432,7 @@ def monte_carlo_frontier(samples: int = DEFAULT_FRONTIER_SAMPLES,
         portfolios.append({
             "return": round(ret, 5),
             "volatility": round(vol, 5),
-            "sharpe": round((ret - RISK_FREE_RATE) / vol, 4),
+            "sharpe": round((ret - rate) / vol, 4),
             "weights": [round(w * 100, 1) for w in weights],   # 퍼센트
         })
 
@@ -434,7 +461,9 @@ def monte_carlo_frontier(samples: int = DEFAULT_FRONTIER_SAMPLES,
             frontier.append({"volatility": p["volatility"], "return": p["return"]})
 
     result = {
-        "risk_free_rate": RISK_FREE_RATE,
+        "risk_free_rate": rate,
+        # 어디서 온 값인지 함께 낸다 — 샤프지수 전체가 이 숫자 하나에 걸려 있다
+        "risk_free_source": rate_row,
         "samples": samples,
         "window": window,
         "observations": n_obs,                    # 실제로 쓴 일간 수익률 개수

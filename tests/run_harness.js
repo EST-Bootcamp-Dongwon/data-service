@@ -1,4 +1,4 @@
-/* 리서치 하네스 전구간 실행 검사 (M4)
+/* 리서치 하네스 전구간 실행 검사 (M4 신설 · M5 에서 4작업으로 확장)
  *
  * H00 → H11 을 **브라우저가 하듯이** 순서대로 부른다. 서버가 상태를 갖지 않으므로
  * Context Pack 을 받아서 다음 요청에 그대로 실어 보낸다 (명세 §1.3).
@@ -8,13 +8,28 @@
  *   2. stage_result 봉투가 GIC 공통계약 §7 필드를 그대로 갖고 있는가
  *   3. 진행률이 가중치 누적값인가 (12등분이 아닌가 — 명세 §5.1)
  *   4. **전송량**이 얼마인가 (C1 근거 정책을 정하려면 실측이 필요하다)
+ *   5. 네 워크스트림이 **같은 12상태**를 돌면서 H03·H04 만 갈라지는가 (명세 §5.4)
  *
- *   node tests/run_harness.js                 # 005930
- *   node tests/run_harness.js 035720          # 다른 종목
- *   node tests/run_harness.js 005930 http://… # 배포본
+ *   node tests/run_harness.js                    # CORP-R · 005930
+ *   node tests/run_harness.js 035720             # 다른 종목
+ *   node tests/run_harness.js all                # 네 작업 전부
+ *   node tests/run_harness.js IND-R 261          # 산업 리서치
+ *   node tests/run_harness.js all http://…       # 배포본에서 네 작업
  */
 const BASE = process.argv.find((a) => a.startsWith('http')) || 'http://127.0.0.1:8000';
-const CODE = process.argv.slice(2).find((a) => !a.startsWith('http')) || '005930';
+const ARGS = process.argv.slice(2).filter((a) => !a.startsWith('http'));
+
+// 작업별 기본 대상 — 기업은 종목코드, 산업은 업종코드다
+const DEFAULT_TARGET = {
+  'CORP-R': '005930', 'CORP-TP': '005930', 'IND-R': '261', 'IND-TP': '261',
+};
+const ALL = ['CORP-R', 'CORP-TP', 'IND-R', 'IND-TP'];
+
+const asked = ARGS.filter((a) => ALL.includes(a.toUpperCase()) || a.toLowerCase() === 'all');
+const RUNS = asked.length === 0 ? ['CORP-R']
+  : asked.some((a) => a.toLowerCase() === 'all') ? ALL
+    : asked.map((a) => a.toUpperCase());
+const OVERRIDE = ARGS.find((a) => !ALL.includes(a.toUpperCase()) && a.toLowerCase() !== 'all');
 
 // GIC 공통계약 §7 의 봉투 필드 — 하나라도 빠지면 계약 위반이다
 const ENVELOPE = ['run_id', 'workstream_id', 'stage_id', 'active_role', 'status',
@@ -49,24 +64,24 @@ function answersFor(questions, stageId) {
   }));
 }
 
-async function main() {
-  console.log(`\n리서치 하네스 전구간 · ${BASE} · 종목 ${CODE}\n`);
+/** 워크스트림 하나를 H00 → H11 로 돌린다. */
+async function runWorkstream(workstream, target) {
+  console.log(`\n\x1b[1m══ ${workstream} · ${target} ══\x1b[0m`);
 
-  console.log('── 0. 메타 ─────────────────────────────');
-  const meta = await fetch(`${BASE}/api/research/workstreams`).then((r) => r.json());
-  console.log(`  워크스트림 ${meta.workstreams.length}종 · 구현 ${meta.implemented.join(',')}`);
-  const planned = await fetch(`${BASE}/api/research/plan/CORP-R`).then((r) => r.json());
+  const planned = await fetch(`${BASE}/api/research/plan/${workstream}`).then((r) => r.json());
   const weights = planned.states.map((s) => s.weight);
   const total = weights.reduce((a, b) => a + b, 0);
   if (total === 100) ok('가중치 합 100', weights.join('+'));
-  else bad('가중치 합', `${total}`);
-  if (JSON.stringify(weights) !== JSON.stringify(new Array(12).fill(weights[0]))) {
-    ok('12등분이 아님 (체감 진행률)', `H02=${weights[2]} H04=${weights[4]}`);
-  } else bad('진행률', '12등분이다');
+  else bad(`${workstream} 가중치 합`, `${total}`);
+  if (planned.states.length !== 12) bad(`${workstream} 상태 수`, `${planned.states.length}개 (12여야 한다)`);
+  const forked = planned.states.filter((s) => (s.substages || []).length);
+  console.log(`  갈라지는 상태: ${forked.map((s) => `${s.state_id}(${s.substages.length})`).join(' · ') || '없음'}`);
 
-  console.log('\n── 1. H00 실행 ─────────────────────────');
-  const run = await post('/api/research/runs', { workstream_id: 'CORP-R', code: CODE });
-  if (run.status !== 200) { bad('H00', `HTTP ${run.status} ${JSON.stringify(run.body).slice(0, 200)}`); process.exit(1); }
+  const run = await post('/api/research/runs', { workstream_id: workstream, code: target });
+  if (run.status !== 200) {
+    bad(`${workstream} H00`, `HTTP ${run.status} ${JSON.stringify(run.body).slice(0, 200)}`);
+    return null;
+  }
   ok('run 생성', `${run.body.run_header.run_id} · ${run.ms}ms`);
 
   let pack = run.body.context_pack;
@@ -76,18 +91,19 @@ async function main() {
   const rows = [];
   const STATES = ['H01', 'H02', 'H03', 'H04', 'H05', 'H06', 'H07', 'H08', 'H09', 'H10', 'H11'];
 
-  console.log('\n── 2. H01 → H11 ────────────────────────');
   for (const state of STATES) {
     const payload = { run_header: header, context_pack: pack, feedback: answersFor(questions, state) };
     const res = await post(`/api/research/runs/steps/${state}`, payload);
 
     if (res.status !== 200) {
-      bad(state, `HTTP ${res.status} — ${JSON.stringify(res.body).slice(0, 300)}`);
+      bad(`${workstream} ${state}`, `HTTP ${res.status} — ${JSON.stringify(res.body).slice(0, 300)}`);
       break;
     }
     const result = res.body.stage_result;
     const missing = ENVELOPE.filter((f) => !(f in result));
-    if (missing.length) bad(`${state} 봉투`, `빠진 필드: ${missing.join(', ')}`);
+    if (missing.length) bad(`${workstream} ${state} 봉투`, `빠진 필드: ${missing.join(', ')}`);
+    const extra = Object.keys(result).filter((f) => !ENVELOPE.includes(f));
+    if (extra.length) bad(`${workstream} ${state} 봉투`, `더해진 필드: ${extra.join(', ')}`);
 
     pack = res.body.context_pack;
     questions = res.body.human_questions;
@@ -109,26 +125,65 @@ async function main() {
       `${String(r.weight).padStart(4)}%  ${r.e}/${r.d}/${r.c}/${r.gaps}`);
   }
 
-  console.log('\n── 3. 판정 ─────────────────────────────');
-  if (rows.length === STATES.length) ok('열두 상태 전부 200'); else bad('상태 실행', `${rows.length + 1}/12 만 돌았다`);
+  if (rows.length === STATES.length) ok('열두 상태 전부 200'); else bad(`${workstream} 상태 실행`, `${rows.length + 1}/12 만 돌았다`);
   const last = rows[rows.length - 1];
-  if (last && last.weight === 100) ok('진행률 100% 도달'); else bad('진행률', `${last?.weight}%`);
-  if (last && last.status === 'complete') ok('H11 complete'); else bad('H11', `status=${last?.status}`);
+  if (last && last.weight === 100) ok('진행률 100% 도달'); else bad(`${workstream} 진행률`, `${last?.weight}%`);
+  if (last && last.status === 'complete') ok('H11 complete'); else bad(`${workstream} H11`, `status=${last?.status}`);
 
   const totalMs = rows.reduce((a, r) => a + r.ms, 0);
   const maxPack = Math.max(...rows.map((r) => r.pack));
-  console.log(`\n  전구간 ${(totalMs / 1000).toFixed(1)}초 · 최대 Context Pack ${kb(maxPack)} · ` +
-    `왕복 전송 합계 ${kb(rows.reduce((a, r) => a + r.sent + r.got, 0))}`);
+  console.log(`  전구간 ${(totalMs / 1000).toFixed(1)}초 · 최대 Context Pack ${kb(maxPack)} · ` +
+    `왕복 합계 ${kb(rows.reduce((a, r) => a + r.sent + r.got, 0))}`);
   console.log(`  근거 ${last?.e} · 데이터 ${last?.d} · 계산 ${last?.c} · Gap ${last?.gaps}`);
 
-  console.log('\n── 4. 마크다운 내보내기 ─────────────────');
   const md = await post('/api/research/export/md', { context_pack: pack });
+  let pages = 0;
   if (md.status === 200) {
-    ok('MD 생성', `${md.body.page_count}장 · ${kb(md.body.bytes)}`);
-    if (md.body.page_count > 15) bad('장수', `${md.body.page_count}장 — 15장 상한 초과`);
+    pages = md.body.page_count;
+    ok('MD 생성', `${pages}장 · ${kb(md.body.bytes)}`);
+    if (pages > 15) bad(`${workstream} 장수`, `${pages}장 — 15장 상한 초과`);
+    if (pages === 0) bad(`${workstream} 장수`, '0장 — 조립하지 못했다');
     if (md.body.merged?.length) console.log(`     합침: ${md.body.merged.join(' / ')}`);
-    console.log('\n' + md.body.markdown.split('\n').slice(0, 24).map((l) => `     ${l}`).join('\n'));
-  } else bad('MD 생성', `HTTP ${md.status} ${JSON.stringify(md.body).slice(0, 200)}`);
+  } else bad(`${workstream} MD 생성`, `HTTP ${md.status} ${JSON.stringify(md.body).slice(0, 200)}`);
+
+  return {
+    workstream, target, pages,
+    seconds: totalMs / 1000, maxPack, states: rows.length,
+    evidence: last?.e ?? 0, data: last?.d ?? 0, calc: last?.c ?? 0, gaps: last?.gaps ?? 0,
+    verdict: last?.status,
+    markdown: md.status === 200 ? md.body.markdown : '',
+  };
+}
+
+async function main() {
+  console.log(`\n리서치 하네스 전구간 · ${BASE} · 작업 ${RUNS.join(', ')}\n`);
+
+  const meta = await fetch(`${BASE}/api/research/workstreams`).then((r) => r.json());
+  console.log(`── 메타 ─────────────────────────────`);
+  console.log(`  워크스트림 ${meta.workstreams.length}종 · 구현 ${meta.implemented.join(', ')}`);
+  console.log(`  하네스 ${meta.harness_version} · 스키마 ${meta.schema_version}`);
+  for (const w of RUNS) {
+    if (!meta.implemented.includes(w)) bad('구현 목록', `${w} 가 implemented 에 없다`);
+  }
+
+  const results = [];
+  for (const workstream of RUNS) {
+    const target = OVERRIDE || DEFAULT_TARGET[workstream];
+    const row = await runWorkstream(workstream, target);
+    if (row) results.push(row);
+  }
+
+  console.log('\n══ 요약 ══════════════════════════════');
+  console.log(`  ${'작업'.padEnd(9)} ${'대상'.padEnd(8)} ${'초'.padStart(6)} ${'장'.padStart(4)} ${'팩'.padStart(8)}  E/D/C/Gap`);
+  for (const r of results) {
+    console.log(`  ${r.workstream.padEnd(9)} ${String(r.target).padEnd(8)} ${r.seconds.toFixed(1).padStart(6)} ` +
+      `${String(r.pages).padStart(4)} ${kb(r.maxPack).padStart(8)}  ${r.evidence}/${r.data}/${r.calc}/${r.gaps}`);
+  }
+
+  if (results.length === 1 && results[0].markdown) {
+    console.log('\n── 마크다운 앞부분 ──────────────────');
+    console.log(results[0].markdown.split('\n').slice(0, 22).map((l) => `     ${l}`).join('\n'));
+  }
 
   console.log(failures ? `\n결과: 실패 ${failures}건 ✗\n` : '\n결과: 하네스 이상 없음 ✓\n');
   process.exit(failures ? 1 : 0);

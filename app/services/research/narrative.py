@@ -169,3 +169,190 @@ def segment_card(workstream: str, index: int, facts: Dict) -> Dict:
         f"{' / '.join(segments.get('header', [])[:4])}",
         "다음 사업보고서에서 부문 구성이 바뀌는지 본다",
         "high")
+
+
+# ─────────────────────────────────────────────────────────────
+# M5 — CORP-TP 해석카드
+# ─────────────────────────────────────────────────────────────
+def event_card(workstream: str, index: int, events: Dict) -> Dict:
+    """12개월 이벤트 창 해석카드 (CORP-TP CTP-04)."""
+    if not events or not events.get("available"):
+        return card(f"I-{workstream}-{index:04d}", f"V-{workstream}-{index:04d}",
+                    "최근 12개월에 무슨 일이 있었나?",
+                    (events or {}).get("reason", UNCHECKED),
+                    "이벤트 창을 만들지 못했다",
+                    limitation="공시 목록을 받지 못했다",
+                    next_check="DART 공시 목록을 다시 조회한다", confidence="low")
+
+    counts = events.get("counts", {})
+    window = events.get("window", {})
+    observation = (f"{window.get('window_start_boundary')} 초과 ~ {window.get('window_end')} 이하 "
+                   f"공시 {events['total']}건 (구조 {counts.get('구조', 0)} · "
+                   f"일회성 {counts.get('일회성', 0)} · 예정 {counts.get('예정', 0)})")
+    sentiment = events.get("sentiment", {})
+    if sentiment.get("available"):
+        observation += " · 감성 " + " / ".join(f"{k} {v}" for k, v in sentiment["counts"].items())
+
+    structural = events.get("structural", [])
+    meaning = (f"구조를 바꾼 사건이 {counts.get('구조', 0)}건 있다"
+               + (f" — 가장 최근은 {structural[0]['title']}" if structural else ""))
+    limitation = (f"창 밖 사건은 세지 않았다 (이전 {events.get('pre_window', 0)}건 · "
+                  f"이후 {events.get('future_scheduled', 0)}건). ")
+    if sentiment.get("available"):
+        limitation += sentiment.get("limitation", "")
+    else:
+        limitation += f"감성 판정을 붙이지 못했다 — {sentiment.get('reason', '')}"
+
+    return card(
+        f"I-{workstream}-{index:04d}", f"V-{workstream}-{index:04d}",
+        "최근 12개월에 무슨 일이 있었나?",
+        observation, meaning,
+        "구조 변화는 되돌리기 어려워 다음 분기 실적에 이어질 가능성이 크다 — 다만 가설이다",
+        "공시는 회사가 낸 사실이지 시장의 해석이 아니다. 주가 반응과 인과를 섞지 않는다.",
+        limitation,
+        "예정 사건의 실현 여부를 확인일에 다시 본다",
+        "high" if events["total"] >= 20 else "medium")
+
+
+def score_card(workstream: str, index: int, scorecard: Dict, decision: Dict) -> Dict:
+    """Quick Score 해석카드 (CORP-TP CTP-10·CTP-13)."""
+    if not scorecard or scorecard.get("index") is None:
+        return card(f"I-{workstream}-{index:04d}", f"V-{workstream}-{index:04d}",
+                    "이 회사를 정식으로 볼 가치가 있나?",
+                    "점수를 매긴 차원이 없다", "판정을 유보한다",
+                    limitation="여섯 차원 모두 근거가 모자랐다",
+                    next_check="자료를 더 모아 다시 돌린다", confidence="low")
+
+    rows = [r for r in scorecard["rows"] if not r["separate"]]
+    observation = " · ".join(
+        f"{r['name']} {r['score'] if r['score'] is not None else 'Unscored'}" for r in rows)
+    observation += f" → 기회지수 {scorecard['index']}/5"
+
+    source_row = scorecard.get("source_confidence") or {}
+    meaning = (f"{decision.get('verdict')} — " + " / ".join(decision.get("reasons", []))
+               + f" (Source confidence {source_row.get('score', 'Unscored')} — 회사의 질이 아니라 근거의 강도다)")
+
+    return card(
+        f"I-{workstream}-{index:04d}", f"V-{workstream}-{index:04d}",
+        "이 회사를 정식으로 볼 가치가 있나?",
+        observation, meaning,
+        scorecard.get("index_note", ""),
+        " / ".join(sum((r.get("counter_evidence", []) for r in rows), [])[:3]) or "",
+        (("여섯 차원을 모두 채점했다. " if not scorecard.get("unscored") else
+          f"미채점 {len(scorecard['unscored'])}건({', '.join(scorecard['unscored'])}) — "
+          "**Unscored 를 0점으로 읽지 않는다.** ")
+         + "부담·위험은 높을수록 불리한 방향이라 지수에 넣을 때 뒤집었다."),
+        " / ".join(decision.get("conditions", [])[:2]) or "재검토일을 정한다",
+        "medium" if scorecard.get("coverage", 0) >= 0.6 else "low")
+
+
+# ─────────────────────────────────────────────────────────────
+# M5 — IND-R 해석카드
+# ─────────────────────────────────────────────────────────────
+def industry_card(workstream: str, index: int, analysis: Dict) -> Dict:
+    """산업 구조·규모 해석카드 (IND-R H04·H05)."""
+    target = analysis.get("target", {})
+    market = analysis.get("market", {})
+    chain = analysis.get("value_chain", {})
+    if not market.get("available"):
+        return card(f"I-{workstream}-{index:04d}", f"V-{workstream}-{index:04d}",
+                    "이 산업의 경계와 크기는?",
+                    market.get("reason", UNCHECKED), "산업 규모를 못 냈다",
+                    limitation=target.get("limitation", ""),
+                    next_check="업종 자릿수를 넓혀 다시 본다", confidence="low")
+
+    production = market.get("production", {})
+    observation = (f"{target.get('industry_code')} {target.get('name')} · 상장사 "
+                   f"{market['listed_count']}곳 · 상장 시가총액 합계 "
+                   f"{(market.get('listed_market_cap') or 0) / 1e12:,.1f}조 (기준일 {market.get('as_of')})")
+    if production.get("available"):
+        observation += (f" · {production['series_name']} 생산지수 {production['latest']}"
+                        f" (YoY {production.get('yoy_pct')}% · {production.get('cagr_years')}년 "
+                        f"CAGR {production.get('cagr_pct')}%)")
+
+    position = (chain.get("position") or {})
+    meaning = f"인접 소분류 {chain.get('adjacent_count', 0)}개와 같은 중분류를 이룬다"
+    if position.get("available"):
+        meaning += f" · 밸류체인 위치는 {position['estimated']} 로 추정된다 ({position['score']:.2f})"
+    elif position.get("reason"):
+        meaning += f" · 밸류체인 위치는 판정을 유보했다 ({position['reason']})"
+
+    return card(
+        f"I-{workstream}-{index:04d}", f"V-{workstream}-{index:04d}",
+        "이 산업의 경계와 크기는?",
+        observation, meaning,
+        "생산지수가 오르면 매출이 따라오는 경로를 가정하지만, 가격 효과가 빠져 있어 가설이다",
+        "상장 시가총액은 기대의 크기다 — 실제 시장 규모와 다르게 움직일 수 있다",
+        market.get("limitation", "") + " " + (production.get("limitation", "")
+                                              if production.get("available") else ""),
+        "산업협회·시장조사 보고서에서 시장 정의와 규모를 확인한다",
+        "medium")
+
+
+def cycle_card(workstream: str, index: int, cycle: Dict) -> Dict:
+    """산업 사이클 해석카드 (IND-R H11)."""
+    if not cycle or not cycle.get("available"):
+        return card(f"I-{workstream}-{index:04d}", f"V-{workstream}-{index:04d}",
+                    "지금 이 산업은 어느 국면인가?",
+                    (cycle or {}).get("reason", UNCHECKED), "국면을 판정하지 않았다",
+                    limitation="경기·생산·주가 신호를 받지 못했다",
+                    next_check="ECOS·KOSIS 조회를 다시 시도한다", confidence="low")
+
+    observation = " · ".join(f"{v['source']}: {v['signal']}({v['detail']})"
+                             for v in cycle.get("votes", []))
+    economy = cycle.get("economy", {})
+    sensitivity = cycle.get("sensitivity", {})
+    meaning = f"{cycle['phase']} — {cycle.get('vote_summary')}"
+    if economy.get("available"):
+        meaning += f" · 거시 국면은 {economy['phase']}"
+    causal = ""
+    if sensitivity.get("available"):
+        causal = (f"{sensitivity['name']} 은 {sensitivity['rate']['label']} · "
+                  f"{sensitivity['fx']['label']} — {sensitivity['why']}")
+
+    return card(
+        f"I-{workstream}-{index:04d}", f"V-{workstream}-{index:04d}",
+        "지금 이 산업은 어느 국면인가?",
+        observation, meaning, causal,
+        economy.get("divergence") or "선행과 동행이 갈리면 국면 판정이 뒤집힐 수 있다",
+        cycle.get("limitation", ""),
+        (cycle.get("scenarios") or [{}])[0].get("flip_kpi", "생산지수 YoY 부호 전환을 본다"),
+        cycle.get("confidence", "low"))
+
+
+# ─────────────────────────────────────────────────────────────
+# M5 — IND-TP 해석카드
+# ─────────────────────────────────────────────────────────────
+def ranking_card(workstream: str, index: int, analysis: Dict) -> Dict:
+    """후보 순위·민감도 해석카드 (IND-TP S10·S11·S13)."""
+    if not analysis or not analysis.get("available"):
+        return card(f"I-{workstream}-{index:04d}", f"V-{workstream}-{index:04d}",
+                    "이 산업에서 먼저 볼 후보는?",
+                    (analysis or {}).get("reason", UNCHECKED), "후보 순위를 못 냈다",
+                    limitation="후보군을 만들지 못했다",
+                    next_check="업종 범위를 넓혀 다시 본다", confidence="low")
+
+    universe = analysis["universe"]
+    ranking = [r for r in analysis["ranking"] if r.get("rank")]
+    ranking.sort(key=lambda r: r["rank"])
+    swings = analysis.get("sensitivity", {})
+
+    observation = " · ".join(
+        f"{r['rank']}위 {r['name']} {r.get('adjusted_display')}"
+        + ("(공동)" if r.get("tied") else "") for r in ranking[:5])
+    observation += f" (후보 {universe['count']}/{universe['universe_total']}곳)"
+
+    meaning = (f"순위 안정성 {swings.get('stability')} — {swings.get('stability_why')}. "
+               f"1·2위 점수 차이 {swings.get('top_margin')}")
+    return card(
+        f"I-{workstream}-{index:04d}", f"V-{workstream}-{index:04d}",
+        "이 산업에서 먼저 볼 후보는?",
+        observation, meaning,
+        "점수는 후보군 안 상대 위치다 — 산업이 통째로 좋거나 나쁠 가능성은 여기에 안 들어 있다",
+        (f"{swings.get('flip_count', 0)}개 시나리오에서 1위가 바뀐다"
+         + (f" ({', '.join(swings.get('flip_scenarios', [])[:2])})"
+            if swings.get("flip_scenarios") else "")),
+        (universe.get("bias", "") + " " +
+         "missing penalty 로 결측을 벌점 처리했다 — 자료가 적은 후보가 불리하게 나온다."),
+        "총점 1위를 확정하지 않는다. 사람이 승인한다 (설계서 ITP-T10)",
+        "medium" if swings.get("stability") == "높음" else "low")

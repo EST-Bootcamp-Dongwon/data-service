@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 SCHEMA_VERSION = "GIC-HARNESS-1.0"
-HARNESS_VERSION = "api-test-M4"
+HARNESS_VERSION = "api-test-M5"
 KST = timezone(timedelta(hours=9))
 
 # 워크스트림 4종 — 명세 §5.4
@@ -43,7 +43,7 @@ WORKSTREAMS = {
         "needs": ["종목코드 또는 종목명", "분석 기준일"],
         "sufficiency": "high",
         "sufficiency_label": "🟢 높음 (DART 공시)",
-        "note": "H04 를 12개월 이벤트·Quick Score 로 나눈다 (M5)",
+        "note": "H04 를 12개월 이벤트·Quick Score 6차원·P/W/D 로 나눈다",
     },
     "IND-R": {
         "id": "IND-R",
@@ -51,8 +51,9 @@ WORKSTREAMS = {
         "target_kind": "industry",
         "needs": ["업종코드 또는 산업명", "분석 기준일"],
         "sufficiency": "medium",
-        "sufficiency_label": "🟡 중간 (KRX 업종 + KOSIS)",
-        "note": "밸류체인 자료가 공개 API 에 없어 부족분은 G-SCOPE 로 밝힌다 (M5)",
+        "sufficiency_label": "🟡 중간 (KSIC + KOSIS + ECOS)",
+        "note": ("H04 를 밸류체인·시장/수급·사이클 3단으로 나눈다. "
+                 "이익풀·TAM/SAM/SOM·점유율은 공개 API 에 없어 G-SCOPE 로 밝힌다"),
     },
     "IND-TP": {
         "id": "IND-TP",
@@ -60,8 +61,9 @@ WORKSTREAMS = {
         "target_kind": "industry",
         "needs": ["업종코드 또는 산업명", "분석 기준일"],
         "sufficiency": "medium",
-        "sufficiency_label": "🟡 중간",
-        "note": "H04 를 점수·penalty·민감도로 나눈다 (M5)",
+        "sufficiency_label": "🟡 중간 (시장 스냅샷)",
+        "note": ("H04 를 점수·missing penalty·민감도·순위 안정성으로 나눈다. "
+                 "후보 5~10 을 하드 제약으로 쓰지 않고 후보군 전수를 공개한다"),
     },
 }
 

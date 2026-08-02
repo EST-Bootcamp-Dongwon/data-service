@@ -29,8 +29,9 @@ docs/
 !README.md
 
 # 로컬 데이터
-# ⚠️ 아래 일곱 파일은 **반드시 올라가야 한다** (명세서 §8 배포 포함 데이터).
+# ⚠️ 아래 여덟 파일은 **반드시 올라가야 한다** (명세서 §8 배포 포함 데이터).
 #      data/industry_map.json         DART 표준산업분류 3,925종목 (409KB) — 없으면 피어 선정이 죽는다
+#      data/glossary.json             08강 용어 사전 427개 (180KB) — 리포트 용어 툴팁 (M5)
 #      data/stock_master.json         국내 티커 판별 · 자동완성
 #      data/us_master.json            미국 티커 판별 · S&P 500 표시
 #      data/corp_code.json            DART 고유번호 매핑 — 없으면 재무·공시 전부 막힌다
@@ -38,7 +39,7 @@ docs/
 #      data/krx_derived.json          거래일 캘린더 · 시장의 폭 (13KB) — M3 전처리와 `/market`
 #      data/krx_bundle.db             전종목 150거래일 축약본 (30MB) — `/quant`·`/krx` 캔들
 #
-#    앞의 넷은 git 에도 있지만 `krx_bundle.db` 는 **git 에는 없고 여기만 있다**
+#    `krx_bundle.db` 만 **git 에는 없고 여기만 있다**
 #    (데이터 원본이라 커밋하지 않는다 — `.gitignore` 참고).
 #    `vercel deploy` 는 git 이 아니라 로컬 폴더를 그대로 올리므로 이렇게 갈라 둘 수 있다.
 #    ⚠️ 그래서 **배포 전에 `python3 scripts/build_krx_bundle.py` 를 돌려야** 한다.

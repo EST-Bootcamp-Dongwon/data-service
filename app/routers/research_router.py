@@ -24,7 +24,9 @@ from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Path
 
+from app.repositories import industry_store
 from app.services.research import contracts, export_md, ledger, plan, stages
+from app.services.research.knowledge import glossary
 
 router = APIRouter(prefix="/api/research", tags=["리서치 하네스"])
 
@@ -36,9 +38,54 @@ def list_workstreams() -> Dict:
         "schema_version": contracts.SCHEMA_VERSION,
         "harness_version": contracts.HARNESS_VERSION,
         "workstreams": list(contracts.WORKSTREAMS.values()),
-        "implemented": ["CORP-R"],
-        "note": "CORP-R 만 M4 에서 구현했다. 나머지 셋은 M5 에서 붙인다",
+        "implemented": ["CORP-R", "CORP-TP", "IND-R", "IND-TP"],
+        "note": ("네 작업 모두 12상태(H00~H11)를 돈다. 갈라지는 자리는 "
+                 "CORP-R 은 H03, 나머지 셋은 H04 다 (명세 §5.4)"),
     }
+
+
+@router.get("/industries", summary="산업 목록 (IND-R · IND-TP 대상 선택)")
+def list_industries(digits: int = 3, min_members: int = 3, limit: int = 300) -> Dict:
+    """업종코드로 묶은 산업 목록.
+
+    `digits` 는 몇 자리를 한 산업으로 볼지다 (2=중분류 · 3=소분류 · 4~5=세분류).
+    구성 종목이 적은 산업도 **빼지 않고** 남기고 `enough` 로 표시만 한다 —
+    빼 버리면 "왜 내 업종이 목록에 없나" 를 설명할 수 없다.
+    """
+    if digits < 2 or digits > 5:
+        raise HTTPException(status_code=400, detail="digits 는 2~5 사이여야 합니다")
+    rows = industry_store.directory(min_members=min_members, digits=digits)
+    return {
+        "digits": digits,
+        "level": {2: "중분류", 3: "소분류", 4: "세분류", 5: "세세분류"}[digits],
+        "total": len(rows),
+        "enough": sum(1 for r in rows if r["enough"]),
+        "min_members": min_members,
+        "rows": rows[:limit],
+        "stats": industry_store.stats(),
+        "note": ("한국표준산업분류(KSIC)의 정식 단위는 세세분류 5자리다. 다만 DART 업종코드는 "
+                 "자릿수가 섞여 있어(2~5자리) 5자리로 자르면 상장사가 5곳을 넘는 산업이 16% 뿐이다. "
+                 "기본값을 3자리로 두고, 후보가 모자라면 실행 중에 넓힌다"),
+    }
+
+
+@router.get("/industries/resolve", summary="산업명·업종코드·종목명 → 업종 확정")
+def resolve_industry(q: str, digits: int = 3) -> Dict:
+    """`261` · `반도체` · `삼성전자` 중 무엇을 넣어도 업종을 찾아 준다."""
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="검색어(q)가 필요합니다")
+    return industry_store.resolve(q, digits=digits)
+
+
+@router.get("/glossary", summary="08강 용어 사전 (툴팁·검색)")
+def lookup_glossary(term: str = "", q: str = "", limit: int = 20) -> Dict:
+    """`term` 이면 정확히 하나, `q` 면 자유 검색. 둘 다 없으면 절 목록만 준다."""
+    if term:
+        return {"mode": "lookup", **glossary.lookup(term)}
+    if q:
+        rows = glossary.search(q, limit=limit)
+        return {"mode": "search", "query": q, "count": len(rows), "rows": rows}
+    return {"mode": "index", "sections": glossary.sections(), "stats": glossary.stats()}
 
 
 @router.get("/plan/{workstream_id}", summary="12상태 계획과 진행률 가중치")
@@ -59,9 +106,13 @@ def create_run(payload: Dict = Body(..., examples=[{
     if workstream not in contracts.WORKSTREAMS:
         raise HTTPException(status_code=404, detail=f"모르는 워크스트림입니다: {workstream}")
 
-    code = str(payload.get("code") or "").strip()
+    code = str(payload.get("code") or payload.get("industry") or "").strip()
     if not code:
-        raise HTTPException(status_code=400, detail="종목코드(code)가 필요합니다")
+        kind = contracts.WORKSTREAMS[workstream]["target_kind"]
+        raise HTTPException(
+            status_code=400,
+            detail=("업종코드나 산업명(code)이 필요합니다 — 예: 261 · 반도체 · 삼성전자"
+                    if kind == "industry" else "종목코드(code)가 필요합니다"))
 
     as_of = str(payload.get("as_of") or contracts.today_kst())
     header = contracts.new_run_header(workstream, as_of,

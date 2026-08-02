@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 from ....clients import dart_data
 from ....repositories import industry_store, snapshot_store
 from ....services.preprocess import normalize
-from ..knowledge import financials, valuation
+from ..knowledge import financials, macro, valuation
 
 # 시총 밴드 기본값 — 0.5~2.0배.
 # ±50%(0.5~1.5배)로 잡으면 큰 회사 쪽이 지나치게 좁아진다. 시총은 로그 분포라
@@ -187,8 +187,13 @@ def _account(accounts: Dict, *keys) -> Optional[float]:
     return None
 
 
-def ratios_of(accounts: Dict) -> Dict:
-    """한 해 계정 → 08강 판정 묶음."""
+def ratios_of(accounts: Dict, industry_code: str = "", name: str = "") -> Dict:
+    """한 해 계정 → 08강 판정 묶음.
+
+    `industry_code` 를 주면 **금융업 예외**를 씌운다 (U8 결정 ②).
+    은행은 예금이 부채라 부채비율 1,000% 가 정상인데, 그걸 그대로 계산해
+    `🔴 200% 이상 주의` 로 찍으면 틀린 사실을 싣는 것이다 (08강 06.md 421행).
+    """
     revenue = _account(accounts, "revenue")
     operating = _account(accounts, "operating_income")
     net = _account(accounts, "net_income")
@@ -199,7 +204,7 @@ def ratios_of(accounts: Dict) -> Dict:
     current_liabilities = _account(accounts, "current_liabilities")
     ocf = _account(accounts, "cfo")
 
-    return {
+    result = {
         "inputs": {"revenue": revenue, "operating_income": operating, "net_income": net,
                    "assets": assets, "equity": equity, "liabilities": liabilities,
                    "current_assets": current_assets, "current_liabilities": current_liabilities,
@@ -212,6 +217,18 @@ def ratios_of(accounts: Dict) -> Dict:
         "dupont": financials.dupont(net, revenue, assets, equity),
         "earnings_quality": financials.earnings_quality(ocf, operating),
     }
+
+    if industry_code:
+        adjusted = macro.stability_verdicts(result, industry_code, name)
+        if adjusted.get("applied"):
+            result = adjusted["ratios"]
+            result["financial_exception"] = {
+                "applied": True,
+                "changed": adjusted["changed"],
+                "note": adjusted["note"],
+                "basis": adjusted["basis"],
+            }
+    return result
 
 
 def peer_table(target: Dict, peers: List[Dict]) -> Dict:
