@@ -329,6 +329,8 @@ def risk_free_rate() -> Dict:
     return {"rate": value / 100, "source": row.get("source", ""),
             "as_of": row.get("as_of", ""),
             "candidates": row.get("candidates", []),
+            # 국고채와 예금금리의 격차 — 1%p 를 넘으면 `conflict` 가 함께 실린다
+            "spread_pp": row.get("spread_pp"),
             "conflict": row.get("conflict"),
             "note": row.get("note", "")}
 FRONTIER_SEED = 20260731          # 비중 추첨 시드 고정 → 같은 조건이면 같은 그림이 나온다
