@@ -328,6 +328,7 @@ hostname -I            # 표시된 IP 로 http://서버_IP:8000/ 접속
 | 주소 | 파일 | 화면 |
 |------|------|------|
 | `/` | `static/pages/dashboard.html` | **대시보드** — 지수·환율·금리·시장온도 카드 + 데이터 상태 |
+| `/research?ws=` | `static/pages/research.html` | **리서치** — 네 작업 공용 (진행률 모달 · 근거 드릴다운 · MD 내보내기) |
 | `/stock` | `static/pages/stock.html` | **종목 통합 조회** — 국내·미국 주가 + FRED 거시지표 |
 | `/yf` | `static/pages/yf.html` | 야후 파이낸스 시세 |
 | `/krx` | `static/pages/krx.html` | KRX 일별 시세 |
@@ -338,6 +339,7 @@ hostname -I            # 표시된 IP 로 http://서버_IP:8000/ 접속
 | — | `static/assets/app.css` | 디자인 토큰 + 공통 스타일 (라이트/다크) |
 | — | `static/assets/app.js` | API 호출 · 숫자 표기 · 차트 기본값 |
 | — | `static/assets/shell.js` | 사이드바 · 티커바 · 스파크라인 · 상태등급 |
+| — | `static/assets/research.js` | 리서치 실행 드라이버 · 진행률 모달 · 드릴다운 · 용어 툴팁 |
 
 > 화면 목록(사이드바)은 `static/assets/shell.js` 의 `NAV` 배열 **한 곳**에만 있다.
 > 새 화면을 추가하면 여기 한 줄만 넣으면 모든 화면의 사이드바에 반영된다.
@@ -353,6 +355,63 @@ hostname -I            # 표시된 IP 로 http://서버_IP:8000/ 접속
 - **데이터 상태** — 예전 화면 상단 배지를 카드로 올렸다. 인증키 값은 응답에 담기지 않고 출처·길이만 나온다
 
 카드 하나가 실패해도 나머지는 그대로 뜬다. 실패한 카드는 그 자리에서 사유를 말한다.
+
+### `/research` — 리서치 (네 작업 공용) ★
+
+**화면 하나로 네 작업을 다 돌린다.** 12상태(H00~H11)가 넷 다 같기 때문이다 —
+갈라지는 것은 대상 입력(종목코드 vs 업종코드)과 리포트 양식뿐이다.
+사이드바의 네 항목은 `?ws=CORP-R` 처럼 매개변수만 다르다.
+
+**① 진행률 모달** — 12상태 체크리스트 + 상태별 예상 시간
+
+```
+기업 리서치 실행 중 · 삼성전자
+████████████░░░░░░░░  65%          경과 8.4초 · 남은 예상 5초
+
+✓ H00 Initialize   ORCH   0.2초
+✓ H01 Scope        SCOPE  대상 확정 · 피어 후보 12곳      0.6초
+▶ H02 Evidence     EVID   DART 공시 · 재무 수집 중…   ⏱ / 9.1초
+  H03 Normalize    DATA   전처리 + 정규화 → D- 발급       ≈0.6초
+
+근거 12 · 데이터 47 · 계산 9 · Gap 1 · 충돌 0
+```
+
+- 진행률은 **§5.1 가중치 누적값**이다 (12등분이 아니다). H02·H04 가 각각 20점이라
+  거기서 바가 크게 움직인다.
+- 예상 시간은 **배포본 실측 기준선**으로 시작해, 그 브라우저가 잰 값이 쌓이면
+  그쪽(오리진별 최근 5회 중앙값)으로 갈아탄다. 모달이 어느 쪽을 쓰는지 밝힌다.
+- H02 가 끝나면 `h02_timing` 을 그대로 보여 준다 —
+  `2건을 동시에 불렀다 — 가장 느린 것은 재무제표 6.4초 (순차였다면 12.8초)`.
+  **DART 회당 6~7초는 우리가 못 줄인다.** 그래서 미리 말한다.
+- `H01`·`H04`·`H08` 에서 모달이 멈추고 **질문 카드**로 바뀐다.
+  건너뛰면 `의견 미입력`으로 기록된다 — AI 가 선호를 추정하지 않는다 (불변원칙 §2-7).
+
+**② 워밍업** — 화면에 들어오면 `GET /api/research/warmup` 을 한 번 보낸다.
+H00 은 **콜드 5,777ms · 웜 206ms** 다. 5.8초는 리서치가 느린 것이 아니라 함수가 자고 있던
+것이라, 대상을 고르는 몇 초 동안 미리 깨우면 사라진다.
+
+**③ 근거 드릴다운** — 수치를 누르면 `D- → CALC- → E-` 사슬이 오른쪽에 열린다.
+팩이 이미 브라우저에 있어 **왕복이 없다**.
+
+```
+D-CORP-R-0001  revenue 279,604,799,000,000 원 · 2021 · 연결재무제표
+├ 계산  이 값을 쓴 계산 기록이 없다 — 원자료를 그대로 실은 값이다
+└ 출처  E-CORP-R-0020  삼성전자 2021~2025 연결 재무제표
+        DART-재무제표 · 등급 회사원문 — 회사가 작성해 제출한 원문
+        직접 · 발행 2025-03-11 · 수집 2026-08-02 · 신뢰도 high
+```
+
+> ⚠️ **본문 수치의 일부만 링크된다.** 실측 — CORP-R 10/73 · IND-R 3/40 · CORP-TP 3/30 ·
+> IND-TP 0/75. `D-` 는 원시 계정인데 본문 수치는 대부분 **파생값**(밸류에이션 밴드 ·
+> CAGR · Quick Score)이라 장부에 번호가 없다. 아무 `D-` 나 갖다 붙이면 없는 근거 사슬을
+> 만드는 것이라, **확실할 때만 링크하고 못 이은 수를 화면이 그대로 밝힌다.**
+> 원자료는 **장부 탭**에 전부 있다 (E- · D- · CALC- · Gap 전수).
+
+**④ 용어 툴팁** — 08강 용어집 427개. 표기 목록만 먼저 받고(≈8KB) 뜻은 마우스를 올린
+낱말만 `?term=` 으로 받는다. 사전에 없으면 **뜻을 지어내지 않고** 없다고 답한다.
+
+**⑤ MD 내보내기** — `POST /api/research/export/md` 결과를 `.md` 파일로 저장한다.
+H09 가 조립해 팩에 실어 둔 리포트를 함께 보내므로, 화면에서 본 것과 파일이 같다.
 
 ### `/users` · `/tetris` — 실습 아카이브로 이동
 
@@ -737,10 +796,11 @@ Context Pack 을 들고 다니고 서버는 받은 것을 고쳐 돌려준다 (�
 | Method | Path | 설명 | 성공 |
 |--------|------|------|------|
 | GET | `/api/research/workstreams` | 작업 4종 메타 (**넷 다 구현**) | 200 |
-| GET | `/api/research/plan/{workstream_id}` | 12상태 · 가중치 · 갈라지는 자리 · 질문 지점 | 200 |
+| GET | `/api/research/warmup` | 함수 깨우기 — 화면 진입 시 한 번 (H00 콜드 5.8초 → 웜 0.21초) | 200 |
+| GET | `/api/research/plan/{workstream_id}` | 12상태 · 가중치 · 갈라지는 자리 · 질문 지점 · **상태별 예상 시간** | 200 |
 | GET | `/api/research/industries` | 산업 목록 (`?digits=2~5`) — IND-* 대상 선택 | 200 |
 | GET | `/api/research/industries/resolve` | `?q=반도체` · `?q=261` · `?q=삼성전자` → 업종 확정 | 200 |
-| GET | `/api/research/glossary` | 08강 용어 사전 427개 (`?term=` 툴팁 · `?q=` 검색) | 200 |
+| GET | `/api/research/glossary` | 08강 용어 사전 427개 (`?term=` 툴팁 · `?q=` 검색 · `?terms=true` 표기 목록) | 200 |
 | POST | `/api/research/runs` | H00 실행 — run_header + 초기 Context Pack | 200 |
 | POST | `/api/research/runs/steps/{state_id}` | H01~H11 단일 상태 실행 | 200 |
 | POST | `/api/research/export/md` | Context Pack → GIC 양식 마크다운 | 200 |
@@ -829,6 +889,10 @@ node tests/run_harness.js                 # CORP-R · 삼성전자
 node tests/run_harness.js all             # 네 작업 전부
 node tests/run_harness.js IND-R 261       # 산업 리서치 · 반도체 제조업
 node tests/run_harness.js all https://…   # 배포본에서 네 작업
+
+# 화면 쪽 — 서버 없이 돈다 (fetch 를 가짜로 갈아 끼우고 Research.boot() 를 실제로 실행)
+npm install --no-save jsdom apexcharts@4
+node tests/regress_ui.js                  # 이식 회귀 + 리서치 화면 12상태 구동 + 링크 보수성
 ```
 
 ### 에러 응답
