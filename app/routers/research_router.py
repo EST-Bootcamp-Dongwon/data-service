@@ -1,7 +1,8 @@
 """리서치 하네스 라우터 (명세 §6.1)
 
     GET  /api/research/workstreams          작업 4종 메타
-    GET  /api/research/plan/{workstream_id} 12상태 · 가중치 · 질문 지점
+    GET  /api/research/warmup               함수 깨우기 (M6 — 화면 진입 시 한 번)
+    GET  /api/research/plan/{workstream_id} 12상태 · 가중치 · 질문 지점 · 예상 시간
     POST /api/research/runs                 H00 실행 — run_header + 초기 Context Pack
     POST /api/research/runs/steps/{state_id} H01~H11 단일 상태 실행 (stateless)
     POST /api/research/export/md            Context Pack → GIC 양식 마크다운
@@ -24,7 +25,7 @@ from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Path
 
-from app.repositories import industry_store
+from app.repositories import industry_store, snapshot_store
 from app.services.research import contracts, export_md, ledger, plan, stages
 from app.services.research.knowledge import glossary
 
@@ -78,14 +79,86 @@ def resolve_industry(q: str, digits: int = 3) -> Dict:
 
 
 @router.get("/glossary", summary="08강 용어 사전 (툴팁·검색)")
-def lookup_glossary(term: str = "", q: str = "", limit: int = 20) -> Dict:
-    """`term` 이면 정확히 하나, `q` 면 자유 검색. 둘 다 없으면 절 목록만 준다."""
+def lookup_glossary(term: str = "", q: str = "", terms: bool = False,
+                    limit: int = 20) -> Dict:
+    """`term` 이면 정확히 하나, `q` 면 자유 검색. 둘 다 없으면 절 목록만 준다.
+
+    `terms=true` 는 **표기만** 모아 준다 (뜻·예문 없이 427줄 ≈ 8KB).
+    M6 리포트가 화면에서 용어를 찾아 밑줄 치는 데 쓴다 — 사전 전체(180KB)를
+    내려받지 않고도 어느 낱말이 사전에 있는지 알 수 있어야 하기 때문이다.
+    뜻은 마우스를 올린 그 낱말만 `?term=` 으로 따로 받는다.
+    """
+    if terms:
+        rows = sorted((row.get("term", "") for row in glossary.load().get("terms", [])),
+                      key=len, reverse=True)          # 긴 낱말부터 — 겹칠 때 긴 쪽이 이긴다
+        return {"mode": "terms", "count": len(rows), "terms": [t for t in rows if t],
+                "min_length": glossary.MIN_TERM_LENGTH,
+                "note": "표기만이다. 뜻은 `?term=` 으로 하나씩 받는다"}
     if term:
         return {"mode": "lookup", **glossary.lookup(term)}
     if q:
         rows = glossary.search(q, limit=limit)
         return {"mode": "search", "query": q, "count": len(rows), "rows": rows}
     return {"mode": "index", "sections": glossary.sections(), "stats": glossary.stats()}
+
+
+@router.get("/warmup", summary="함수 깨우기 — 화면 진입 시 한 번 (M6)")
+def warmup() -> Dict:
+    """무거운 조회 없이 **함수와 지연 캐시만** 깨운다.
+
+    왜 필요한가 — 실측이 말해 준다 (변경 노트 N59 · U-신규 결정)
+
+        H00 콜드 5,777ms  →  웜 206ms
+
+    5.8초는 리서치가 느린 것이 아니라 **함수가 자고 있던 것**이다. 사용자가 대상을
+    고르는 동안(보통 몇 초) 이 요청 하나를 먼저 보내 두면 실행 버튼을 눌렀을 때는
+    이미 깨어 있다.
+
+    여기서 하는 일은 저장소의 **지연 로딩을 미리 끝내는 것**뿐이다. DART·KOSIS 같은
+    외부 API 는 부르지 않는다 — 깨우자고 남의 서버에 요청을 보낼 이유가 없고,
+    그쪽 응답을 기다리면 워밍업 자체가 느려진다.
+    """
+    import time
+
+    steps = []
+
+    def step(name: str, already: bool, fn) -> None:
+        """`already` 는 **부르기 전에** 캐시가 차 있었는지다.
+
+        걸린 시간으로 콜드 여부를 짐작하지 않는다 — 로컬은 30ms, 배포본은 그보다
+        느려서 어느 문턱을 잡아도 한쪽이 틀린다. 캐시 상태를 직접 보는 쪽이 정확하다.
+        """
+        begin = time.monotonic()
+        try:
+            detail = fn()
+            ok, error = True, ""
+        except Exception as failure:                  # 하나가 죽어도 나머지는 깨운다
+            detail, ok, error = None, False, f"{type(failure).__name__}: {failure}"
+        steps.append({"name": name, "ok": ok, "loaded_now": not already,
+                      "detail": detail, "error": error,
+                      "ms": round((time.monotonic() - begin) * 1000, 1)})
+
+    # H00~H01 이 실제로 읽는 것들이다. 순서는 무거운 것부터 — 하나가 느려도 나머지가 이어진다.
+    step("industry_map", industry_store._cache is not None,
+         lambda: industry_store.stats().get("total"))
+    step("market_snapshot", snapshot_store._snapshot is not None,
+         lambda: snapshot_store.as_of())
+    step("glossary", glossary._cache is not None,
+         lambda: glossary.stats().get("total"))
+
+    total = round(sum(s["ms"] for s in steps), 1)
+    loaded = [s["name"] for s in steps if s["loaded_now"]]
+    return {
+        "warm": True,
+        "was_cold": bool(loaded),
+        "loaded_now": loaded,
+        "total_ms": total,
+        "steps": steps,
+        "note": (f"이 인스턴스에서 처음 읽은 것 {len(loaded)}건 — 방금 깨웠다" if loaded
+                 else "이미 깨어 있었다"),
+        "why": ("H00 콜드 5,777ms → 웜 206ms (배포본 실측 2026-08-02). "
+                "화면 진입 시 이 요청 하나로 그 차이를 없앤다"),
+    }
 
 
 @router.get("/plan/{workstream_id}", summary="12상태 계획과 진행률 가중치")
