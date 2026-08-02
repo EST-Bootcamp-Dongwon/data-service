@@ -68,38 +68,66 @@ SUBSTAGES = {
 
 
 # ─────────────────────────────────────────────────────────────
-# 상태별 예상 시간 — 배포본 실측 (M6)
+# 상태별 예상 시간 — 배포본 실측 (M6 신설 · M7 재측정)
 # ─────────────────────────────────────────────────────────────
 # ⚠️ **지어낸 숫자가 아니다.** 아래 값은 전부 2026-08-02 배포본에서 잰 것이고,
 #    무엇을 어떻게 쟀는지는 `BASELINE["how"]` 에 적어 응답에 함께 싣는다.
 #    쓰는 쪽이 출처를 볼 수 없으면 그 숫자는 하드코딩과 다를 게 없기 때문이다.
 #
-# 산업 계열은 12상태를 **하나씩 따로** 쟀다 (IND-R · 261 · 전구간 11.2초).
-# 기업 계열은 H00 과 H02 만 따로 쟀고, 나머지 10상태는 "웜 전구간 6.9초에서 그 둘을
-# 뺀 값"을 10으로 나눈 근사다. 그래서 어느 쪽이 직접 잰 값인지 `EXACT` 로 구분한다.
+# M7 에서 두 가지가 바뀌었다.
+#
+# ① **워크스트림별로 나눴다.** M6 은 `corp` / `industry` 둘로 묶었는데, 실측해 보니
+#    같은 묶음 안에서 H04 가 7~10배 다르다 — CORP-R 0.61초 vs CORP-TP 4.60초,
+#    IND-R 8.42초 vs IND-TP 0.78초. 묶어서 평균 내면 **둘 다 틀린 값**이 된다.
+#    CORP-TP 는 H04 에서 DART 공시목록을 한 번 더 부르고, IND-R 은 H04 에서
+#    밸류체인·사이클을 계산하는데 IND-TP 는 스냅샷만 보고 점수를 매기기 때문이다.
+#
+# ② **12상태를 넷 다 하나씩 따로 쟀다.** M6 은 기업 계열이 H00·H02 만 실측이고
+#    나머지 10상태는 전구간에서 나눈 근사였다. 이제 전부 직접 잰 값이라 `EXACT` 가
+#    비어 있지 않다 — 화면이 '≈' 를 붙일 자리가 없다.
 BASELINE_SECONDS: Dict[str, Dict[str, float]] = {
-    "industry": {"H00": 0.21, "H01": 0.22, "H02": 1.65, "H03": 0.59, "H04": 2.38,
-                 "H05": 0.80, "H06": 0.78, "H07": 0.78, "H08": 0.95, "H09": 0.94,
-                 "H10": 0.95, "H11": 0.93},
-    "corp": {"H00": 0.21, "H01": 0.63, "H02": 9.10, "H03": 0.63, "H04": 0.63,
-             "H05": 0.63, "H06": 0.63, "H07": 0.63, "H08": 0.63, "H09": 0.63,
-             "H10": 0.63, "H11": 0.63},
+    "CORP-R": {"H00": 0.21, "H01": 0.20, "H02": 8.54, "H03": 0.40, "H04": 0.61,
+               "H05": 0.93, "H06": 0.78, "H07": 0.95, "H08": 0.70, "H09": 0.67,
+               "H10": 0.97, "H11": 0.74},
+    "CORP-TP": {"H00": 0.21, "H01": 0.21, "H02": 9.50, "H03": 0.32, "H04": 2.99,
+                "H05": 0.80, "H06": 0.87, "H07": 0.86, "H08": 0.88, "H09": 0.98,
+                "H10": 1.07, "H11": 0.71},
+    "IND-R": {"H00": 0.48, "H01": 0.23, "H02": 2.67, "H03": 0.58, "H04": 8.42,
+              "H05": 0.78, "H06": 1.00, "H07": 0.96, "H08": 0.97, "H09": 1.02,
+              "H10": 0.96, "H11": 1.14},
+    "IND-TP": {"H00": 0.23, "H01": 0.22, "H02": 1.68, "H03": 0.40, "H04": 0.83,
+               "H05": 1.03, "H06": 0.79, "H07": 0.92, "H08": 0.89, "H09": 0.95,
+               "H10": 1.02, "H11": 1.05},
 }
 
-# 상태별로 **직접 잰** 것. 여기 없는 것은 나눠 만든 근사라 화면이 '≈' 를 붙인다.
+# 같은 대상을 **다시** 볼 때 (`/tmp` 캐시가 차 있을 때) 실제로 걸린 시간.
+# 기준선을 이쪽으로 잡지 않는 이유는 아래 `why_first_run` 에 적었다.
+CACHED_SECONDS: Dict[str, Dict[str, float]] = {
+    "CORP-R": {"H02": 0.21},
+    "CORP-TP": {"H02": 0.20},
+    "IND-R": {"H02": 1.93, "H04": 2.28},
+    "IND-TP": {"H02": 1.62},
+}
+
+# 상태별로 **직접 잰** 것. M7 부터는 넷 다 12상태 전부다.
 EXACT: Dict[str, List[str]] = {
-    "industry": list(BASELINE_SECONDS["industry"].keys()),
-    "corp": ["H00", "H02"],
+    workstream: list(states.keys()) for workstream, states in BASELINE_SECONDS.items()
 }
 
 BASELINE = {
     "measured_at": "2026-08-02",
-    "environment": "Vercel 배포본 · 함수 warm · 처음 보는 대상",
+    "environment": "Vercel 배포본 · 함수 warm · **처음 보는 대상** · `/tmp` 캐시 비어 있음",
     "how": {
-        "industry": ("IND-R · 261 반도체 제조업 전구간 11.2초를 상태별로 나눠 쟀다"),
-        "corp": ("H02 는 병렬화 후 SK하이닉스 9.25 · 카카오 9.72 · 클래시스 8.32초의 평균이다 "
-                 "(병렬화 전 평균 19.3초 → 9.1초). H00 은 워밍업된 함수의 값이고, "
-                 "나머지 10상태는 웜 전구간 6.9초에서 H00·H02 를 뺀 값을 10으로 나눈 근사다"),
+        "CORP-R": ("000660 SK하이닉스 전구간 16.5초를 상태별로 하나씩 쟀다. "
+                   "H02 8.54초는 DART 응답 대기다"),
+        "CORP-TP": ("035720 카카오(22.0초) · 005930 삼성전자(18.2초) 두 번의 평균이다. "
+                    "H04 가 2.99초인 것은 여기서 DART 공시목록을 한 번 더 부르기 때문이다 "
+                    "(실측 1.38 · 4.60초 — DART 응답 편차가 크다)"),
+        "IND-R": ("261 반도체 제조업 전구간 20.2초를 상태별로 하나씩 쟀다. "
+                  "H04 8.42초는 `/tmp` 캐시가 비어 있을 때다 (차 있으면 2.28초)"),
+        "IND-TP": ("261 반도체 제조업 전구간 11.1초. 세 번 재서 편차가 작았다 "
+                   "(11.0 · 11.1 · 10.2초). H02 가 IND-R 보다 1초 빠른 것은 "
+                   "KOSIS 생산지수·ECOS 경기지수를 부르지 않기 때문이다"),
     },
     # 워밍업을 안 하면 첫 요청이 이만큼 더 걸린다 (실측 H00 콜드 5.78초 · 웜 0.21초)
     "cold_start_seconds": 5.8,
@@ -108,19 +136,28 @@ BASELINE = {
     "why_h02_slow": ("H02 의 대기는 우리 코드가 아니라 DART 응답이다 — 배포본에서 회당 6~7초다. "
                      "동시 호출로 3회를 1회 대기로 줄였고(−53%) 그 이상은 줄일 수 없어 "
                      "모달이 미리 말한다"),
-    # 예상은 예상일 뿐이다. `/tmp` 캐시가 비어 있으면 같은 상태가 몇 배로 뛴다 —
-    # 실측 IND-R H04 웜 2.4초 · 처음 보는 산업 9.3초. 화면은 기다리는 동안 실제로 흐른
-    # 시간을 계속 세고, 예상을 넘어서면 그 사실을 말한다.
-    "miss_note": ("`/tmp` 캐시가 비어 있으면 더 걸린다 — 실측 IND-R H04 웜 2.4초 · "
-                  "처음 보는 산업 9.3초. 예상값은 상한이 아니다"),
+    # M7 결정 — 기준선을 '처음 보는 대상' 쪽으로 잡는다.
+    "why_first_run": ("같은 대상을 다시 보면 훨씬 빠르다 (CORP H02 8.5초 → 0.2초 · "
+                      "IND-R H04 8.4초 → 2.3초). 그래도 **기준선은 처음 보는 대상 쪽**이다. "
+                      "빠른 쪽을 기준으로 잡으면 처음 오는 사람이 정확히 M6 가 풀려던 문제"
+                      "(\"왜 멈춰 있지?\")를 겪는다. 넘게 예상해 일찍 끝나는 편이 낫다"),
+    "miss_note": ("예상값은 상한이 아니다. 화면은 기다리는 동안 실제로 흐른 시간을 세고, "
+                  "예상을 넘어서면 넘겼다는 사실도 함께 말한다"),
     "note": "환경마다 10배 넘게 다르다. 화면은 첫 실행에만 이 값을 쓰고 그 뒤엔 직접 잰 값을 쓴다",
 }
 
 
 def expected_seconds(workstream_id: str, state_id: str) -> float:
-    """그 상태가 배포본에서 대략 몇 초 걸리는가 (실측 기준선)."""
-    kind = contracts.WORKSTREAMS.get(workstream_id, {}).get("target_kind", "corp")
-    return BASELINE_SECONDS.get(kind, BASELINE_SECONDS["corp"]).get(state_id, 0.63)
+    """그 상태가 배포본에서 대략 몇 초 걸리는가 (실측 기준선).
+
+    워크스트림별로 찾고, 모르는 워크스트림이면 같은 `target_kind` 의 다른 것으로 대신한다.
+    """
+    states = BASELINE_SECONDS.get(workstream_id)
+    if states is None:
+        kind = contracts.WORKSTREAMS.get(workstream_id, {}).get("target_kind", "corp")
+        fallback = "IND-R" if kind == "industry" else "CORP-R"
+        states = BASELINE_SECONDS[fallback]
+    return states.get(state_id, 0.8)
 
 
 def weight_done(state_id: str) -> int:
@@ -142,7 +179,7 @@ def plan_for(workstream_id: str) -> Dict:
     """`/api/research/plan/{workstream_id}` 응답."""
     subs = SUBSTAGES.get(workstream_id, {})
     kind = contracts.WORKSTREAMS.get(workstream_id, {}).get("target_kind", "corp")
-    exact = set(EXACT.get(kind, []))
+    exact = set(EXACT.get(workstream_id, []))
     states = []
     for state in STATES:
         row = dict(state)
@@ -161,6 +198,10 @@ def plan_for(workstream_id: str) -> Dict:
         "states": states,
         "asks_at": [s["state_id"] for s in STATES if s["asks"]],
         "expected_total_seconds": round(sum(s["expected_seconds"] for s in states), 1),
-        "baseline": {**BASELINE, "how": BASELINE["how"].get(kind, "")},
+        "baseline": {**BASELINE,
+                     "how": BASELINE["how"].get(workstream_id, ""),
+                     # 같은 대상을 다시 볼 때의 값도 함께 준다 — 모달이 "다시 보면 빠르다" 를
+                     # 말할 수 있어야 예상을 넘긴 것과 원래 느린 것을 구분해 준다.
+                     "cached_seconds": CACHED_SECONDS.get(workstream_id, {})},
         "note": "진행률 바는 weight 누적값이다 (12등분이 아니다 — 명세 §5.1)",
     }
