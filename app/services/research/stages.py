@@ -29,6 +29,7 @@ import time
 from typing import Callable, Dict, List, Optional
 
 from ...clients import dart_data, dart_report, hf_data
+from ...core import parallel
 from ...repositories import industry_store, snapshot_store
 from .. import ts_service
 from . import contracts, export_md, ledger, narrative, plan, redteam
@@ -337,6 +338,16 @@ def _h02_industry(pack: Dict, request: Dict) -> Dict:
 
     name = target.get("name") or target.get("industry_code")
 
+    # KOSIS 생산지수와 ECOS 경기지수를 **동시에** 부른다 (기업 쪽 H02 와 같은 이유).
+    # 둘은 서로의 결과를 쓰지 않고, ECOS 는 안에서 두 계열을 또 부른다.
+    section = (target.get("section") or {}).get("letter", "")
+    fetched = parallel.gather({
+        "생산지수": lambda: ind_r.production_index(section),
+        "경기지수": macro.cycle_phase,
+    })
+    timing = parallel.summarize(fetched)
+    _stash(pack, "h02_timing", timing)
+
     # 1) 산업 분류 자체가 근거다 (구성 종목의 출처)
     evidence_id = ledger.add_evidence(
         pack, claim=f"{name} 업종 구성 종목 {target['member_count']}곳",
@@ -352,9 +363,10 @@ def _h02_industry(pack: Dict, request: Dict) -> Dict:
         published=snapshot_store.as_of(), directness="직접", confidence="high")
     result["evidence_ids"].append(evidence_id)
 
-    # 3) KOSIS 생산지수 — 있으면 근거, 없으면 Gap
-    section = (target.get("section") or {}).get("letter", "")
-    production = ind_r.production_index(section)
+    # 3) KOSIS 생산지수 — 있으면 근거, 없으면 Gap (위에서 동시에 받아 왔다)
+    production = (fetched["생산지수"]["value"] if fetched["생산지수"]["ok"]
+                  else {"available": False, "gap_code": "G-SOURCE",
+                        "reason": f"KOSIS 조회 실패 — {fetched['생산지수']['error'][:100]}"})
     _stash(pack, "production", production)
     if production.get("available"):
         evidence_id = ledger.add_evidence(
@@ -383,8 +395,10 @@ def _h02_industry(pack: Dict, request: Dict) -> Dict:
         result["gap_ids"].append(gap)
         contracts.downgrade(result, f"생산지수를 받지 못했다 — {production.get('reason', '')}")
 
-    # 4) ECOS 경기지수
-    economy = macro.cycle_phase()
+    # 4) ECOS 경기지수 (위에서 동시에 받아 왔다)
+    economy = (fetched["경기지수"]["value"] if fetched["경기지수"]["ok"]
+               else {"available": False,
+                     "reason": f"ECOS 조회 실패 — {fetched['경기지수']['error'][:100]}"})
     _stash(pack, "economy", economy)
     if economy.get("available"):
         evidence_id = ledger.add_evidence(
@@ -401,7 +415,8 @@ def _h02_industry(pack: Dict, request: Dict) -> Dict:
         result["gap_ids"].append(gap)
 
     result["verified_result"] = [f"근거 {len(result['evidence_ids'])}건 발급",
-                                 f"산업 {target['industry_code']} {name}"]
+                                 f"산업 {target['industry_code']} {name}",
+                                 timing["text"]]
     result["confidence"] = "high" if len(result["evidence_ids"]) >= 4 else "medium"
     if result["status"] == "in-progress":
         result["status"] = "accepted"
@@ -420,9 +435,26 @@ def _h02_corp(pack: Dict, request: Dict) -> Dict:
     started = time.monotonic()
     rows: List[Dict] = []
 
+    # ── 공시 목록과 재무제표를 **동시에** 부른다 ──
+    #
+    # 둘은 서로의 결과를 쓰지 않는다. 그런데 배포본에서 DART 는 회당 6~7초라
+    # (로컬의 10~40배) 순차로 두면 그대로 더해진다. 실측 — 함수가 이미 깨어 있어도
+    # H02 가 17~22초였고, 그중 대부분이 이 기다림이었다.
+    #
+    # **받아 오는 것만 동시에 한다.** 장부(E- 번호)에 적는 일은 아래에서 정해진
+    # 순서대로 한다 — 순서가 흔들리면 같은 종목의 리포트가 실행할 때마다 달라진다.
+    fetched = parallel.gather({
+        "공시목록": lambda: dart_data.fetch_disclosures(code, months=12, limit=100),
+        "재무제표": lambda: corp_r.load_financials(code, years=5),
+    })
+    timing = parallel.summarize(fetched)
+    _stash(pack, "h02_timing", timing)
+
     # 1) 공시 목록 — 카테고리별 최신 N건만 E- 로 만든다
     try:
-        listing = dart_data.fetch_disclosures(code, months=12, limit=100)
+        if not fetched["공시목록"]["ok"]:
+            raise RuntimeError(fetched["공시목록"]["error"])
+        listing = fetched["공시목록"]["value"]
         rows = listing.get("rows", [])
         by_category: Dict[str, List[Dict]] = {}
         for row in rows:
@@ -453,9 +485,11 @@ def _h02_corp(pack: Dict, request: Dict) -> Dict:
     except Exception as error:
         contracts.downgrade(result, f"공시 목록을 받지 못했다 — {error}")
 
-    # 2) 재무제표
+    # 2) 재무제표 (위에서 이미 받아 왔다 — 여기서는 장부에 적기만 한다)
     try:
-        loaded = corp_r.load_financials(code, years=5)
+        if not fetched["재무제표"]["ok"]:
+            raise RuntimeError(fetched["재무제표"]["error"])
+        loaded = fetched["재무제표"]["value"]
         if loaded["available"]:
             first, last = loaded["rows"][0]["year"], loaded["rows"][-1]["year"]
             evidence_id = ledger.add_evidence(
@@ -488,7 +522,7 @@ def _h02_corp(pack: Dict, request: Dict) -> Dict:
             severity="medium", owner="EVID")
         result["gap_ids"].append(gap)
         contracts.downgrade(result, f"사업보고서 원문을 건너뛰었다 — {why}")
-        result["verified_result"] = [f"근거 {len(result['evidence_ids'])}건 발급"]
+        result["verified_result"] = [f"근거 {len(result['evidence_ids'])}건 발급", timing["text"]]
         result["next_state_input"] = ["H03 이 이 근거들을 D- 로 정규화한다"]
         return result
 
@@ -526,7 +560,7 @@ def _h02_corp(pack: Dict, request: Dict) -> Dict:
         location="일별 종가", directness="직접", confidence="high")
     result["evidence_ids"].append(evidence_id)
 
-    result["verified_result"] = [f"근거 {len(result['evidence_ids'])}건 발급"]
+    result["verified_result"] = [f"근거 {len(result['evidence_ids'])}건 발급", timing["text"]]
     result["confidence"] = "high" if len(result["evidence_ids"]) >= 5 else "medium"
     if result["status"] == "in-progress":
         result["status"] = "accepted"

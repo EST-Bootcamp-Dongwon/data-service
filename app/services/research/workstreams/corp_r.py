@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 from ....clients import dart_data
+from ....core import parallel
 from ....repositories import industry_store, snapshot_store
 from ....services.preprocess import normalize
 from ..knowledge import financials, macro, valuation
@@ -136,6 +137,11 @@ def load_financials(code: str, years: int = 5) -> Dict:
     ⚠️ 한 번 호출하면 **3개년**이 온다 (`value` 당기 · `prev` 전기 · `prev2` 전전기).
     그래서 5년치를 받겠다고 5번 부르면 네 번은 헛일이다. 3년 간격으로 두 번만 부른다.
     (삼성전자 실측 0.14초/회 — 5회 0.7초 vs 2회 0.28초)
+
+    그리고 그 **두 번을 동시에** 부른다. 두 호출은 서로의 결과를 쓰지 않는데
+    배포본에서는 회당 6~7초라(로컬의 10~40배) 순차로 두면 그대로 더해진다.
+    받아 오는 것만 동시에 하고, **표에 넣는 일은 연도 순서대로** 한다 —
+    순서가 흔들리면 같은 종목의 리포트가 실행할 때마다 달라진다.
     """
     from datetime import datetime, timedelta, timezone
 
@@ -144,20 +150,23 @@ def load_financials(code: str, years: int = 5) -> Dict:
     while len(anchors) * 3 < years:
         anchors.append(anchors[-1] - 3)
 
+    fetched = parallel.gather(
+        {str(anchor): (lambda a=anchor: dart_data.fetch_financials(code, a, "11011"))
+         for anchor in anchors})
+
     by_year: Dict[int, Dict] = {}
     failures: List[str] = []
     basis = ""
-    for anchor in anchors:
-        try:
-            result = dart_data.fetch_financials(code, anchor, "11011")
-        except Exception as error:
-            failures.append(f"{anchor} — {str(error)[:60]}")
+    for anchor in anchors:                            # **정렬된 순서로** 꺼내 담는다
+        outcome = fetched[str(anchor)]
+        if not outcome["ok"]:
+            failures.append(f"{anchor} — {outcome['error'][:60]}")
             continue
-        accounts = result.get("accounts") or {}
+        accounts = (outcome["value"] or {}).get("accounts") or {}
         if not accounts:
             failures.append(f"{anchor} — 계정이 비어 있다")
             continue
-        basis = basis or result.get("fs_div_name") or result.get("fs_div") or ""
+        basis = basis or outcome["value"].get("fs_div_name") or outcome["value"].get("fs_div") or ""
         # 한 응답에서 3개년을 펼친다
         for offset, field in enumerate(("value", "prev", "prev2")):
             year = anchor - offset
@@ -169,6 +178,7 @@ def load_financials(code: str, years: int = 5) -> Dict:
     rows = [by_year[year] for year in sorted(by_year)][-years:]
     return {"available": bool(rows), "rows": rows, "failures": failures,
             "basis": basis, "calls": len(anchors),
+            "parallel": parallel.summarize(fetched),
             "years_requested": years, "years_loaded": len(rows)}
 
 
