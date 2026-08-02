@@ -28,12 +28,14 @@ window.Shell = (() => {
       ],
     },
     {
+      // M6 — 네 항목이 같은 화면(`research.html`)으로 간다. 12상태가 넷 다 같아
+      // 화면을 나눌 이유가 없고, 갈라지는 것은 대상 입력과 리포트 양식뿐이다.
       title: '리서치',
       items: [
-        { key: 'corp-r', href: '/research?ws=CORP-R', label: '기업 리서치', ico: '▤', soon: true, tag: 'M4' },
-        { key: 'corp-tp', href: '/research?ws=CORP-TP', label: '기업 Top Pick', ico: '▤', soon: true, tag: 'M5' },
-        { key: 'ind-r', href: '/research?ws=IND-R', label: '산업 리서치', ico: '▦', soon: true, tag: 'M5' },
-        { key: 'ind-tp', href: '/research?ws=IND-TP', label: '산업 Top Pick', ico: '▦', soon: true, tag: 'M5' },
+        { key: 'corp-r', href: '/research?ws=CORP-R', label: '기업 리서치', ico: '▤' },
+        { key: 'corp-tp', href: '/research?ws=CORP-TP', label: '기업 Top Pick', ico: '▤' },
+        { key: 'ind-r', href: '/research?ws=IND-R', label: '산업 리서치', ico: '▦' },
+        { key: 'ind-tp', href: '/research?ws=IND-TP', label: '산업 Top Pick', ico: '▦' },
       ],
     },
     {

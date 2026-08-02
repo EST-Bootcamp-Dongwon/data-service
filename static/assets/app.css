@@ -487,3 +487,224 @@ code { font-family: var(--mono); font-size: 0.92em; background: var(--surface-2)
 .method.get { background: #0d9488; }
 .method.post { background: #d97706; }
 .path { font-family: var(--mono); font-size: var(--t-md); }
+
+/* ══════════════════════════════════════════════════════════════
+   M6 리서치 화면 — 진행률 모달 · 질문 카드 · 리포트 · 근거 드릴다운
+   ══════════════════════════════════════════════════════════════
+   전부 위의 토큰만 쓴다. 새 색을 만들지 않으므로 다크모드가 그대로 따라온다.
+
+   U3 규칙을 여기서도 지킨다.
+     · 계열 색(--c1~c8)을 글자에 칠하지 않는다 — 옆의 점·선이 정체성을 맡는다
+     · 상태색은 아이콘 + 글자와 함께 낸다 (색만으로 뜻을 전하지 않는다)
+   ────────────────────────────────────────────────────────────── */
+
+/* ── 대상 선택 ───────────────────────────────── */
+.ws-pick { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--sp-3); }
+.ws-card {
+  text-align: left; cursor: pointer; padding: var(--sp-3) var(--sp-4);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  display: flex; flex-direction: column; gap: 3px; font: inherit; color: var(--text);
+}
+.ws-card:hover { border-color: var(--accent); }
+.ws-card.on { border-color: var(--accent); background: var(--accent-soft); }
+.ws-card b { font-size: var(--t-lg); }
+.ws-card .ws-id { font-family: var(--mono); font-size: var(--t-xs); color: var(--muted); }
+.ws-card .ws-note { font-size: var(--t-xs); color: var(--muted); line-height: 1.45; }
+
+.pick-list { position: relative; }
+.pick-drop {
+  position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px);
+  max-height: 280px; overflow-y: auto; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .12);
+}
+.pick-drop:empty { display: none; }
+.pick-row {
+  display: flex; gap: var(--sp-2); align-items: baseline; width: 100%;
+  padding: 7px 10px; background: none; border: 0; border-bottom: 1px solid var(--border-soft);
+  font: inherit; color: var(--text); text-align: left; cursor: pointer;
+}
+.pick-row:last-child { border-bottom: 0; }
+.pick-row:hover, .pick-row:focus-visible { background: var(--surface-2); }
+.pick-row .code { font-family: var(--mono); font-size: var(--t-sm); color: var(--muted); }
+.pick-row .sub { margin-left: auto; font-size: var(--t-xs); color: var(--muted); }
+
+/* ── 진행률 모달 ─────────────────────────────── */
+.modal-back {
+  position: fixed; inset: 0; z-index: 90; display: flex;
+  align-items: center; justify-content: center; padding: var(--sp-4);
+  background: rgba(12, 14, 18, .5);
+}
+.modal-back[hidden] { display: none; }
+.modal {
+  width: min(620px, 100%); max-height: min(84vh, 760px); display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .25);
+}
+.modal-head {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--border-soft);
+}
+.modal-title { flex: 1; min-width: 0; }
+.modal-head h3 { margin: 0; font-size: var(--t-lg); }
+.modal-head .sub { font-size: var(--t-xs); color: var(--muted); font-weight: 400; }
+.modal-x {
+  background: none; border: 0; color: var(--muted); font-size: 18px;
+  cursor: pointer; line-height: 1; padding: 2px 6px; border-radius: 6px;
+}
+.modal-x:hover { background: var(--surface-2); color: var(--text); }
+.modal-body { padding: var(--sp-3) var(--sp-4); overflow-y: auto; flex: 1; }
+.modal-foot {
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
+  padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--border-soft);
+  font-size: var(--t-xs); color: var(--muted);
+}
+.modal-foot .spacer { margin-left: auto; }
+
+/* 진행률 바 — 값은 §5.1 가중치 누적값이다 (12등분이 아니다) */
+.prog { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-3); }
+.prog-track {
+  flex: 1; height: 8px; border-radius: 999px; background: var(--surface-3); overflow: hidden;
+}
+.prog-fill {
+  height: 100%; width: 0; background: var(--accent); border-radius: 999px;
+  transition: width .35s ease;
+}
+.prog-pct { font-family: var(--mono); font-size: var(--t-md); font-weight: 600; min-width: 44px; text-align: right; }
+.prog-eta { font-size: var(--t-xs); color: var(--muted); margin-bottom: var(--sp-3); }
+
+/* 12상태 체크리스트 */
+.states { display: flex; flex-direction: column; }
+.state-row {
+  display: grid; grid-template-columns: 18px 118px 46px 1fr auto; gap: var(--sp-2);
+  align-items: baseline; padding: 5px 0; border-bottom: 1px solid var(--border-soft);
+  font-size: var(--t-md);
+}
+.state-row:last-child { border-bottom: 0; }
+.state-row .st-ico { font-size: var(--t-sm); color: var(--muted); text-align: center; }
+.state-row .st-name { font-family: var(--mono); font-size: var(--t-sm); }
+.state-row .st-role { font-size: var(--t-xs); color: var(--muted); }
+.state-row .st-note { font-size: var(--t-xs); color: var(--muted); min-width: 0; }
+.state-row .st-time { font-family: var(--mono); font-size: var(--t-xs); color: var(--muted); white-space: nowrap; }
+.state-row.done .st-ico { color: var(--st-good); }
+.state-row.done .st-name { color: var(--text); }
+.state-row.now { background: var(--accent-soft); border-radius: 6px; }
+.state-row.now .st-ico { color: var(--accent); }
+.state-row.now .st-note, .state-row.now .st-time { color: var(--text); }
+.state-row.wait .st-name, .state-row.wait .st-role { opacity: .55; }
+.state-row.warn .st-ico { color: var(--st-warning); }
+.state-row.bad .st-ico { color: var(--st-critical); }
+.state-row .st-subs { grid-column: 2 / -1; font-size: var(--t-xs); color: var(--muted); }
+
+/* 장부 요약 줄 (근거 12 · 데이터 47 · 계산 9 · Gap 1 · 충돌 0) */
+.ledger-line { display: flex; flex-wrap: wrap; gap: var(--sp-3); font-size: var(--t-xs); }
+.ledger-line b { font-family: var(--mono); color: var(--text); }
+
+/* ── 질문 카드 (H01 · H04 · H08) ─────────────── */
+.qcard { display: flex; flex-direction: column; gap: var(--sp-3); }
+.qcard .q-text { margin: 0; font-size: var(--t-lg); line-height: 1.5; }
+.qcard .q-why {
+  margin: 0; font-size: var(--t-sm); color: var(--muted);
+  padding: var(--sp-2) var(--sp-3); background: var(--surface-2);
+  border-left: 2px solid var(--border); border-radius: 0 6px 6px 0;
+}
+.qopts { display: flex; flex-direction: column; gap: var(--sp-2); }
+.qopt {
+  display: flex; align-items: baseline; gap: var(--sp-2); width: 100%; text-align: left;
+  padding: 10px var(--sp-3); background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font: inherit; font-size: var(--t-md); cursor: pointer;
+}
+.qopt:hover { border-color: var(--accent); }
+.qopt.on { border-color: var(--accent); background: var(--accent-soft); }
+.qopt .mark { font-family: var(--mono); color: var(--muted); }
+.qopt.on .mark { color: var(--accent); }
+.qopt .rec { margin-left: auto; font-size: var(--t-xs); color: var(--muted); }
+
+/* ── 리포트 ──────────────────────────────────── */
+.rp-list { display: flex; flex-direction: column; gap: var(--sp-3); }
+.rp {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: var(--sp-3) var(--sp-4);
+}
+.rp-head { display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-2); }
+.rp-no {
+  font-family: var(--mono); font-size: var(--t-xs); color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px;
+}
+.rp-head h3 { margin: 0; font-size: var(--t-lg); }
+.rp-key { margin: 0 0 var(--sp-2); font-size: var(--t-md); font-weight: 600; line-height: 1.55; }
+.rp-body { margin: 0; padding-left: 18px; font-size: var(--t-md); line-height: 1.7; }
+.rp-body li { margin-bottom: 2px; }
+.rp-meta { margin-top: var(--sp-3); padding-top: var(--sp-2); border-top: 1px solid var(--border-soft);
+           display: flex; flex-wrap: wrap; gap: var(--sp-3); font-size: var(--t-xs); color: var(--muted); }
+.rp-card {
+  margin-top: var(--sp-3); padding: var(--sp-3); background: var(--surface-2);
+  border-radius: var(--radius-sm); font-size: var(--t-sm); line-height: 1.65;
+}
+.rp-card dt { font-size: var(--t-xs); color: var(--muted); }
+.rp-card dd { margin: 0 0 var(--sp-2); }
+.rp-card dd:last-child { margin-bottom: 0; }
+.rp-merged {
+  margin-top: var(--sp-2); font-size: var(--t-xs); color: var(--muted);
+  padding: 6px 10px; background: var(--surface-2); border-radius: 6px;
+}
+.rp-gap { margin-top: var(--sp-2); font-size: var(--t-xs); color: var(--warn); }
+
+/* ── 근거 드릴다운 ───────────────────────────── */
+/* 근거로 되짚을 수 있는 수치. 밑줄 점선은 "누르면 더 있다" 는 뜻이다. */
+[data-evidence-id] {
+  cursor: pointer; border-bottom: 1px dashed var(--accent);
+  background: none; border-top: 0; border-left: 0; border-right: 0;
+  font: inherit; color: inherit; padding: 0;
+}
+[data-evidence-id]:hover, [data-evidence-id]:focus-visible { background: var(--accent-soft); }
+
+.drill {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 95; width: min(440px, 100%);
+  display: flex; flex-direction: column;
+  background: var(--surface); border-left: 1px solid var(--border);
+  box-shadow: -12px 0 32px rgba(0, 0, 0, .16);
+}
+.drill[hidden] { display: none; }
+.drill-head {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--border-soft);
+}
+.drill-head h3 { margin: 0; font-size: var(--t-md); font-family: var(--mono); flex: 1; }
+.drill-body { padding: var(--sp-3) var(--sp-4); overflow-y: auto; flex: 1; font-size: var(--t-md); }
+
+/* 사슬 — D- → CALC- → E- 를 왼쪽 선 하나로 잇는다 */
+.chain { list-style: none; margin: 0; padding: 0 0 0 var(--sp-3); border-left: 2px solid var(--border); }
+.chain > li { position: relative; padding: 0 0 var(--sp-3) var(--sp-3); }
+.chain > li::before {
+  content: ''; position: absolute; left: calc(var(--sp-3) * -1 - 5px); top: 7px;
+  width: 8px; height: 8px; border-radius: 50%; background: var(--border); border: 2px solid var(--surface);
+}
+.chain .c-kind { font-size: var(--t-xs); color: var(--muted); }
+.chain .c-id { font-family: var(--mono); font-size: var(--t-sm); }
+.chain .c-main { font-size: var(--t-md); line-height: 1.5; }
+.chain .c-sub { font-size: var(--t-xs); color: var(--muted); line-height: 1.55; }
+.chain code { font-size: var(--t-xs); }
+
+.drill-empty { font-size: var(--t-md); color: var(--muted); line-height: 1.7; }
+
+/* ── 용어 툴팁 ───────────────────────────────── */
+.term { border-bottom: 1px dotted var(--muted); cursor: help; }
+.tip {
+  position: fixed; z-index: 100; max-width: 320px;
+  padding: var(--sp-2) var(--sp-3); background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .16); font-size: var(--t-sm); line-height: 1.6;
+}
+.tip[hidden] { display: none; }
+.tip b { display: block; font-size: var(--t-md); }
+.tip .tip-en { font-size: var(--t-xs); color: var(--muted); }
+.tip .tip-src { display: block; margin-top: 4px; font-size: var(--t-xs); color: var(--muted); }
+
+@media (max-width: 860px) {
+  .state-row { grid-template-columns: 16px 1fr auto; }
+  .state-row .st-role { display: none; }
+  .state-row .st-note { grid-column: 2 / -1; }
+  .drill { width: 100%; }
+}

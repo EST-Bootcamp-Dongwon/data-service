@@ -5,6 +5,7 @@
 
     /          → dashboard.html  대시보드 (시장 카드 그리드 · 데이터 상태)
     /market    → market.html     시장 상세 (큰 차트 · 기간 토글 · 겹쳐보기 · 시장의 폭)
+    /research  → research.html   리서치 하네스 (4작업 공용 · 진행률 모달 · 근거 드릴다운)
     /krx       → krx.html        KRX 일별 시세
     /kosis     → kosis.html      KOSIS 통계 실험실
     /yf        → yf.html         야후 파이낸스 시세 (scripts/yf.py 와 같은 차트)
@@ -40,6 +41,9 @@ PAGES = {
     "/": "dashboard.html",
     "/dashboard": "dashboard.html",
     "/market": "market.html",
+    # M6 — 네 작업(CORP-R · CORP-TP · IND-R · IND-TP) 공용 화면.
+    # 어느 작업인지는 `?ws=` 로 넘긴다 (12상태가 넷 다 같아 화면을 나눌 이유가 없다).
+    "/research": "research.html",
     "/krx": "krx.html",
     "/kosis": "kosis.html",
     "/yf": "yf.html",

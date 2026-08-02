@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>리서치 — G.I.C Lab</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%AC%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/assets/app.css" />
+</head>
+<body>
+<div class="wrap">
+  <header class="page-head">
+    <div>
+      <h1>🔬 리서치</h1>
+      <p>
+        GIC 하네스 <b>12상태(H00~H11)</b>를 순서대로 돈다. 네 작업이 같은 상태를 돌기 때문에
+        화면은 하나다 — 갈라지는 것은 <b>대상 입력</b>과 <b>리포트 양식</b>뿐이다.
+      </p>
+    </div>
+  </header>
+
+  <div class="badges">
+    <span class="badge">워밍업 <em id="warmState">대기</em></span>
+    <span class="badge">서버 무상태 <em>Context Pack 은 브라우저가 들고 다닌다 (§1.3)</em></span>
+    <span class="badge">교육용 <em>투자 권유가 아닙니다</em></span>
+  </div>
+
+  <!-- ── 1. 작업 고르기 ───────────────────────── -->
+  <section class="card">
+    <h2>① 어떤 리서치를 할까</h2>
+    <p class="hint">
+      네 작업 모두 12상태를 돈다. 데이터 충분도는 실제로 쓸 수 있는 공개 자료의 양이다 —
+      🟡 는 <b>없는 자료를 만들지 않고 Gap 으로 밝힌다</b>는 뜻이다.
+    </p>
+    <div class="ws-pick" id="wsPick"></div>
+    <p class="hint" id="planPreview" style="margin-top:12px"></p>
+  </section>
+
+  <!-- ── 2. 대상 고르기 ───────────────────────── -->
+  <section class="card">
+    <h2>② 무엇을 분석할까</h2>
+    <p class="hint" id="targetHint"></p>
+    <div class="controls" style="margin-bottom:12px">
+      <label style="flex:1; min-width:260px">대상
+        <div class="pick-list">
+          <input id="targetInput" type="text" autocomplete="off" style="width:100%" />
+          <div class="pick-drop" id="pickDrop"></div>
+        </div>
+      </label>
+      <label>분석 기준일
+        <input id="asOf" type="date" />
+      </label>
+      <label>대상 독자
+        <select id="audience">
+          <option value="GIC 학회">GIC 학회</option>
+          <option value="투자 스터디">투자 스터디</option>
+          <option value="본인 학습">본인 학습</option>
+        </select>
+      </label>
+    </div>
+    <div class="controls">
+      <label style="flex:1; min-width:260px">리서치 질문 (선택)
+        <input id="objective" type="text" placeholder="예: 지금 사도 되는가?" style="width:100%" />
+      </label>
+      <button id="runBtn" disabled>리서치 실행</button>
+      <span class="status" id="targetPicked">대상을 고르면 실행할 수 있다</span>
+    </div>
+  </section>
+
+  <!-- ── 3. 결과 ───────────────────────────────── -->
+  <section class="card" id="resultBox" hidden>
+    <h2>③ 결과</h2>
+    <div class="tiles" id="resultTiles"></div>
+    <div class="badges" id="resultCritical"></div>
+
+    <div class="controls" style="margin-bottom:12px">
+      <div class="pillbar" id="resultTabs">
+        <button class="pill on" data-tab="report" type="button">리포트</button>
+        <button class="pill" data-tab="ledger" type="button">장부 (근거·데이터·계산)</button>
+        <button class="pill" data-tab="states" type="button">상태 기록</button>
+      </div>
+      <button id="exportBtn" type="button">MD 내보내기</button>
+      <span class="status" id="exportStatus"></span>
+    </div>
+
+    <div id="tabBody"></div>
+  </section>
+</div>
+
+<!-- ── 진행률 모달 (명세 §7.3) ─────────────────── -->
+<div class="modal-back" id="modalBack" hidden role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">
+        <h3 id="modalTitle">리서치 실행 중</h3>
+        <div class="sub" id="modalSub"></div>
+      </div>
+      <button class="modal-x" id="modalClose" type="button" aria-label="닫기">✕</button>
+    </div>
+
+    <!-- 진행률 화면 -->
+    <div class="modal-body" id="modalProgress">
+      <div class="prog">
+        <div class="prog-track"><div class="prog-fill" id="progFill"></div></div>
+        <span class="prog-pct" id="progPct">0%</span>
+      </div>
+      <div class="prog-eta" id="progEta"></div>
+      <div class="states" id="stateList"></div>
+      <p class="hint" id="h02Note" style="margin-top:12px"></p>
+      <p class="badge warn" id="modalError" hidden></p>
+    </div>
+
+    <!-- 질문 카드 화면 (H01 · H04 · H08) -->
+    <div class="modal-body qcard" id="modalQuestion" hidden>
+      <div class="rp-head">
+        <b id="qStage"></b><span class="muted" id="qCount"></span>
+      </div>
+      <p class="q-text" id="qText"></p>
+      <div class="qopts" id="qOpts"></div>
+      <p class="q-why" id="qWhy"></p>
+      <p class="q-why">
+        ⓘ 건너뛰면 <b>의견 미입력</b>으로 기록된다. AI 가 선호를 추정하지 않는다 (불변원칙 §2-7).
+      </p>
+      <div class="controls">
+        <span class="status" style="margin-left:0">답을 고르지 않아도 진행된다</span>
+        <button id="qSkip" type="button" class="pill">건너뛰기</button>
+        <button id="qNext" type="button">다음</button>
+      </div>
+    </div>
+
+    <div class="modal-foot">
+      <div class="ledger-line" id="ledgerLine"></div>
+      <button id="modalDone" class="spacer" type="button" hidden>리포트 보기</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 근거 드릴다운 패널 (명세 §7.4) ──────────── -->
+<aside class="drill" id="drill" hidden aria-label="근거 드릴다운">
+  <div class="drill-head">
+    <h3 id="drillId"></h3>
+    <button class="modal-x" id="drillClose" type="button" aria-label="닫기">✕</button>
+  </div>
+  <div class="drill-body" id="drillBody"></div>
+</aside>
+
+<!-- 용어 툴팁 (427용어 · 08강 voca.md) -->
+<div class="tip" id="termTip" hidden role="tooltip"></div>
+
+<script src="/static/assets/app.js"></script>
+<script src="/static/assets/shell.js"></script>
+<script src="/static/assets/research.js"></script>
+<script>
+  Research.boot();
+</script>
+</body>
+</html>
