@@ -32,7 +32,7 @@ from ...clients import dart_data, dart_report, hf_data
 from ...core import parallel
 from ...repositories import industry_store, snapshot_store
 from .. import ts_service
-from . import contracts, export_md, ledger, narrative, plan, redteam
+from . import contracts, export_md, ledger, linkcheck, narrative, plan, redteam
 from .knowledge import financials, macro, valuation
 from .workstreams import corp_r, corp_tp, ind_r, ind_tp
 
@@ -560,6 +560,18 @@ def _h02_corp(pack: Dict, request: Dict) -> Dict:
         location="일별 종가", directness="직접", confidence="high")
     result["evidence_ids"].append(evidence_id)
 
+    # 5) 시장 스냅샷 (시총·멀티플) — **M7 에서 더했다** (변경노트 N69)
+    #
+    # 지금까지 CORP 팩에는 스냅샷 근거가 없었다. 그래서 피어 표의 PER·PBR 도,
+    # 그것으로 만든 밸류에이션 밴드도 장부에 시작점이 없어 사슬이 아예 서지 않았다
+    # (산업 계열은 `_h02_industry` 가 처음부터 이 근거를 발급하고 있었다).
+    # 리포트에서 가장 많이 인용되는 수치가 정작 되짚을 수 없던 자리다.
+    evidence_id = ledger.add_evidence(
+        pack, claim=f"{name} 및 피어의 시가총액·PER·PBR·ROE",
+        source="KRX", location=f"시장 스냅샷 {snapshot_store.as_of()}",
+        published=snapshot_store.as_of(), directness="직접", confidence="high")
+    result["evidence_ids"].append(evidence_id)
+
     result["verified_result"] = [f"근거 {len(result['evidence_ids'])}건 발급", timing["text"]]
     result["confidence"] = "high" if len(result["evidence_ids"]) >= 5 else "medium"
     if result["status"] == "in-progress":
@@ -638,8 +650,16 @@ def _h03_industry(pack: Dict, request: Dict) -> Dict:
             evidence_id=production_evidence, rounding="원값 그대로")
         result["data_ids"].append(data_id)
         check = production["cagr_check"]
+        # CAGR 은 **두 시점**으로 만든다. M6 까지 마지막 값만 D- 로 올려서 계산 기록의
+        # 입력이 반쪽이었다 — 첫 시점 값이 `intermediate` 에만 있어 되짚을 수 없었다.
+        # 그 값도 KOSIS 가 준 실측치이므로 D- 로 올린다 (M7 · 변경노트 N69).
+        first_id = ledger.add_data(
+            pack, metric=f"{production['series_name']}.생산지수", value=check["first"],
+            unit="지수", period=check["first_period"], basis="KOSIS",
+            evidence_id=production_evidence, rounding="원값 그대로")
+        result["data_ids"].append(first_id)
         calc_id = ledger.add_calculation(
-            pack, check["formula"], [data_id], production.get("cagr_pct"), "%",
+            pack, check["formula"], [first_id, data_id], production.get("cagr_pct"), "%",
             assumption=f"{check['first_period']} {check['first']} → "
                        f"{check['last_period']} {check['last']} · {check['years']}년",
             intermediate={"first": check["first"], "last": check["last"],
@@ -721,6 +741,44 @@ def _h03_corp(pack: Dict, request: Dict) -> Dict:
                                     "상대 비교의 해석 폭이 달라진다", "피어를 직접 지정할 수 있다",
                                     severity="low", owner="DATA")
             result["gap_ids"].append(gap)
+
+        # 3-2단 — 스냅샷 지표를 D- 로 올린다 (M7 · 변경노트 N69)
+        #
+        # 산업 계열은 처음부터 이렇게 하고 있었다 (`_h03_industry`). 기업 계열만 재무
+        # 계정(revenue·operating_income…)만 올리고 있어서, 리포트 slot 10 피어 표의
+        # PER·PBR 도 밸류에이션 밴드도 장부에 입력이 없었다. **같은 규칙으로 맞춘다.**
+        snapshot_evidence = next((e["id"] for e in pack["C1_evidence"]
+                                  if e["source"].startswith("KRX")
+                                  and "스냅샷" in e.get("location", "")), "")
+        before = len(result["data_ids"])
+        for row, who in [(table["target"], "대상")] + [(r, "피어") for r in table["rows"]]:
+            for metric, unit in (("market_cap", "원"), ("per", "배"), ("pbr", "배"),
+                                 ("roe", "%"), ("r250", "%")):
+                value = row.get(metric)
+                if value is None:
+                    continue
+                data_id = ledger.add_data(
+                    pack, metric=f"{row.get('code')}.{metric}", value=value, unit=unit,
+                    currency="KRW" if metric == "market_cap" else "",
+                    period=table["as_of"], basis=f"시장 · {who}",
+                    evidence_id=snapshot_evidence, rounding="스냅샷 값 그대로")
+                result["data_ids"].append(data_id)
+
+        # 주가와 주식수는 스냅샷 표에는 없지만 EPS·주당가치가 이 둘에 걸려 있다.
+        # 여기서 안 올리면 밸류에이션 밴드가 입력 없는 계산이 된다.
+        origin = peers.get("target") or {}
+        for metric, unit, label in (("close", "원", "종가"), ("shares", "주", "주식수")):
+            value = origin.get(metric)
+            if value is None:
+                continue
+            data_id = ledger.add_data(
+                pack, metric=f"{code}.{metric}", value=value, unit=unit,
+                currency="KRW" if metric == "close" else "",
+                period=table["as_of"], basis=f"시장 · 대상 {label}",
+                evidence_id=snapshot_evidence, rounding="스냅샷 값 그대로")
+            result["data_ids"].append(data_id)
+        steps.append(f"스냅샷 지표: 대상 1곳 + 피어 {len(table['rows'])}곳 "
+                     f"· D- {len(result['data_ids']) - before}건")
     else:
         contracts.downgrade(result, peers.get("reason", "피어를 못 골랐다"))
 
@@ -791,12 +849,68 @@ def _h04_ind_r(pack: Dict, request: Dict) -> Dict:
     rivalry = analysis.get("competition", {})
     index_row = analysis.get("index", {})
 
-    if rivalry.get("available"):
-        calc_id = ledger.add_calculation(
-            pack, "HHI = Σ(시가총액 비중%)²", [], rivalry["hhi"], "",
-            assumption="**점유율이 아니라 시가총액 비중**이다 — 비상장사가 빠져 있다",
-            intermediate={"cr3_pct": rivalry["cr3_pct"], "members": rivalry["member_count"]})
+    # ── 산업 파생값을 장부에 올린다 (M7 · 변경노트 N69) ──
+    #
+    # 구성 종목의 `<code>.market_cap` 은 H03 이 이미 전수로 D- 를 발급해 뒀다.
+    # 여기서는 그것들을 **입력으로 물어** 합계·비중·CR3·HHI 를 파생 D- 로 낸다.
+    # 순서가 중요하다 — 뒤엣것이 앞엣것을 입력으로 쓴다.
+    #     상장 시총 합계 → 종목별 비중 → CR3 → HHI
+    industry_code = target.get("industry_code", "")
+    as_of = market.get("as_of", "")
+    cap_ids = ledger.ids_for(pack, *[f"{row['code']}.market_cap"
+                                     for row in market.get("rows", []) if row.get("code")])
+
+    def derive_industry(metric: str, value, formula: str, inputs: List[str], unit: str,
+                        assumption: str = "", intermediate: Optional[Dict] = None) -> str:
+        if value is None:
+            return ""
+        data_id, calc_id = ledger.add_derived(
+            pack, metric=metric, value=value, formula=formula, inputs=inputs, unit=unit,
+            period=as_of, basis="파생 · 계산", assumption=assumption, intermediate=intermediate)
+        result["data_ids"].append(data_id)
         result["calculation_records"].append(calc_id)
+        return data_id
+
+    total_cap_id = ""
+    if market.get("available") and market.get("listed_market_cap"):
+        total_cap_id = derive_industry(
+            f"{industry_code}.listed_market_cap", market["listed_market_cap"],
+            "상장 시가총액 합계 = Σ(구성 종목 시가총액)", cap_ids, "원",
+            assumption=("**시장 규모가 아니다** — 비상장사가 빠져 있고 시총은 매출이 아니라 "
+                        "기대의 크기다"),
+            intermediate={"listed_count": market.get("listed_count"),
+                          "unmatched_members": market.get("unmatched_members")})
+
+    if rivalry.get("available"):
+        # `competition` 은 이름만 준다 — 코드는 같은 순서로 정렬된 `market.rows` 에서 집는다.
+        code_of = {row.get("name"): row.get("code") for row in market.get("rows", [])}
+        share_ids: List[str] = []
+        # 리포트 본문이 상위 6곳만 싣는다 (export_md `_assemble_ind_r`).
+        # 본문에 안 나오는 나머지는 HHI 계산의 intermediate 로 남긴다 — 팩만 키울 이유가 없다.
+        for row in rivalry.get("top", [])[:6]:
+            member_code = code_of.get(row.get("name"))
+            if not member_code:
+                continue
+            member_cap = ledger.ids_for(pack, f"{member_code}.market_cap")
+            share_ids.append(derive_industry(
+                f"{member_code}.cap_share_pct", row["share_pct"],
+                "시가총액 비중% = 종목 시가총액 ÷ 상장 시가총액 합계 × 100",
+                member_cap + ([total_cap_id] if total_cap_id else []), "%",
+                assumption=f"{row.get('name')} · 시가총액 기준이라 **시장점유율이 아니다**"))
+        share_ids = [i for i in share_ids if i]
+
+        if len(share_ids) >= 3:
+            derive_industry(
+                f"{industry_code}.cr3_pct", rivalry["cr3_pct"],
+                "CR3 = 시가총액 비중 상위 3곳의 비중% 합", share_ids[:3], "%",
+                assumption=rivalry.get("limitation", ""))
+        derive_industry(
+            f"{industry_code}.hhi", rivalry["hhi"], "HHI = Σ(시가총액 비중%)²",
+            cap_ids + ([total_cap_id] if total_cap_id else []), "",
+            assumption="**점유율이 아니라 시가총액 비중**이다 — 비상장사가 빠져 있다",
+            intermediate={"cr3_pct": rivalry["cr3_pct"], "members": rivalry["member_count"],
+                          "level": rivalry.get("level"),
+                          "top_shares": rivalry.get("top", [])})
 
     hypotheses = []
     if cycle.get("available"):
@@ -883,14 +997,59 @@ def _h04_ind_tp(pack: Dict, request: Dict) -> Dict:
                                    severity="medium", owner="ANLY")
         result["gap_ids"].append(gap_id)
 
+    # ── 후보군 시총 비중을 장부에 올린다 (M7 · 변경노트 N69) ──
+    # 후보 완전성(N44)의 핵심 숫자다 — "후보 10곳이 업종 시총의 99.4%" 가 본문에 네 번 나온다.
+    # H03 이 구성 종목 시총을 전수로 D- 발급해 뒀으므로 그것을 그대로 입력으로 문다.
+    cap_ids = ledger.ids_for(pack, *[f"{m.get('code')}.market_cap"
+                                     for m in target.get("members", []) if m.get("code")])
+    if universe.get("universe_cap_share") is not None and cap_ids:
+        data_id, calc_id = ledger.add_derived(
+            pack, metric=f"{target.get('industry_code', '')}.candidate_cap_share",
+            # **원값을 그대로 싣는다.** 여기서 한 번 더 반올림하면 리포트가 찍는 표기
+            # (`{:.1%}` → 99.4%)와 장부 값(99.35 → 99.3)이 갈려서, 같은 수인데도
+            # 본문이 장부와 안 이어진다. 반올림은 표기하는 쪽에서만 한다.
+            value=universe["universe_cap_share"] * 100,
+            formula="후보 시총 비중% = Σ(후보 시가총액) ÷ Σ(업종 상장사 시가총액) × 100",
+            inputs=cap_ids, unit="%", period=snapshot_store.as_of(), basis="파생 · 계산",
+            rounding="원값 그대로 — 본문 표기는 소수 1자리",
+            assumption=(f"후보 {universe['count']}곳 / 업종 상장사 "
+                        f"{universe['universe_total']}곳 — 전수를 공개하고 상위 N곳만 채점한다"),
+            intermediate={"count": universe["count"],
+                          "universe_total": universe["universe_total"]})
+        result["data_ids"].append(data_id)
+        result["calculation_records"].append(calc_id)
+
     # 계산 원장 — 설계서 §7.2 "반올림 전 값을 보존한다"
+    #
+    # ⚠️ adjusted score 자체는 **D- 로 올리지 않는다.** 입력이 원시값이 아니라 후보군 안의
+    #    백분위(0/3/5 앵커)로 범주화된 값이라, D- 를 붙여도 숫자를 되짚으면 원값이 안 나온다.
+    #    없는 사슬을 만드는 대신 원천 지표(r250·roe·per…)의 D- 를 **입력으로** 달아
+    #    "이 점수가 어느 값에서 나왔는지"까지만 정직하게 밝힌다 (불변원칙 §2-1).
     for row in ranking[:5]:
         if not row.get("available"):
             continue
+        source_ids = ledger.ids_for(pack, *[f"{row['code']}.{metric}"
+                                            for metric in ("r250", "roe", "per", "pbr",
+                                                           "market_cap")])
+        # coverage 는 점수와 성질이 다르다 — "이 후보에게 **어느 지표가 있었나**" 를
+        # 그대로 재는 값이라 입력 D- 가 곧 근거다. 그래서 이것만 D- 로 올린다.
+        if row.get("coverage") is not None and source_ids:
+            data_id, calc_id = ledger.add_derived(
+                pack, metric=f"{row['code']}.coverage", value=row["coverage"] * 100,
+                formula="coverage% = 값이 있는 차원의 가중치 합 ÷ 전체 가중치 × 100",
+                inputs=source_ids, unit="%", period=snapshot_store.as_of(),
+                basis="파생 · 계산", rounding="원값 그대로 — 본문 표기는 정수",
+                assumption=(f"{row['name']} · 결측 {', '.join(row.get('missing', [])) or '없음'}"
+                            " — **결측을 0점으로 세지 않고 분모에서 뺐다**"),
+                intermediate={"valid_weight": row.get("valid_weight"),
+                              "missing": row.get("missing", [])})
+            result["data_ids"].append(data_id)
+            result["calculation_records"].append(calc_id)
         calc_id = ledger.add_calculation(
-            pack, row["formula"], [], row["adjusted_score"], "점",
+            pack, row["formula"], source_ids, row["adjusted_score"], "점",
             assumption=(f"{row['name']} · valid_weight {row['valid_weight']} · "
-                        f"penalty 계수 {row['penalty_coefficient']}"),
+                        f"penalty 계수 {row['penalty_coefficient']} · "
+                        f"**입력은 후보군 안 백분위로 범주화된다 — 원값과 1:1 로 되짚어지지 않는다**"),
             intermediate={"observed_score": row["observed_score"],
                           "coverage": row["coverage"],
                           "missing_penalty": row["missing_penalty"],
@@ -974,6 +1133,47 @@ def _h04_corp(pack: Dict, request: Dict) -> Dict:
     peers = _stashed(pack, "peers") or {}
     facts = _stashed(pack, "report_facts") or {}
 
+    # ── 파생값을 장부에 올리는 배관 (M7 · 변경노트 N69) ──
+    #
+    # 리포트 본문의 수치는 대부분 원시 계정이 아니라 **파생값**이다. M6 실측에서
+    # 본문 수치의 5~14% 만 근거로 이어졌던 이유가 이것이다. 여기서 그것들을
+    # `ledger.add_derived` 로 D- + CALC- 짝으로 발급한다.
+    #
+    # ⚠️ 예전 코드는 입력으로 `result["data_ids"]` 를 넘겼는데 **그 목록은 H04 에서
+    #    늘 비어 있다** — D- 는 H03 이 발급하기 때문이다. 그래서 CALC- 의 `inputs` 가
+    #    전부 빈 배열이었고 드릴다운이 "입력 D- 가 기록되지 않았다" 를 띄우고 있었다.
+    #    입력은 **팩에서 찾아** 문다.
+    def period_id(metric: str, year) -> List[str]:
+        """`revenue` 처럼 연도별로 여러 건인 D- 에서 그 해의 것을 집는다."""
+        row = ledger.find_data(pack, metric, str(year))
+        return [row["id"]] if row else []
+
+    def latest_ids(*metrics: str) -> List[str]:
+        """최신 연도 계정들의 D- ID (없는 것은 빠진 채로 온다 — 지어내지 않는다)."""
+        if not series:
+            return []
+        year = str(series[-1]["year"])
+        return [i for metric in metrics for i in period_id(metric, year)]
+
+    def derive(metric: str, value, formula: str, inputs: List[str], unit: str,
+               assumption: str = "", intermediate: Optional[Dict] = None,
+               period: str = "") -> str:
+        """값이 있을 때만 발급한다. 없는 값을 0 으로 채워 올리지 않는다.
+
+        `period` 를 안 주면 최신 회계연도로 잡는다. 시장 기준 파생값(EPS·중앙값·밴드)은
+        회계연도가 아니라 **스냅샷 기준일**이 맞으므로 그쪽에서 따로 넘긴다 —
+        기간을 잘못 적으면 나중에 다른 기간 값과 나란히 놓이게 된다.
+        """
+        if value is None:
+            return ""
+        data_id, calc_id = ledger.add_derived(
+            pack, metric=metric, value=value, formula=formula, inputs=inputs, unit=unit,
+            period=period or (str(series[-1]["year"]) if series else ""),
+            basis="파생 · 계산", assumption=assumption, intermediate=intermediate)
+        result["data_ids"].append(data_id)
+        result["calculation_records"].append(calc_id)
+        return data_id
+
     # 1) 재무 비율 · 성장률
     growth = {"available": False}
     ratios: Dict = {}
@@ -982,17 +1182,63 @@ def _h04_corp(pack: Dict, request: Dict) -> Dict:
         years = [str(row["year"]) for row in series]
         growth = financials.growth_series(revenues, years)
         if growth.get("available") and growth.get("cagr") is not None:
-            calc_id = ledger.add_calculation(
-                pack, "CAGR = (마지막/처음)^(1/연수) - 1",
-                [d for d in result["data_ids"] if d][:2], growth["cagr"], "%",
-                assumption=f"{years[0]}~{years[-1]} 매출액 기준")
-            result["calculation_records"].append(calc_id)
+            derive("revenue_cagr", growth["cagr"],
+                   "CAGR = (마지막 연도 매출 / 첫 연도 매출)^(1/연수) - 1 → ×100",
+                   period_id("revenue", years[0]) + period_id("revenue", years[-1]), "%",
+                   assumption=f"{years[0]}~{years[-1]} 매출액 기준 · {len(years)}개년",
+                   intermediate={"first": revenues[0], "last": revenues[-1],
+                                 "years": len(years) - 1, "trend": growth.get("trend")})
         latest = series[-1]
         # 업종을 함께 넘겨 **금융업이면 안정성 판정을 보류하게** 한다 (U8 결정 ②).
         # 은행은 예금이 부채라 부채비율 1,000% 가 정상이다 (08강 06.md 421행).
         ratios = corp_r.ratios_of({k: v for k, v in latest.items() if k != "year"},
                                   industry_store.industry_of(code),
                                   pack["C0_charter"]["target"].get("name", ""))
+
+        # 본문에 실리는 비율만 올린다 (본문에 안 나오는 ROA 는 계산 기록으로 충분하다).
+        # CORP-TP 는 리포트가 듀폰 3항·유동비율을 싣지 않으므로 거기서는 발급하지 않는다 —
+        # 본문에 없는 값을 D- 로 올리면 팩만 커지고 연결률은 그대로다.
+        for key, metric, formula, source_metrics, unit in (
+            ("operating_margin", "operating_margin", "영업이익률 = 영업이익 ÷ 매출액 × 100",
+             ("operating_income", "revenue"), "%"),
+            ("roe", "roe", "ROE = 당기순이익 ÷ 자본총계 × 100",
+             ("net_income", "equity"), "%"),
+            ("debt_ratio", "debt_ratio", "부채비율 = 부채총계 ÷ 자본총계 × 100",
+             ("liabilities", "equity"), "%"),
+        ):
+            block = ratios.get(key) or {}
+            derive(metric, block.get("value"), formula, latest_ids(*source_metrics), unit,
+                   assumption=block.get("why", ""),
+                   intermediate={"grade": block.get("grade"), "basis": block.get("basis")})
+
+        if workstream != "CORP-TP":
+            block = ratios.get("current_ratio") or {}
+            derive("current_ratio", block.get("value"),
+                   "유동비율 = 유동자산 ÷ 유동부채 × 100",
+                   latest_ids("current_assets", "current_liabilities"), "%",
+                   assumption=block.get("why", ""))
+            dupont = ratios.get("dupont") or {}
+            if dupont.get("available"):
+                # 세 항의 곱이 ROE 와 맞는지 검산되는 자리라 셋을 다 올린다.
+                derive("net_margin", dupont.get("net_margin"),
+                       "순이익률 = 당기순이익 ÷ 매출액 × 100 (듀폰 1항)",
+                       latest_ids("net_income", "revenue"), "%",
+                       assumption=dupont.get("formula", ""))
+                derive("asset_turnover", dupont.get("asset_turnover"),
+                       "자산회전율 = 매출액 ÷ 자산총계 (듀폰 2항)",
+                       latest_ids("revenue", "assets"), "회",
+                       assumption=dupont.get("formula", ""))
+                derive("equity_multiplier", dupont.get("leverage"),
+                       "재무레버리지 = 자산총계 ÷ 자본총계 (듀폰 3항)",
+                       latest_ids("assets", "equity"), "배",
+                       assumption=f"{dupont.get('formula', '')} · 재구성 ROE "
+                                  f"{dupont.get('roe_reconstructed')}%")
+            quality = ratios.get("earnings_quality") or {}
+            if quality.get("available"):
+                derive("cash_conversion", quality.get("cash_conversion"),
+                       "현금전환 = 영업현금흐름 ÷ 영업이익",
+                       latest_ids("operating_cash_flow", "operating_income"), "배",
+                       assumption=quality.get("why", ""))
     else:
         contracts.downgrade(result, "재무 시계열이 없어 비율을 못 낸다")
 
@@ -1012,21 +1258,63 @@ def _h04_corp(pack: Dict, request: Dict) -> Dict:
     debt = (ratios.get("debt_ratio") or {}).get("value")
     view: Dict = {}
     if peers.get("available"):
-        view = corp_r.valuation_view(target_row, peers.get("table", {}),
-                                     growth.get("cagr"), industry_code, debt)
+        table = peers.get("table", {})
+        view = corp_r.valuation_view(target_row, table, growth.get("cagr"), industry_code, debt)
+
+        # ── 밸류에이션 사슬을 장부에 세운다 (M7 · N69) ──
+        # 본문에서 가장 많이 인용되는 수치인데 M6 까지 문자열로만 나왔다.
+        #   피어 PER(D-) → 중앙값(파생) ┐
+        #   순이익(D-) ÷ 주식수(D-) → EPS(파생) ┘→ 주당가치 밴드(파생) → 프리미엄(파생)
+        peer_per_ids = [row["id"] for row in pack.get("C2_data", [])
+                        if row.get("metric", "").endswith(".per")
+                        and row.get("basis", "").endswith("피어")]
+        position = view.get("per_position") or {}
+        median_id = ""
+        if position.get("peer_median") is not None and peer_per_ids:
+            median_id = derive(
+                "peer_median_per", position["peer_median"],
+                "피어 중앙값 PER = median(피어별 PER)", peer_per_ids, "배",
+                assumption=f"PER 이 있는 피어 {len(peer_per_ids)}곳의 중앙값 "
+                           f"({table.get('note', '')})",
+                intermediate={"peer_count": len(peer_per_ids),
+                              "missing_per": table.get("missing_per", [])},
+                period=table.get("as_of", ""))
+
         eps = None
         net = series[-1].get("net_income") if series else None
         shares = target_row.get("shares")
+        eps_id = ""
         if net and shares:
             eps = net / shares
+            eps_id = derive("eps", round(eps, 1), "EPS = 당기순이익 ÷ 주식수",
+                            latest_ids("net_income") + ledger.ids_for(pack, f"{code}.shares"),
+                            "원", assumption=f"주식수는 시장 스냅샷 {table.get('as_of', '')} 기준",
+                            period=table.get("as_of", ""))
+
         view["band"] = valuation.band_target(
-            target_row.get("close"), eps,
-            (view.get("per_position") or {}).get("peer_median"))
-        if view["band"].get("available"):
-            calc_id = ledger.add_calculation(
-                pack, "주당가치 = 피어 중앙값 PER × EPS", [], view["band"]["base"], "원",
-                assumption="밴드는 ±20% · 밸류에이션 연습")
-            result["calculation_records"].append(calc_id)
+            target_row.get("close"), eps, position.get("peer_median"))
+        band = view["band"]
+        if band.get("available"):
+            band_inputs = [i for i in (eps_id, median_id) if i]
+            for metric, value, label in (("valuation_band_base", band["base"], "기준"),
+                                         ("valuation_band_low", band["low"], "하단 −20%"),
+                                         ("valuation_band_high", band["high"], "상단 +20%")):
+                derive(metric, value,
+                       f"주당가치({label}) = 피어 중앙값 PER × EPS"
+                       + ("" if label == "기준" else f" × {0.8 if '하단' in label else 1.2}"),
+                       band_inputs, "원",
+                       assumption=band["caveat"],
+                       intermediate={"method": band["method"],
+                                     "peer_median_per": band["peer_median_per"],
+                                     "eps": band["eps"]},
+                       period=table.get("as_of", ""))
+        if position.get("premium_pct") is not None and median_id:
+            derive("per_premium_pct", position["premium_pct"],
+                   "피어 대비 = (대상 PER ÷ 피어 중앙값 PER − 1) × 100",
+                   ledger.ids_for(pack, f"{code}.per") + [median_id], "%",
+                   assumption=position.get("reason", ""),
+                   intermediate={"stance": position.get("stance")},
+                   period=table.get("as_of", ""))
     else:
         contracts.downgrade(result, "피어가 없어 상대가치 판단을 못 한다")
 
@@ -1177,16 +1465,27 @@ def h05_visualize(pack: Dict, request: Dict) -> Dict:
                 "chart_type": chart_type, "data_ids": data_ids, "axis": axis, "unit": unit,
                 "forbidden_misread": forbidden, "sources": sources}
 
+    # 차트가 **어느 D- 를 그리는지** 밝힌다 (공통계약 §12.1 "질문·차트 유형·축·데이터·출처 일치").
+    # M6 까지 `data_ids` 가 거의 비어 있어 장↔데이터 연결의 한 축이 죽어 있었다.
+    # 못 채우는 자리는 빈 채로 둔다 — 아무 D- 나 넣으면 차트가 안 쓰는 근거를 댄 것이 된다.
+    def by_metric(*suffixes: str, limit: int = 0) -> List[str]:
+        """지표 이름(또는 `<code>.지표` 의 뒷부분)이 맞는 D- ID 를 모은다."""
+        found = [row["id"] for row in pack.get("C2_data", [])
+                 if row.get("metric", "").split(".")[-1] in suffixes]
+        return found[:limit] if limit else found
+
     # ── 산업 계열은 그릴 것이 통째로 다르다 ──
     if workstream in ("IND-R", "IND-TP"):
         if analysis.get("market", {}).get("available"):
-            specs.append(spec(1, "산업 안에서 시가총액이 어떻게 나뉘나?", "가로 막대", [],
+            specs.append(spec(1, "산업 안에서 시가총액이 어떻게 나뉘나?", "가로 막대",
+                              by_metric("market_cap", "cap_share_pct"),
                               {"x": "시가총액", "y": "종목"}, "조원",
                               "시가총액 비중은 **시장점유율이 아니다** — 비상장사가 빠져 있다",
                               [f"시장 스냅샷 {snapshot_store.as_of()}"]))
         production = (analysis.get("market") or {}).get("production", {})
         if production.get("available"):
-            specs.append(spec(2, "이 산업의 수요는 늘고 있나?", "선그래프", [],
+            specs.append(spec(2, "이 산업의 수요는 늘고 있나?", "선그래프",
+                              by_metric("생산지수"),
                               {"x": "월", "y": "생산지수"}, "지수",
                               "생산지수는 물량 기준이라 가격 변화가 빠져 있다",
                               [production.get("source", "KOSIS")]))
@@ -1196,12 +1495,14 @@ def h05_visualize(pack: Dict, request: Dict) -> Dict:
                               "시총 상위만 넣어 만든 지수다 — 생존 편향이 있다",
                               ["KRX 일별 시세"]))
         if analysis.get("cycle", {}).get("available"):
-            specs.append(spec(4, "지금 어느 국면인가?", "신호 3단 패널", [],
+            specs.append(spec(4, "지금 어느 국면인가?", "신호 3단 패널",
+                              by_metric("생산지수"),
                               {"x": "월", "y": "지수·모멘텀"}, "지수 · %",
                               "단위가 다른 값을 한 축에 겹치지 않는다 — 100 기준으로 지수화한다",
                               ["ECOS", "KOSIS", "KRX"]))
         if analysis.get("ranking"):
-            specs.append(spec(5, "후보 중 누가 앞서나?", "가로 막대 (coverage 표기)", [],
+            specs.append(spec(5, "후보 중 누가 앞서나?", "가로 막대 (coverage 표기)",
+                              by_metric("r250", "roe", "per", "pbr"),
                               {"x": "adjusted score", "y": "후보"}, "점",
                               "결측이 많은 후보는 penalty 로 낮게 나온다 — 나쁜 것과는 다르다",
                               [f"시장 스냅샷 {snapshot_store.as_of()}"]))
@@ -1227,7 +1528,9 @@ def h05_visualize(pack: Dict, request: Dict) -> Dict:
                               "공시는 회사가 낸 사실이다 — 주가 반응과 인과를 섞지 않는다",
                               ["DART 공시목록"]))
         if analysis.get("scorecard", {}).get("rows"):
-            specs.append(spec(6, "여섯 차원이 어떻게 갈리나?", "레이더 (기회/부담 분리)", [],
+            specs.append(spec(6, "여섯 차원이 어떻게 갈리나?", "레이더 (기회/부담 분리)",
+                              by_metric("operating_margin", "roe", "debt_ratio",
+                                        "revenue_cagr", "per_premium_pct"),
                               {"x": "차원", "y": "0~5"}, "점",
                               "부담·위험은 높을수록 불리하다 — 같은 방향으로 읽으면 결론이 뒤집힌다",
                               ["Quick Score 계산 원장"]))
@@ -1239,17 +1542,20 @@ def h05_visualize(pack: Dict, request: Dict) -> Dict:
                           ["DART 사업보고서"]))
     if analysis.get("financial", {}).get("series"):
         specs.append(spec(2, "매출과 이익이 어떻게 움직였나?", "선 + 막대 조합",
-                          [d["id"] for d in pack["C2_data"] if d["metric"] == "revenue"],
+                          by_metric("revenue", "operating_income", "revenue_cagr"),
                           {"x": "회계연도", "y": "금액"}, "조원",
                           "Y축을 0에서 시작하지 않으면 변화가 과장된다",
                           ["DART 재무제표"]))
     if analysis.get("peers", {}).get("available"):
-        specs.append(spec(3, "피어 대비 어느 위치인가?", "산점도 (PER × ROE)", [],
+        specs.append(spec(3, "피어 대비 어느 위치인가?", "산점도 (PER × ROE)",
+                          by_metric("per", "roe", "peer_median_per", "per_premium_pct"),
                           {"x": "ROE", "y": "PER"}, "배 · %",
                           "적자 기업의 PER 은 표시하지 않는다 — 음수 PER 은 의미가 없다",
                           [f"시장 스냅샷 {snapshot_store.as_of()}"]))
     if analysis.get("forecast", {}).get("statistical"):
-        specs.append(spec(4, "앞으로 어느 범위인가?", "팬차트 (신뢰구간)", [],
+        specs.append(spec(4, "앞으로 어느 범위인가?", "팬차트 (신뢰구간)",
+                          by_metric("close", "valuation_band_low", "valuation_band_base",
+                                    "valuation_band_high"),
                           {"x": "거래일", "y": "종가"}, "원",
                           "신뢰구간은 예측이 맞을 확률이 아니라 모형 가정 아래의 범위다",
                           ["KRX 일봉"]))
@@ -1590,8 +1896,36 @@ RUBRIC = [
     ("Red Team·불확실성", 5), ("사용자 의견 추적", 5), ("양식·책임 경계", 5),
 ]
 
+# 해석카드가 채워야 하는 여섯 칸 (공통계약 §12.1 "관찰·의미·인과·대안·한계·다음 확인")
+CARD_SLOTS = [("observation", "관찰"), ("meaning", "의미"), ("causal_hypothesis", "인과"),
+              ("alternative", "대안"), ("limitation", "한계"), ("next_check", "다음 확인")]
+
+# 근거 등급 중 **원생산자에게서 온 것** (공통계약 §8.1). 2차전문·기타는 여기 안 든다.
+PRIMARY_GRADES = ("1차공식", "회사원문")
+
+
+def _ratio(part: int, whole: int) -> float:
+    """비율 — 분모가 0이면 0.0 이다. **모르는 것을 1.0 으로 세지 않는다.**"""
+    return (part / whole) if whole else 0.0
+
 
 def h10_evaluate(pack: Dict, request: Dict) -> Dict:
+    """100점 루브릭 채점 (공통계약 §12.1 · 변경노트 N71).
+
+    M6 까지 아홉 축이 전부 "있으면 만점" 이라 네 작업이 전부 100/100 A 였다.
+    `계산 2건이면 만점` · `검사를 돌리기만 하면 만점` 은 아무것도 재지 않는 것과 같다.
+
+    M7 에서 **배점은 그대로 두고 축 안의 채점을 계약이 적어 둔 대로** 바꿨다.
+    §12.1 표의 `핵심 검사` 열이 이미 세부 기준을 말하고 있었다 —
+    "원문 위치 연결" · "질문·차트 유형·**축·데이터**·출처 일치" ·
+    "단위·통화·기간·기준·식 재계산" · "관찰·의미·인과·대안·한계·다음 확인".
+
+    가장 크게 바뀐 두 가지
+
+        Red Team    **판정불가는 점수를 받지 못한다** (N39 를 confidence 뿐 아니라
+                    점수에도 건다). `통과 0 · 실패 1 · 판정불가 4` 는 만점이 아니다.
+        데이터·계산  입력이 없는 CALC- 는 되짚을 수 없으므로 계산으로 세지 않는다.
+    """
     workstream = pack["C0_charter"]["workstream_id"]
     result = contracts.new_stage_result(request.get("run_id", ""), workstream, "H10", "EVAL")
     result["context_io"]["read_fields"] = ["전체"]
@@ -1600,47 +1934,195 @@ def h10_evaluate(pack: Dict, request: Dict) -> Dict:
     report = _stashed(pack, "report") or {"page_count": 0}
     red = _stashed(pack, "red_team") or {}
     cards = pack.get("C5_interpretation", [])
-
-    scores = []
-
-    def score(name: str, full: int, ratio: float, why: str) -> None:
-        got = round(full * max(0.0, min(1.0, ratio)), 1)
-        scores.append({"axis": name, "max": full, "score": got, "why": why})
-
-    target = pack["C0_charter"].get("target", {})
-    score("대상·범위 정합성", 10, 1.0 if target.get("name") else 0.3,
-          "종목·기준일이 확정됐다" if target.get("name") else "대상 식별이 불완전하다")
-    score("증거 추적성", 15, cover["data_linked_ratio"],
-          f"D- {cover['data']}건 중 {cover['data_with_evidence']}건이 E- 로 연결됐다")
-    score("데이터·계산 정합성", 15, 1.0 if cover["calculations"] else 0.5,
-          f"계산 기록 {cover['calculations']}건 (재계산 완료)")
+    evidence = pack.get("C1_evidence", [])
+    data = pack.get("C2_data", [])
+    calcs = pack.get("logs", {}).get("calculations", [])
+    visuals = pack.get("C4_visual", [])
     hypotheses = pack.get("C3_hypothesis", [])
-    with_falsify = [h for h in hypotheses if h.get("falsify_condition")]
-    score("분석 논리", 15, len(with_falsify) / len(hypotheses) if hypotheses else 0.0,
-          f"가설 {len(hypotheses)}건 중 반증 조건이 붙은 것 {len(with_falsify)}건")
-    score("시각화 정합성", 10, 1.0 if pack.get("C4_visual") else 0.0,
-          f"차트 명세 {len(pack.get('C4_visual', []))}건 (금지 오해 포함)")
-    full_cards = [c for c in cards if c.get("limitation") != narrative.UNCHECKED]
-    score("해석 품질", 20, len(full_cards) / len(cards) if cards else 0.0,
-          f"해석카드 {len(cards)}장 중 한계까지 채운 것 {len(full_cards)}장")
-    score("Red Team·불확실성", 5, 1.0 if red.get("checks") else 0.0,
-          red.get("summary", "검사 없음"))
     feedback = pack["C6_decisions"]["feedback_log"]
-    score("사용자 의견 추적", 5, 1.0 if feedback else 0.0,
-          f"의견 {len(feedback)}건이 C6 에 기록됐다")
-    score("양식·책임 경계", 5, 1.0 if 0 < report["page_count"] <= 15 else 0.0,
-          f"{report['page_count']}장 · 고정 Disclaimer 포함")
+    target = pack["C0_charter"].get("target", {})
+    analysis = _stashed(pack, "analysis") or {}
+
+    scores: List[Dict] = []
+
+    def score(name: str, full: int, parts: List[tuple]) -> None:
+        """축 하나를 세부 기준 여러 개로 채점한다.
+
+        `parts` 는 `(세부 배점, 비율 0~1, 설명)` 이다. 설명은 리포트와 화면에
+        **그대로** 실려서 "왜 이 점수인가" 를 사람이 읽을 수 있어야 한다.
+        """
+        got = 0.0
+        notes = []
+        for weight, ratio, note in parts:
+            bounded = max(0.0, min(1.0, ratio))
+            got += weight * bounded
+            notes.append(f"{note} {round(weight * bounded, 1)}/{weight}")
+        scores.append({"axis": name, "max": full, "score": round(got, 1),
+                       "why": " · ".join(notes),
+                       "parts": [{"weight": w, "ratio": round(max(0.0, min(1.0, r)), 3),
+                                  "note": n} for w, r, n in parts]})
+
+    # ── 1. 대상·범위 정합성 10 — "작업·법인·산업·후보군·기준일 일치" ──
+    kind = _target_kind(pack)
+    industry_target = _stashed(pack, "industry_target") or {}
+    universe = analysis.get("universe", {})
+    if kind == "industry":
+        # 산업은 대상이 종목이 아니다 — 업종코드와 구성 종목 수가 확정돼야 대상이 선 것이다
+        identified = bool(industry_target.get("industry_code") and industry_target.get("name"))
+        scoped = bool(industry_target.get("member_count"))
+        # 후보군을 골랐다면 **전수를 공개했는가** 가 범위 정합성이다 (변경노트 N44).
+        # 개수 제한이 아니라 완전성 공개로 체리피킹을 막는 것이 규칙의 목적이다.
+        disclosed = (bool(universe.get("universe_total")) if universe
+                     else bool(industry_target.get("member_count")))
+        span_note = (f"후보 {universe.get('count')}곳 / 상장사 {universe.get('universe_total')}곳 전수 공개"
+                     if universe else f"구성 종목 {industry_target.get('member_count', 0)}곳 공개")
+    else:
+        identified = bool(target.get("name") and target.get("code"))
+        scoped = bool((_stashed(pack, "peers") or {}).get("method"))
+        disclosed = bool((_stashed(pack, "peers") or {}).get("available"))
+        span_note = f"피어 선정 {(_stashed(pack, 'peers') or {}).get('method', '없음')}"
+    score("대상·범위 정합성", 10, [
+        (4, 1.0 if identified else 0.0,
+         f"대상 확정 {target.get('name') or industry_target.get('name') or '실패'}"),
+        (2, 1.0 if pack["C0_charter"].get("as_of") else 0.0,
+         f"기준일 {pack['C0_charter'].get('as_of') or '없음'}"),
+        (2, 1.0 if scoped else 0.0, "범위 규칙 확정"),
+        (2, 1.0 if disclosed else 0.0, span_note),
+    ])
+
+    # ── 2. 증거 추적성 15 — "핵심 주장→evidence_id→원문 위치 연결" ──
+    # 본문 수치가 실제로 장부까지 되짚어지는지를 **서버가 직접 센다** (M7 · N67/N69).
+    body_link = linkcheck.check_report(pack, _stashed(pack, "report"))
+    located = [e for e in evidence if e.get("url") or e.get("location")]
+    primary = [e for e in evidence if e.get("grade") in PRIMARY_GRADES]
+    score("증거 추적성", 15, [
+        (6, cover["data_traceable_ratio"],
+         f"D- {cover['data']}건 추적가능 {cover['data_traceable']}건"
+         f"(직접근거 {cover['data_with_evidence']} · 계산유래 {cover['data_derived']})"),
+        (5, body_link["ratio"],
+         f"본문 수치 {body_link['total']}개 중 장부로 이어진 것 {body_link['linked']}개"),
+        (2, _ratio(len(located), len(evidence)),
+         f"E- {len(evidence)}건 중 원문 위치가 있는 것 {len(located)}건"),
+        (2, _ratio(len(primary), len(evidence)),
+         f"원생산자 근거 {len(primary)}건 (1차공식·회사원문)"),
+    ])
+
+    # ── 3. 데이터·계산 정합성 15 — "단위·통화·기간·기준·식 재계산" ──
+    # 입력이 없는 CALC- 는 되짚을 수 없다. **계산 건수가 아니라 되짚을 수 있는 계산의 비율**을 잰다.
+    with_inputs = [c for c in calcs if c.get("inputs")]
+    rechecked = [c for c in calcs if c.get("rechecked")]
+    typed = [d for d in data if d.get("unit") and d.get("period")]
+    derived_data = [d for d in data if d.get("calc_id")]
+    score("데이터·계산 정합성", 15, [
+        (5, cover["calc_input_ratio"],
+         f"CALC- {len(calcs)}건 중 입력 D- 가 기록된 것 {len(with_inputs)}건"),
+        (3, _ratio(len(rechecked), len(calcs)),
+         f"독립 재계산 {len(rechecked)}건 (§8.3)"),
+        (4, _ratio(len(typed), len(data)),
+         f"D- {len(data)}건 중 단위·기간이 붙은 것 {len(typed)}건"),
+        (3, 1.0 if derived_data else 0.0,
+         f"본문 파생값이 장부에 있다 — 파생 D- {len(derived_data)}건"),
+    ])
+
+    # ── 4. 분석 논리 15 — "사실·가설 분리, 전달경로, 반증 조건" ──
+    score("분석 논리", 15, [
+        (3, 1.0 if hypotheses else 0.0, f"가설 {len(hypotheses)}건"),
+        (4, _ratio(len([h for h in hypotheses if h.get("falsify_condition")]), len(hypotheses)),
+         "반증 조건"),
+        (4, _ratio(len([h for h in hypotheses if h.get("causal_path")]), len(hypotheses)),
+         "전달 경로"),
+        (4, _ratio(len([h for h in hypotheses if h.get("competing")]), len(hypotheses)),
+         "경쟁 가설"),
+    ])
+
+    # ── 5. 시각화 정합성 10 — "질문·차트 유형·축·데이터·출처 일치" ──
+    # `data_ids` 가 비어 있으면 그 차트가 **어느 D- 를 그리는지 말하지 않은 것**이다.
+    # 장↔데이터 연결의 두 번째 축이라 여기를 비워 두면 차트는 검증 불가능한 그림이 된다.
+    score("시각화 정합성", 10, [
+        (2, 1.0 if visuals else 0.0, f"차트 명세 {len(visuals)}건"),
+        (2, _ratio(len([v for v in visuals
+                        if v.get("research_question") and v.get("chart_type") and v.get("axis")]),
+                   len(visuals)), "질문·유형·축"),
+        (3, _ratio(len([v for v in visuals if v.get("data_ids")]), len(visuals)),
+         f"data_ids 가 붙은 차트 {len([v for v in visuals if v.get('data_ids')])}건"),
+        (2, _ratio(len([v for v in visuals if v.get("sources")]), len(visuals)), "출처"),
+        (1, _ratio(len([v for v in visuals if v.get("forbidden_misread")]), len(visuals)),
+         "금지 오해"),
+    ])
+
+    # ── 6. 해석 품질 20 — "관찰·의미·인과·대안·한계·다음 확인" ──
+    # 여섯 칸이 다 있는지를 잰다. 한 칸(한계)만 보면 나머지 다섯이 비어도 만점이 된다.
+    slot_filled = {key: len([c for c in cards
+                             if c.get(key) and c.get(key) != narrative.UNCHECKED])
+                   for key, _ in CARD_SLOTS}
+    score("해석 품질", 20, [
+        (2, 1.0 if cards else 0.0, f"해석카드 {len(cards)}장"),
+        *[(3, _ratio(slot_filled[key], len(cards)), label) for key, label in CARD_SLOTS],
+    ])
+
+    # ── 7. Red Team·불확실성 5 — "반대 근거와 결론 반전 조건" ──
+    # **판정불가는 점수를 받지 못한다** (N39). 검사를 돌린 것과 판정한 것은 다르다.
+    checks = red.get("checks", [])
+    decided = red.get("passed", 0) + red.get("failed", 0)
+    failed_rows = [c for c in checks if c.get("verdict") == redteam.FAIL]
+    answered = [c for c in failed_rows if c.get("counter_evidence") and c.get("next_check")]
+    # 실패가 결론에 실제로 반영됐는가 — H07 이 신뢰도를 내렸거나 RED 소유 Gap 을 냈으면 반영된 것이다.
+    # (H10 자신의 `gap_ids` 는 늘 비어 있으므로 팩의 Gap 목록을 본다)
+    red_gaps = [g for g in pack.get("logs", {}).get("gaps", []) if g.get("owner") == "RED"]
+    reflected = (not failed_rows) or bool(red.get("confidence_penalty")) or bool(red_gaps)
+    score("Red Team·불확실성", 5, [
+        (1, 1.0 if checks else 0.0, f"검사 {len(checks)}건"),
+        (2, _ratio(decided, len(checks)),
+         f"판정한 것 {decided}건 (판정불가 {red.get('unknown', 0)}건은 세지 않는다)"),
+        (1, 1.0 if not failed_rows else _ratio(len(answered), len(failed_rows)),
+         "실패에 반대 근거·다음 확인"),
+        (1, 1.0 if reflected else 0.0, "실패를 결론에 반영"),
+    ])
+
+    # ── 8. 사용자 의견 추적 5 — "질문·반영·미반영·변경 이력" ──
+    reflected_feedback = [f for f in feedback if f.get("state") == "반영됨"]
+    skipped_feedback = [f for f in feedback if f.get("state") == "의견 미입력"]
+    asked_states = {f.get("stage_id") for f in feedback}
+    score("사용자 의견 추적", 5, [
+        (1, 1.0 if feedback else 0.0, f"의견 {len(feedback)}건"),
+        (2, _ratio(len(reflected_feedback), len(feedback)), "반영됨"),
+        # 미입력을 미입력으로 남긴 것도 추적이다. 답이 전부 있으면 만점이고,
+        # 없으면 **그 사실이 기록돼 있는가**를 본다 — 조용히 지우는 것이 가장 나쁘다.
+        (1, 1.0 if (not skipped_feedback or all(f.get("question") for f in skipped_feedback))
+            else 0.0, "미입력도 기록"),
+        (1, _ratio(len(asked_states - {None, ""}), 3), "질문 상태 H01·H04·H08"),
+    ])
+
+    # ── 9. 양식·책임 경계 5 — "고정/자유 양식, 최대 15장, 교육용 고지" ──
+    # 워크스트림마다 계약이 정한 양식이 다르다 — R 계열은 고정양식, TP 계열은 자유양식이다.
+    expected_format = export_md.FORMATS.get(workstream, {}).get("kind", "")
+    pages = report.get("pages", [])
+    has_disclaimer = any(export_md.DISCLAIMER in line
+                         for page in pages for line in page.get("body", []))
+    has_boundary = any(page.get("human_decision") for page in pages)
+    score("양식·책임 경계", 5, [
+        (2, 1.0 if 0 < report["page_count"] <= 15 else 0.0, f"{report['page_count']}장 (상한 15)"),
+        (1, 1.0 if has_disclaimer else 0.0, "교육용 고지"),
+        (1, 1.0 if (not expected_format or report.get("format") == expected_format) else 0.0,
+         f"양식 {report.get('format', '없음')}"),
+        (1, 1.0 if has_boundary else 0.0, "AI 제안 / 사람 결정 경계"),
+    ])
 
     total = round(sum(s["score"] for s in scores), 1)
 
     # 중대 결함은 총점과 **별도로** 표시한다 (§12.1 마지막 문단)
     critical = []
-    if not target.get("name"):
-        critical.append("대상 오식별 — 종목을 확정하지 못했다")
-    if cover["data_linked_ratio"] < 0.5 and cover["data"]:
-        critical.append(f"근거 없는 수치가 절반을 넘는다 ({cover['data_linked_ratio']:.0%} 만 연결)")
+    if not identified:
+        critical.append("대상 오식별 — 대상을 확정하지 못했다")
+    if cover["data_traceable_ratio"] < 0.5 and cover["data"]:
+        critical.append(f"되짚을 수 없는 수치가 절반을 넘는다 "
+                        f"({cover['data_traceable_ratio']:.0%} 만 추적 가능)")
+    if checks and not decided:
+        critical.append(f"Red Team 이 아무것도 판정하지 못했다 (판정불가 {red.get('unknown', 0)}건)")
     if red.get("failed"):
         critical.append(f"Red Team 실패 {red['failed']}건이 결론에 영향을 줄 수 있다")
+    if calcs and not with_inputs:
+        critical.append(f"계산 {len(calcs)}건 전부 입력 D- 가 없어 되짚을 수 없다")
 
     grade = "A" if total >= 90 else "B" if total >= 75 else "C" if total >= 60 else "D"
     result["verified_result"] = [f"총점 {total}/100 · 등급 {grade}"]
@@ -1651,7 +2133,10 @@ def h10_evaluate(pack: Dict, request: Dict) -> Dict:
     result["evaluation"]["reasons"] = critical or [f"총점 {total}"]
     result["status"] = "accepted"
     _stash(pack, "evaluation", {"total": total, "grade": grade, "scores": scores,
-                                "critical": critical, "coverage": cover})
+                                "critical": critical, "coverage": cover,
+                                "body_link": body_link,
+                                "rubric_note": ("배점은 공통계약 §12.1 그대로다. 축 안의 세부 채점은 "
+                                                "같은 표의 '핵심 검사' 열을 그대로 잰다 (M7 · N71)")})
     result["next_state_input"] = ["H11 이 Run Summary 를 만든다"]
     return result
 

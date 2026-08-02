@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const vm = require('vm');
+const { spawnSync } = require('child_process');   // 6절 — 파이썬 쪽 링크 규칙을 불러 대조한다
 
 const ROOT = path.resolve(__dirname, '..');
 const ARCHIVE = path.join(ROOT, '실습/pages');
@@ -435,6 +436,104 @@ async function researchChecks() {
   } catch (e) {
     failures++;
     console.log(`  ✗  링크 규칙 검사 실패 — ${e.message}`);
+  }
+
+  // ── 6. 같은 링크 규칙이 브라우저와 서버에서 **같은 답**을 내는가 (M7) ──
+  //
+  // M7 에서 H10 이 본문 연결률을 점수로 재게 되면서 같은 규칙이 파이썬에도 생겼다
+  // (`app/services/research/linkcheck.py`). 두 벌이 어긋나면 화면이 보여 주는 연결률과
+  // 점수가 달라진다 — 그러면 둘 중 하나는 거짓말이 된다. 여기가 그 경계다.
+  //
+  // 서버를 띄우지 않는다. 파이썬 모듈을 **파일 경로로 직접** 돌려 답만 받아 대조한다.
+  console.log('\n── 6. 링크 규칙 이중 구현 대조 (M7) ─────────');
+  try {
+    const dom3 = new JSDOM('<!doctype html><body>', { runScripts: 'outside-only' });
+    dom3.window.matchMedia = () => ({ matches: false, addListener() {}, removeListener() {} });
+    dom3.window.eval(fs.readFileSync(path.join(ROOT, 'static/assets/app.js'), 'utf8'));
+    dom3.window.eval(fs.readFileSync(path.join(ROOT, 'static/assets/shell.js'), 'utf8'));
+    dom3.window.eval(fs.readFileSync(path.join(ROOT, 'static/assets/research.js'), 'utf8'));
+    const R3 = dom3.window.Research;
+
+    // 규칙의 **모든 갈래**를 건드리는 팩 — 조 표기(1e12 이상) · 소수 1·2자리 ·
+    // 자릿점 정수 · 같은 값 중복 · 파생 D-(evidence_id 없음)
+    const pack = {
+      C2_data: [
+        { id: 'D-1', metric: 'revenue', value: 80102655000000, unit: '원', evidence_id: 'E-1' },
+        { id: 'D-2', metric: 'operating_income', value: 6566976000000, unit: '원', evidence_id: 'E-1' },
+        { id: 'D-3', metric: '005930.roe', value: 8.2, unit: '%', evidence_id: 'E-2' },
+        { id: 'D-4', metric: '000660.roe', value: 8.2, unit: '%', evidence_id: 'E-2' },
+        { id: 'D-5', metric: '005930.per', value: 12.45, unit: '배', evidence_id: 'E-2' },
+        { id: 'D-6', metric: 'valuation_band_base', value: 198186, unit: '원', calc_id: 'CALC-1' },
+        { id: 'D-7', metric: 'revenue_cagr', value: 7.35, unit: '%', calc_id: 'CALC-2' },
+        { id: 'D-8', metric: '생산지수', value: 115.5, unit: '지수', evidence_id: 'E-3' },
+      ],
+    };
+    // 자릿점·반올림·단위가 서로 다르게 걸리는 줄들. 파이썬 `toFixed`·`Math.round` 흉내가
+    // 어긋나면 여기서 바로 드러난다.
+    const lines = [
+      '매출 80.1조를 올렸다',
+      '영업이익 6.6조 · 영업이익률 8.2%',
+      'ROE 8.2% 로 나타났다',
+      'PER 12.45배 · PER 12.5배',
+      '주당 가치 범위 158,549~237,823원 (기준 198,186원)',
+      '매출 CAGR 7.35% · 확장 국면',
+      '생산지수 115.5 지수',
+      '분석 기준일 2026-08-02 · 접수 2026-07',
+      'SK하이닉스 (000660) 시총 3.2조',
+      '검사 5건 중 통과 4 · 실패 0 · 판정불가 1',
+      '후보 10곳 / 업종 상장사 72곳',
+      '1위 SK하이닉스 · adjusted 4.6 · coverage 100%',
+      '2025: 매출 80.1조 · 영업이익 6.6조',
+      '피어 대비 +32.4%',
+      '상장 시가총액 합계 1,234.5조',
+    ];
+
+    const jsRows = lines.map((line) => {
+      const got = R3.linkNumbers(line, R3.buildValueIndex(pack));
+      const ids = [...String(got.html).matchAll(/data-evidence-id="([^"]+)"/g)].map((m) => m[1]);
+      return { total: got.total, linked: got.linked, data_ids: ids };
+    });
+
+    const script = path.join(ROOT, 'app/services/research/linkcheck.py');
+    const candidates = [path.join(ROOT, '.venv/bin/python'), 'python3', 'python'];
+    let out = null;
+    let usedPython = '';
+    for (const bin of candidates) {
+      const run = spawnSync(bin, [script], {
+        input: JSON.stringify({ C2_data: pack.C2_data, lines }),
+        encoding: 'utf8',
+      });
+      if (run.status === 0 && run.stdout) { out = run.stdout; usedPython = bin; break; }
+    }
+
+    if (!out) {
+      // **조용히 통과시키지 않는다.** 못 돌렸으면 못 돌렸다고 실패로 센다 —
+      // 대조를 건너뛴 채 초록불이 뜨면 어긋남을 놓친 것과 같다.
+      failures++;
+      console.log('  ✗  파이썬 쪽을 돌리지 못했다 — 대조를 건너뛰었다 (초록불로 세지 않는다)');
+    } else {
+      const pyRows = JSON.parse(out);
+      let mismatch = 0;
+      lines.forEach((line, i) => {
+        const a = jsRows[i];
+        const b = pyRows[i];
+        const same = a.total === b.total && a.linked === b.linked
+          && JSON.stringify(a.data_ids) === JSON.stringify(b.data_ids);
+        if (!same) {
+          mismatch++;
+          failures++;
+          console.log(`  ✗  «${line}»`);
+          console.log(`       JS ${a.linked}/${a.total} [${a.data_ids}] · PY ${b.linked}/${b.total} [${b.data_ids}]`);
+        }
+      });
+      if (!mismatch) {
+        const totals = jsRows.reduce((s, r) => ({ t: s.t + r.total, l: s.l + r.linked }), { t: 0, l: 0 });
+        console.log(`  ✓  ${lines.length}줄 전부 같은 답 — 수치 ${totals.t}개 중 ${totals.l}개 링크 (${usedPython.split('/').pop()})`);
+      }
+    }
+  } catch (e) {
+    failures++;
+    console.log(`  ✗  이중 구현 대조 실패 — ${e.message}`);
   }
 }
 

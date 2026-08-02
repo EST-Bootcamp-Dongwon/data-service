@@ -146,13 +146,72 @@ async function runWorkstream(workstream, target) {
     if (md.body.merged?.length) console.log(`     합침: ${md.body.merged.join(' / ')}`);
   } else bad(`${workstream} MD 생성`, `HTTP ${md.status} ${JSON.stringify(md.body).slice(0, 200)}`);
 
+  // ── 본문 수치 연결률: 서버가 센 값과 브라우저가 센 값이 같은가 (M7) ──
+  //
+  // H10 이 점수로 쓰는 숫자(`linkcheck.check_report`)와 화면이 사람에게 보여 주는
+  // 숫자(`research.js linkNumbers`)는 **같은 리포트에서 같아야** 한다. 다르면 둘 중
+  // 하나는 거짓말이다. `regress_ui.js` 6절이 규칙을 줄 단위로 대조한다면, 여기서는
+  // **실제 리포트 전문**으로 대조한다.
+  const evaluation = (pack.CX_workstream || {}).evaluation || {};
+  const server = evaluation.body_link;
+  if (!server) {
+    bad(`${workstream} 연결률`, 'H10 이 body_link 를 남기지 않았다');
+  } else {
+    const browser = browserLinkCounts(pack);
+    if (!browser) {
+      console.log(`  ·  연결률 대조 건너뜀 — jsdom 이 없다 (npm install --no-save jsdom)`);
+    } else if (browser.total === server.total && browser.linked === server.linked) {
+      ok('본문 연결률 서버=브라우저',
+        `${server.linked}/${server.total} (${Math.round((server.ratio || 0) * 100)}%)`);
+    } else {
+      bad(`${workstream} 연결률 대조`,
+        `서버 ${server.linked}/${server.total} · 브라우저 ${browser.linked}/${browser.total}`);
+    }
+  }
+
   return {
     workstream, target, pages,
     seconds: totalMs / 1000, maxPack, states: rows.length,
     evidence: last?.e ?? 0, data: last?.d ?? 0, calc: last?.c ?? 0, gaps: last?.gaps ?? 0,
     verdict: last?.status,
+    bodyLink: (pack.CX_workstream || {}).evaluation?.body_link || null,
+    score: (pack.CX_workstream || {}).evaluation?.total ?? null,
+    grade: (pack.CX_workstream || {}).evaluation?.grade || '-',
     markdown: md.status === 200 ? md.body.markdown : '',
   };
+}
+
+/** 브라우저 규칙(`research.js linkNumbers`)으로 같은 리포트의 수치를 센다. */
+let researchModule;
+function browserLinkCounts(pack) {
+  const report = (pack.CX_workstream || {}).report;
+  if (!report || !report.pages) return null;
+  if (researchModule === undefined) {
+    try {
+      const { JSDOM } = require('jsdom');
+      const fs = require('fs');
+      const path = require('path');
+      const root = path.resolve(__dirname, '..');
+      const dom = new JSDOM('<!doctype html><body>', { runScripts: 'outside-only' });
+      dom.window.matchMedia = () => ({ matches: false, addListener() {}, removeListener() {} });
+      for (const asset of ['app.js', 'shell.js', 'research.js']) {
+        dom.window.eval(fs.readFileSync(path.join(root, 'static/assets', asset), 'utf8'));
+      }
+      researchModule = dom.window.Research;
+    } catch { researchModule = null; }
+  }
+  if (!researchModule) return null;
+  const index = researchModule.buildValueIndex(pack);
+  let total = 0;
+  let linked = 0;
+  for (const page of report.pages) {
+    for (const line of [page.key_message, ...(page.body || [])]) {
+      const got = researchModule.linkNumbers(line, index);
+      total += got.total;
+      linked += got.linked;
+    }
+  }
+  return { total, linked };
 }
 
 async function main() {
@@ -174,10 +233,12 @@ async function main() {
   }
 
   console.log('\n══ 요약 ══════════════════════════════');
-  console.log(`  ${'작업'.padEnd(9)} ${'대상'.padEnd(8)} ${'초'.padStart(6)} ${'장'.padStart(4)} ${'팩'.padStart(8)}  E/D/C/Gap`);
+  console.log(`  ${'작업'.padEnd(9)} ${'대상'.padEnd(8)} ${'초'.padStart(6)} ${'장'.padStart(4)} ${'팩'.padStart(8)}  ${'E/D/C/Gap'.padEnd(14)} ${'본문링크'.padStart(9)}  평가`);
   for (const r of results) {
+    const link = r.bodyLink ? `${r.bodyLink.linked}/${r.bodyLink.total}` : '—';
     console.log(`  ${r.workstream.padEnd(9)} ${String(r.target).padEnd(8)} ${r.seconds.toFixed(1).padStart(6)} ` +
-      `${String(r.pages).padStart(4)} ${kb(r.maxPack).padStart(8)}  ${r.evidence}/${r.data}/${r.calc}/${r.gaps}`);
+      `${String(r.pages).padStart(4)} ${kb(r.maxPack).padStart(8)}  ${`${r.evidence}/${r.data}/${r.calc}/${r.gaps}`.padEnd(14)} ` +
+      `${link.padStart(9)}  ${r.score ?? '—'}/100 ${r.grade}`);
   }
 
   if (results.length === 1 && results[0].markdown) {

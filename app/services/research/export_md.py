@@ -458,7 +458,11 @@ def _assemble_ind_r(pack: Dict, analysis: Dict) -> Dict:
 
     if rivalry.get("available"):
         filled[9] = _page(slots[9], f"{rivalry['level']} — {rivalry['why']}",
-                          [f"{r['name']} {r['share_pct']}%" for r in rivalry["top"][:6]]
+                          # '비중' 을 붙여 쓴다 — 점유율이 아니라는 이 장의 요지와도 맞고,
+                          # 화면이 이 수치를 장부의 D- 와 이을 때 지표 이름이 같은 줄에
+                          # 있어야 한다는 규칙(§7.4)도 여기서 지켜진다.
+                          [f"{r['name']} 시가총액 비중 {r['share_pct']}%"
+                           for r in rivalry["top"][:6]]
                           + [f"CR3 {rivalry['cr3_pct']}%", rivalry["limitation"]],
                           visual="시가총액 비중 막대", confidence="medium",
                           gaps=["G-DATA — 시장점유율 원자료 없음. 시총 비중은 점유율이 아니다"])

@@ -546,6 +546,23 @@ window.Research = (() => {
     operating_cash_flow: ['영업현금흐름', '현금흐름'],
     market_cap: ['시가총액', '시총'], per: ['PER'], pbr: ['PBR'], roe: ['ROE'],
     r250: ['수익률'], 생산지수: ['생산지수'],
+    close: ['종가', '주가'], shares: ['주식수'],
+    // ── 파생값 (M7 · 변경노트 N69) ──
+    // 이름은 **본문에 실제로 쓰이는 낱말**이어야 한다. 지표 이름을 그대로 적으면
+    // 한국어 본문과 영영 안 맞아서 링크가 걸리지 않는다.
+    // ⚠️ 서버의 `app/services/research/linkcheck.py METRIC_LABELS` 와 같은 표다 — 함께 고친다.
+    revenue_cagr: ['CAGR'], operating_margin: ['영업이익률'], net_margin: ['순이익률'],
+    asset_turnover: ['자산회전율'], equity_multiplier: ['재무레버리지'],
+    debt_ratio: ['부채비율'], current_ratio: ['유동비율'],
+    cash_conversion: ['현금전환', '영업현금흐름/영업이익'],
+    eps: ['EPS'], peer_median_per: ['피어 중앙값', '피어 PER'],
+    valuation_band_base: ['주당 가치', '주당가치', '기준'],
+    valuation_band_low: ['주당 가치', '주당가치'],
+    valuation_band_high: ['주당 가치', '주당가치'],
+    per_premium_pct: ['피어 대비'],
+    listed_market_cap: ['시가총액 합계', '상장 시가총액'],
+    cap_share_pct: ['시가총액 비중'], cr3_pct: ['CR3'], hhi: ['HHI'],
+    candidate_cap_share: ['업종 시총'], coverage: ['coverage'],
   };
 
   function labelsOf(metric) {
@@ -685,8 +702,11 @@ window.Research = (() => {
     const tiles = [
       ['리포트', `${state.report?.page_count ?? 0}장`, `상한 15장 · ${state.report?.format || ''}`],
       ['평가', `${evaluation.total ?? '—'}/100`, `등급 ${evaluation.grade || '—'}`],
+      // 직접근거와 계산유래를 **갈라서** 밝힌다. 합쳐 놓으면 "전부 근거가 있다" 로 읽혀서
+      // 그중 몇 건이 우리가 만든 값인지가 사라진다 (M7 · 변경노트 N69).
       ['근거 · 데이터', `${led.evidence ?? 0} · ${led.data ?? 0}`,
-        `D- 중 ${Math.round((led.data_linked_ratio ?? 0) * 100)}% 가 E- 로 이어진다`],
+        `추적가능 ${Math.round((led.data_traceable_ratio ?? led.data_linked_ratio ?? 0) * 100)}%`
+        + ` — 직접근거 ${led.data_with_evidence ?? 0} · 계산유래 ${led.data_derived ?? 0}`],
       ['Gap · 충돌', `${led.gaps ?? 0} · ${led.conflicts ?? 0}`, '없는 자료는 없다고 밝힌 것이다'],
       ['전구간', `${seconds.toFixed(1)}초`, `${state.rows.length}상태`],
     ];
@@ -791,7 +811,9 @@ window.Research = (() => {
         <td>${esc(row.metric)}</td>
         <td class="num">${typeof row.value === 'number' ? App.num(row.value, 2) : esc(row.value)}</td>
         <td>${esc(row.unit)}</td><td>${esc(row.period)}</td>
-        <td>${row.evidence_id ? esc(row.evidence_id) : '<span class="muted">없음</span>'}</td>
+        <td>${row.evidence_id ? esc(row.evidence_id)
+          : row.calc_id ? `<span class="muted">파생 · ${esc(row.calc_id)}</span>`
+            : '<span class="muted">없음</span>'}</td>
       </tr>`).join('')}</tbody></table></div>
       ${data.length > 400 ? `<p class="hint">앞 400건만 보였다 (전체 ${data.length}건).</p>` : ''}
 
@@ -886,11 +908,49 @@ window.Research = (() => {
       : `<li><div class="c-kind">계산</div>
            <div class="c-sub">이 값을 쓴 계산 기록이 없다 — 원자료를 그대로 실은 값이다</div></li>`);
 
-    nodes.push(evidence
-      ? evidenceNode(evidence)
-      : `<li><div class="c-kind">출처</div>
-           <div class="c-sub">E- 가 붙어 있지 않다. 근거 없는 수치는 리포트에 쓰지 않는 것이 원칙이라 이 값은 확인이 필요하다</div></li>`);
+    // 파생값은 자기 E- 가 없다 — 계산에서 나왔으니 당연하다. 입력을 타고 내려가
+    // **닿는 E- 를 대신 펼친다.** 이게 없으면 사슬이 실제로는 이어져 있는데도
+    // "근거가 없다" 로 읽혀서, 우리가 만든 값을 근거 없는 값으로 오해하게 된다.
+    if (evidence) {
+      nodes.push(evidenceNode(evidence));
+    } else if (row.calc_id) {
+      const roots = rootEvidence(pack, row);
+      nodes.push(`<li><div class="c-kind">출처</div>
+        <div class="c-sub">이 값은 <b>계산으로 만든 파생값</b>이라 직접 근거(E-)가 없다.
+          입력을 따라가면 아래 근거에 닿는다 ${roots.length ? '' : '— 그런데 닿는 근거가 없다. 확인이 필요하다'}</div></li>`);
+      roots.forEach((e) => nodes.push(evidenceNode(e)));
+    } else {
+      nodes.push(`<li><div class="c-kind">출처</div>
+        <div class="c-sub">E- 도 계산 기록도 붙어 있지 않다. 근거 없는 수치는 리포트에 쓰지 않는 것이 원칙이라 이 값은 확인이 필요하다</div></li>`);
+    }
     return `<ul class="chain">${nodes.join('')}</ul>`;
+  }
+
+  /** 파생 D- 에서 입력을 타고 내려가 닿는 E- 들 (서버 `ledger.trace` 와 같은 규칙 · 깊이 4). */
+  function rootEvidence(pack, row) {
+    const seen = new Set([row.id]);
+    const found = [];
+    let frontier = ((pack.logs || {}).calculations || [])
+      .filter((c) => c.result_data_id === row.id)
+      .flatMap((c) => (c.inputs || []).map((id) => (pack.C2_data || []).find((d) => d.id === id)))
+      .filter(Boolean);
+    for (let depth = 0; depth < 4 && frontier.length; depth += 1) {
+      const next = [];
+      for (const item of frontier) {
+        if (seen.has(item.id)) continue;
+        seen.add(item.id);
+        const origin = (pack.C1_evidence || []).find((e) => e.id === item.evidence_id);
+        if (origin) { if (!found.includes(origin)) found.push(origin); continue; }
+        const deeper = ((pack.logs || {}).calculations || [])
+          .find((c) => c.result_data_id === item.id);
+        for (const id of (deeper || {}).inputs || []) {
+          const more = (pack.C2_data || []).find((d) => d.id === id);
+          if (more) next.push(more);
+        }
+      }
+      frontier = next;
+    }
+    return found.slice(0, 4);                           // 같은 출처가 수십 개 D- 를 낳는다
   }
 
   function calcNode(pack, calc) {
