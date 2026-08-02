@@ -268,13 +268,19 @@ def label(industry_code: str) -> str:
 # 구성 종목 · 산업 목록 (M5)
 # ─────────────────────────────────────────────────────────────
 def _groups(digits: int) -> Dict[str, List[str]]:
-    """자릿수별 {접두어: [종목코드]} 색인. 자주 쓰이므로 만들어 둔다."""
+    """자릿수별 {접두어: [종목코드]} 색인. 자주 쓰이므로 만들어 둔다.
+
+    ⚠️ **`load()` 를 잠금 밖에서 먼저 부른다.** `threading.Lock` 은 재진입이 안 돼서
+    잠금을 쥔 채 `load()` 를 부르면 그쪽이 같은 잠금을 다시 잡으려다 영원히 멈춘다
+    (`glossary._build_index` 에서 같은 이유로 배포본 504 가 났다).
+    """
     global _group_index
     if _group_index is None:
+        mapping = load().get("map", {})      # ← 잠금 밖에서 먼저 채운다
         with _lock:
             if _group_index is None:
                 index: Dict[str, List[str]] = {}
-                for code, entry in load().get("map", {}).items():
+                for code, entry in mapping.items():
                     industry = str(entry.get("industry_code", ""))
                     for width in range(2, 6):
                         if len(industry) >= width:

@@ -66,10 +66,18 @@ def _norm(text: str) -> str:
 
 
 def _build_index() -> Dict[str, List[Dict]]:
-    """찾기용 색인 — 표기·괄호 안 약어·영문을 전부 열쇠로 넣는다."""
+    """찾기용 색인 — 표기·괄호 안 약어·영문을 전부 열쇠로 넣는다.
+
+    ⚠️ **`load()` 를 잠금 밖에서 먼저 부른다.** `threading.Lock` 은 재진입이 안 돼서,
+    잠금을 쥔 채로 `load()` 를 부르면 그쪽이 같은 잠금을 다시 잡으려다 영원히 멈춘다.
+    실측 — 배포본에서 `GET /api/research/glossary?term=PER` 이 **62초 타임아웃(504)** 이었다.
+    로컬에서 안 걸린 이유는 검사할 때 늘 `stats()`(→`load()`)를 먼저 불러
+    캐시가 이미 차 있었기 때문이다. 프로세스의 **첫 호출이 `lookup()` 일 때만** 터진다.
+    """
     global _index
     if _index is not None:
         return _index
+    terms = load().get("terms", [])          # ← 잠금 밖에서 먼저 채운다
     with _lock:
         if _index is not None:
             return _index
@@ -83,7 +91,7 @@ def _build_index() -> Dict[str, List[Dict]]:
             if row not in bucket:
                 bucket.append(row)
 
-        for row in load().get("terms", []):
+        for row in terms:
             term = row.get("term", "")
             put(term, row)
             inner = PAREN_RE.search(term)
