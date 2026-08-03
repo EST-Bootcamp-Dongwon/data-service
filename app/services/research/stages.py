@@ -32,7 +32,7 @@ from ...clients import dart_data, dart_report, hf_data
 from ...core import parallel
 from ...repositories import industry_store, snapshot_store
 from .. import ts_service
-from . import contracts, export_md, ledger, linkcheck, narrative, plan, redteam
+from . import charts, contracts, export_md, ledger, linkcheck, narrative, plan, redteam
 from .knowledge import financials, macro, valuation
 from .workstreams import corp_r, corp_tp, ind_r, ind_tp
 
@@ -1465,10 +1465,44 @@ def _h04_corp(pack: Dict, request: Dict) -> Dict:
 # ─────────────────────────────────────────────────────────────
 # H05 Visualize
 # ─────────────────────────────────────────────────────────────
+def _finish_h05(pack: Dict, result: Dict, specs: List[Dict], analysis: Dict) -> Dict:
+    """차트 명세에 **그릴 계열을 붙여** 팩에 싣는다 (M8 · 변경노트 N84).
+
+    M7 까지 H05 는 명세만 만들고 끝났다. 그래서 리포트의 차트는 `*차트: …*` 라는
+    글자였고 화면에는 차트가 하나도 없었다.
+
+    계열을 만드는 규칙은 `charts.py` **한 곳에만** 둔다 — 화면(ApexCharts) ·
+    마크다운(숫자 표) · 인쇄용 HTML(인라인 SVG) 세 렌더러가 같은 것을 읽는다.
+    `C4_visual` 은 **손대지 않는다** (공통계약이 정한 모양이다 · 요약본 §8.2).
+    계열은 확장 자리인 `CX_workstream.charts` 로 간다.
+    """
+    built = charts.build(pack, analysis or {})
+    _stash(pack, "charts", built)
+    info = charts.summary(built)
+
+    result["verified_result"] = [
+        f"차트 명세 {len(specs)}건 · 그릴 수 있는 것 {info['drawable']}건"]
+    # **못 그린 것을 숨기지 않는다.** 빼 버리면 화면이 "차트 4개" 라고 세면서
+    # 3개만 그리고, 왜 하나가 없는지 아무도 모른다 (불변원칙 §2-3).
+    for item in info["skipped"]:
+        result["unavailable_or_unverifiable"].append(
+            f"{item['id']} ({item['title']}) 를 그리지 못했다 — {item['reason']}")
+
+    if not specs:
+        contracts.downgrade(result, "그릴 자료가 없어 차트 명세를 못 만들었다")
+    elif info["skipped"]:
+        contracts.downgrade(
+            result, f"명세 {len(specs)}건 중 {len(info['skipped'])}건은 그릴 값이 없다")
+    else:
+        result["status"] = "accepted"
+    result["next_state_input"] = ["H06 이 각 차트에 해석카드를 붙인다"]
+    return result
+
+
 def h05_visualize(pack: Dict, request: Dict) -> Dict:
     workstream = pack["C0_charter"]["workstream_id"]
     result = contracts.new_stage_result(request.get("run_id", ""), workstream, "H05", "VIZ")
-    result["context_io"]["written_fields"] = ["C4_visual"]
+    result["context_io"]["written_fields"] = ["C4_visual", "CX_workstream.charts"]
 
     analysis = _stashed(pack, "analysis") or {}
     specs = []
@@ -1526,13 +1560,7 @@ def h05_visualize(pack: Dict, request: Dict) -> Dict:
                               "동점은 공동 1위로 세었다 — 숨은 타이브레이커를 쓰지 않는다",
                               ["민감도 계산 원장"]))
         pack["C4_visual"] = specs
-        result["verified_result"] = [f"차트 명세 {len(specs)}건"]
-        if not specs:
-            contracts.downgrade(result, "그릴 자료가 없어 차트 명세를 못 만들었다")
-        else:
-            result["status"] = "accepted"
-        result["next_state_input"] = ["H06 이 각 차트에 해석카드를 붙인다"]
-        return result
+        return _finish_h05(pack, result, specs, analysis)
 
     # ── CORP-TP 는 이벤트·점수 차트를 앞에 둔다 ──
     if workstream == "CORP-TP":
@@ -1575,13 +1603,7 @@ def h05_visualize(pack: Dict, request: Dict) -> Dict:
                           ["KRX 일봉"]))
 
     pack["C4_visual"] = specs
-    result["verified_result"] = [f"차트 명세 {len(specs)}건"]
-    if not specs:
-        contracts.downgrade(result, "그릴 자료가 없어 차트 명세를 못 만들었다")
-    else:
-        result["status"] = "accepted"
-    result["next_state_input"] = ["H06 이 각 차트에 해석카드를 붙인다"]
-    return result
+    return _finish_h05(pack, result, specs, analysis)
 
 
 # ─────────────────────────────────────────────────────────────

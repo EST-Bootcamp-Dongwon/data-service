@@ -139,6 +139,9 @@ def _page(slot: Dict, key_message: str, body: List[str], visual: str = "",
         "key_message": key_message,
         "body": body,
         "visual": visual,
+        # 이 장에 실제로 그릴 차트의 `V-` 번호. `_finalize` → `_attach_charts` 가 채운다
+        # (M8 · N84). 짝이 없으면 빈 문자열이고, 그 장은 차트 이름만 글자로 남는다.
+        "visual_id": "",
         "interpretation": interpretation or {},
         "sources": sources or [],
         "confidence": confidence,
@@ -776,6 +779,64 @@ def _cap_rank(peers: Dict) -> Dict:
     return {"rank": rank, "total": len(caps)}
 
 
+# ─────────────────────────────────────────────────────────────
+# 장 ↔ 차트 짝 (M8 · 변경노트 N84)
+# ─────────────────────────────────────────────────────────────
+#
+# 어느 장에 어느 차트가 붙는가를 `slot` 번호 → `h05_visualize` 의 `spec(n, …)` 번호로
+# 적는다. **`visual` 산문으로 맞추지 않는다** — 문구를 한 글자 고치면 조용히 끊긴다.
+#
+# `page["slot"]` 은 밀도 조정(merge)으로 자리가 바뀌어도 **원래 슬롯 번호를 그대로
+# 들고 있다** (`_page` 가 박아 둔 값이고 `_finalize` 는 자리만 옮긴다). 그래서
+# 합쳐진 뒤에 붙여도 짝이 어긋나지 않는다.
+#
+# 표에 없는 `visual` 도 있다 — CORP-R slot 7 "점유율 추이 선그래프" · IND-R slot 3
+# "인접 업종 구성 막대" 는 H05 가 명세를 만들지 않는 자리다. 그 장은 예전처럼
+# 차트 이름만 글자로 남는다. **없는 차트를 만들어 붙이지 않는다.**
+CHART_SLOTS: Dict[str, Dict[int, int]] = {
+    "CORP-R": {4: 1, 8: 2, 10: 3, 14: 4},
+    "CORP-TP": {4: 5, 6: 3, 8: 6},
+    "IND-R": {4: 1, 5: 2, 6: 3, 9: 1, 13: 4},
+    "IND-TP": {4: 5, 7: 6},
+}
+
+
+def _chart_index(pack: Dict) -> Dict[int, Dict]:
+    """`CX_workstream.charts` 를 명세 번호로 찾을 수 있게 만든다.
+
+    `charts.py` 가 만든 목록이고 각 항목의 `id` 는 `V-{작업}-{번호:04d}` 다.
+    """
+    out: Dict[int, Dict] = {}
+    for chart in (pack.get("CX_workstream") or {}).get("charts") or []:
+        tail = str(chart.get("id", "")).rsplit("-", 1)[-1]
+        try:
+            out[int(tail)] = chart
+        except ValueError:
+            continue
+    return out
+
+
+def _attach_charts(pages: List[Dict], pack: Dict, workstream: str) -> List[Dict]:
+    """장마다 `visual_id` 를 붙이고, **아무 장에도 못 붙은 차트를 돌려준다.**
+
+    붙지 않은 차트를 조용히 버리지 않는다 — 리포트 끝에 차트 부록으로 싣는다.
+    (CORP-TP 는 명세가 6건인데 차트를 놓는 장이 3개뿐이라 실제로 남는다)
+    """
+    by_index = _chart_index(pack)
+    mapping = CHART_SLOTS.get(workstream, {})
+    used: set = set()
+    for page in pages:
+        index = mapping.get(page.get("slot"))
+        chart = by_index.get(index) if index else None
+        if chart and chart.get("drawable"):
+            page["visual_id"] = chart.get("id", "")
+            used.add(index)
+        else:
+            page["visual_id"] = ""
+    return [by_index[i] for i in sorted(by_index)
+            if i not in used and by_index[i].get("drawable")]
+
+
 def _finalize(filled: Dict[int, Dict], pack: Dict, workstream: str = "CORP-R") -> Dict:
     """밀도 조정 — 빈 슬롯을 정해진 순서대로 합치고 번호를 매긴다.
 
@@ -800,6 +861,9 @@ def _finalize(filled: Dict[int, Dict], pack: Dict, workstream: str = "CORP-R") -
     for number, page in enumerate(pages, 1):
         page["page"] = number
 
+    # 차트를 장에 붙인다 (M8 · N84). 붙을 자리가 없는 차트는 부록으로 넘긴다.
+    extra_charts = _attach_charts(pages, pack, workstream)
+
     missing = [s["slot"] for s in layout["slots"] if s["slot"] not in filled]
     return {
         "pages": pages,
@@ -810,10 +874,53 @@ def _finalize(filled: Dict[int, Dict], pack: Dict, workstream: str = "CORP-R") -
         "slot_count": len(layout["slots"]),
         "merged": merged_notes,
         "empty_slots": missing,
+        "extra_chart_ids": [c.get("id", "") for c in extra_charts],
         "policy": (f"{layout['policy_note']} · {layout['kind']}. "
                    "15장은 상한이지 목표가 아니다 — 자료 없는 장을 만들지 않는다."),
         "generated_at": contracts.now_kst(),
     }
+
+
+def _chart_markdown(chart: Dict, heading: str = "") -> List[str]:
+    """차트 하나를 마크다운으로 낸다.
+
+    **마크다운은 그림을 담지 못한다.** 그래서 그리는 대신 그 차트가 쓴 숫자를
+    표로 싣는다 — 화면·인쇄용 HTML 은 같은 값을 그림으로 그리므로 셋이 같은 것을 낸다.
+    차트가 어느 `D-` 를 그리는지도 함께 적어 되짚을 수 있게 한다.
+    """
+    lines: List[str] = [""]
+    if heading:
+        lines.append(heading)
+        lines.append("")
+    unit = f" ({chart['unit']})" if chart.get("unit") else ""
+    lines.append(f"**{chart.get('title', '')}** — {chart.get('chart_type', '')}{unit}")
+
+    if not chart.get("drawable"):
+        lines += ["", f"> ⚠️ 이 차트는 그리지 못했다 — {chart.get('reason', '')}"]
+        return lines
+
+    table = chart.get("table") or {}
+    head = table.get("head") or []
+    rows = table.get("rows") or []
+    if head and rows:
+        lines += ["",
+                  "| " + " | ".join(str(h) for h in head) + " |",
+                  "|" + "|".join(["---"] * len(head)) + "|"]
+        lines += ["| " + " | ".join(str(c) for c in row) + " |" for row in rows]
+
+    axis = chart.get("axis") or {}
+    if axis.get("x") or axis.get("y"):
+        lines.append("")
+        lines.append(f"*축: x {axis.get('x') or '—'} · y {axis.get('y') or '—'}*")
+    if chart.get("note"):
+        lines += ["", f"> ⚠️ {chart['note']}"]
+    if chart.get("data_ids"):
+        ids = chart["data_ids"]
+        shown = " · ".join(ids[:8]) + (f" 외 {len(ids) - 8}건" if len(ids) > 8 else "")
+        lines.append(f"근거 데이터: {shown}")
+    if chart.get("sources"):
+        lines.append(f"출처: {' · '.join(str(s) for s in chart['sources'])}")
+    return lines
 
 
 def to_markdown(pack: Dict, report: Dict) -> str:
@@ -830,6 +937,9 @@ def to_markdown(pack: Dict, report: Dict) -> str:
         "",
     ]
 
+    chart_by_id = {c.get("id", ""): c
+                   for c in (pack.get("CX_workstream") or {}).get("charts") or []}
+
     for page in report["pages"]:
         lines.append(f"## {page['page']}. {page['title']}")
         lines.append("")
@@ -837,9 +947,14 @@ def to_markdown(pack: Dict, report: Dict) -> str:
         lines.append("")
         for item in page["body"]:
             lines.append(f"- {item}")
-        if page.get("visual"):
+        # 차트 — 짝이 있으면 **숫자 표까지** 싣는다 (M8 · N84).
+        # 짝이 없으면 예전처럼 이름만 남는다. 그 자리는 H05 가 명세를 만들지 않은 곳이다.
+        chart = chart_by_id.get(page.get("visual_id") or "")
+        if chart:
+            lines += _chart_markdown(chart, heading=f"*차트: {page.get('visual', '')}*")
+        elif page.get("visual"):
             lines.append("")
-            lines.append(f"*차트: {page['visual']}*")
+            lines.append(f"*차트: {page['visual']} — 이 장에는 그릴 계열이 없다*")
 
         card = page.get("interpretation") or {}
         if card:
@@ -866,11 +981,30 @@ def to_markdown(pack: Dict, report: Dict) -> str:
         lines.append("")
 
     # 운영 부록 — 공통계약 §14 "Evidence Ledger 전체는 부록으로 분리할 수 있다"
+    # 차트 부록 — 어느 장에도 못 붙은 차트 (M8 · N84).
+    # **버리지 않는다.** CORP-TP 는 명세가 6건인데 차트를 놓는 장이 3개뿐이라 실제로 남는다.
+    extra_ids = [i for i in (report.get("extra_chart_ids") or []) if i in chart_by_id]
+    if extra_ids:
+        lines += ["---", "",
+                  "## 부록 · 장에 붙지 않은 차트",
+                  "",
+                  f"아래 {len(extra_ids)}개는 H05 가 명세를 만들었으나 그것을 놓는 장이 "
+                  "양식에 없다. 그려 둔 것을 버리지 않고 여기 싣는다.",
+                  ""]
+        for chart_id in extra_ids:
+            lines += _chart_markdown(chart_by_id[chart_id])
+        lines.append("")
+
     logs = pack.get("logs", {})
+    charts_list = (pack.get("CX_workstream") or {}).get("charts") or []
+    drawable = [c for c in charts_list if c.get("drawable")]
     lines += [
         "---", "",
         "## 부록 · 운영 기록",
         "",
+        f"- 차트 명세 {len(charts_list)}건 · 그린 것 {len(drawable)}건"
+        + (f" · 그리지 못한 것 {len(charts_list) - len(drawable)}건"
+           if len(charts_list) != len(drawable) else ""),
         f"- 근거 {len(pack.get('C1_evidence', []))}건 · 데이터 {len(pack.get('C2_data', []))}건 "
         f"· 계산 {len(logs.get('calculations', []))}건",
         f"- Gap {len(logs.get('gaps', []))}건 · 충돌 {len(logs.get('conflicts', []))}건",
