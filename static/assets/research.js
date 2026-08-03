@@ -689,6 +689,249 @@ window.Research = (() => {
     }).join('');
   }
 
+  // ══════════════════════════════════════════════════════════
+  // 5.5 리포트 차트 (M8 · 변경노트 N84)
+  // ══════════════════════════════════════════════════════════
+  //
+  // **계열은 여기서 만들지 않는다.** 서버(`charts.py`)가 `CX_workstream.charts` 에
+  // 실어 준 것을 그대로 그린다. 규칙을 두 곳에 두면 화면과 리포트가 갈린다
+  // (`linkcheck.py` ↔ `linkNumbers` 에서 이미 겪은 일이다 · 요약본 §9.3).
+  //
+  // U3 표시 규칙 (`app.css:11~33`) 중 이 파일이 지켜야 하는 것
+  //   · **Y축 두 개(이중축) 금지** — `yaxis` 를 배열로 넘기지 않는다.
+  //     단위가 다른 계열은 서버가 애초에 한 차트에 담지 않는다.
+  //   · 점마다 숫자를 찍지 않는다 (`dataLabels.enabled = false`).
+  //   · 계열이 하나면 범례를 내지 않는다 — 제목이 이미 그 계열의 이름이다.
+  //   · 격자는 실선 (`App.draw` 의 `strokeDashArray: 0` 이 이미 그렇게 한다).
+  //   · 라이트 팔레트는 c3·c4·c5 가 표면 대비 3:1 미만이라 **표 보기를 함께 낸다**
+  //     (검증기 완화 규칙 — 2026-08-03 재확인: 라이트 8색 전부 통과 · 대비만 WARN).
+  const reportCharts = {};        // App.draw 등록부 (다시 그릴 때 파괴용)
+
+  /** 막대 개수에 따라 높이를 준다 — **x축 라벨 자리를 높이에 포함**한다. */
+  function barHeight(count) {
+    return Math.max(180, Math.min(520, count * 34 + 90));
+  }
+
+  function apexOptions(chart) {
+    const many = chart.series.length > 1;
+    const base = {
+      chart: { toolbar: { show: false }, animations: { enabled: false } },
+      dataLabels: { enabled: false },
+      legend: { show: many, position: 'top', horizontalAlign: 'right' },
+      tooltip: { shared: false, intersect: true },
+    };
+    const cats = chart.categories;
+
+    if (chart.kind === 'bar-h' || chart.kind === 'bar') {
+      const horizontal = chart.kind === 'bar-h';
+      return {
+        ...base,
+        chart: { ...base.chart, type: 'bar', height: barHeight(cats.length) },
+        plotOptions: { bar: { horizontal, borderRadius: 4, borderRadiusApplication: 'end' } },
+        series: chart.series.map((s) => ({ name: s.name, data: s.data })),
+        xaxis: { categories: cats },
+        yaxis: { labels: { maxWidth: 160 } },
+        tooltip: { ...base.tooltip, y: { title: { formatter: (n) => `${n} (${chart.unit})` } } },
+      };
+    }
+
+    if (chart.kind === 'bar-line') {
+      // 두 계열의 **단위가 같다** (서버가 그렇게 담았다). 그래서 축이 하나다.
+      return {
+        ...base,
+        chart: { ...base.chart, type: 'line', height: 300 },
+        series: chart.series.map((s) => ({
+          name: s.name, type: s.kind === 'line' ? 'line' : 'column', data: s.data,
+        })),
+        stroke: { width: chart.series.map((s) => (s.kind === 'line' ? 2.5 : 0)) },
+        markers: { size: chart.series.map((s) => (s.kind === 'line' ? 5 : 0)) },
+        plotOptions: { bar: { columnWidth: '52%', borderRadius: 4, borderRadiusApplication: 'end' } },
+        xaxis: { categories: cats },
+        yaxis: { title: { text: chart.unit } },      // ← 배열이 아니다 (이중축 금지)
+      };
+    }
+
+    if (chart.kind === 'line') {
+      const long = cats.length > 80;
+      return {
+        ...base,
+        chart: { ...base.chart, type: 'line', height: 280 },
+        series: chart.series.map((s) => ({ name: s.name, data: s.data })),
+        stroke: { width: 2, curve: 'straight' },
+        // 점이 250개면 마커를 찍지 않는다 — 선이 점에 묻힌다. 값은 hover 로 본다.
+        markers: { size: 0, hover: { size: 6 } },
+        xaxis: { categories: cats, tickAmount: long ? 8 : Math.min(12, cats.length),
+                 labels: { rotate: 0, hideOverlappingLabels: true } },
+        yaxis: { title: { text: chart.unit } },
+      };
+    }
+
+    if (chart.kind === 'scatter') {
+      return {
+        ...base,
+        chart: { ...base.chart, type: 'scatter', height: 320 },
+        series: chart.series.map((s) => ({
+          name: s.name, data: s.data.map((p) => ({ x: p.x, y: p.y })),
+        })),
+        markers: { size: 8, strokeWidth: 2, strokeColors: 'var(--surface)' },
+        xaxis: { type: 'numeric', title: { text: chart.axis.x }, tickAmount: 6 },
+        yaxis: { title: { text: chart.axis.y } },
+        tooltip: {
+          ...base.tooltip,
+          custom: ({ seriesIndex, dataPointIndex }) => {
+            const p = (chart.series[seriesIndex] || {}).data[dataPointIndex] || {};
+            return `<div class="apex-tip"><b>${esc(p.label || '')}</b><br>`
+              + `${esc(chart.axis.y)} ${p.y} · ${esc(chart.axis.x)} ${p.x}</div>`;
+          },
+        },
+      };
+    }
+
+    if (chart.kind === 'range') {
+      // 팬차트 — 95% 구간(면)과 점추정(선)을 겹친다. 축은 하나다.
+      const low = chart.series.find((s) => s.name.includes('하한'));
+      const high = chart.series.find((s) => s.name.includes('상한'));
+      const point = chart.series.find((s) => s.kind === 'line');
+      const band = cats.map((x, i) => ({ x, y: [low.data[i], high.data[i]] }));
+      return {
+        ...base,
+        chart: { ...base.chart, type: 'rangeArea', height: 300 },
+        series: [
+          { name: '95% 구간', type: 'rangeArea', data: band },
+          { name: point.name, type: 'line', data: cats.map((x, i) => ({ x, y: point.data[i] })) },
+        ],
+        fill: { opacity: [0.22, 1] },
+        stroke: { width: [0, 2.5], curve: 'straight' },
+        markers: { size: 0, hover: { size: 6 } },
+        legend: { show: true, position: 'top', horizontalAlign: 'right' },
+        xaxis: { type: 'category', tickAmount: 6, labels: { hideOverlappingLabels: true } },
+        yaxis: { title: { text: chart.unit } },
+      };
+    }
+
+    if (chart.kind === 'radar') {
+      return {
+        ...base,
+        chart: { ...base.chart, type: 'radar', height: 340 },
+        series: chart.series.map((s) => ({ name: s.name, data: s.data })),
+        xaxis: { categories: cats },
+        yaxis: { min: 0, max: 5, tickAmount: 5 },
+        markers: { size: 4 },
+        stroke: { width: 2 },
+        fill: { opacity: 0.14 },
+        legend: { show: true, position: 'top', horizontalAlign: 'right' },
+      };
+    }
+
+    if (chart.kind === 'timeline') {
+      // y 는 범주(구조·일회성·예정)다. 숫자 축에 얹고 라벨을 되돌려 찍는다 —
+      // ApexCharts 산점도는 y 를 범주로 못 받는다.
+      const kinds = chart.series.map((s) => s.name);
+      return {
+        ...base,
+        chart: { ...base.chart, type: 'scatter', height: 260 },
+        series: chart.series.map((s, si) => ({
+          name: s.name,
+          data: s.data.map((p) => ({ x: p.x, y: kinds.length - si })),
+        })),
+        markers: { size: 7, strokeWidth: 2, strokeColors: 'var(--surface)' },
+        xaxis: { type: 'category', tickAmount: 6, labels: { hideOverlappingLabels: true } },
+        yaxis: {
+          min: 0.5, max: kinds.length + 0.5, tickAmount: kinds.length,
+          labels: { formatter: (v) => kinds[kinds.length - Math.round(v)] || '' },
+        },
+        legend: { show: true, position: 'top', horizontalAlign: 'right' },
+        tooltip: {
+          ...base.tooltip,
+          custom: ({ seriesIndex, dataPointIndex }) => {
+            const p = (chart.series[seriesIndex] || {}).data[dataPointIndex] || {};
+            return `<div class="apex-tip"><b>${esc(p.x || '')}</b><br>${esc(p.label || '')}</div>`;
+          },
+        },
+      };
+    }
+    return null;                    // signal · stat 은 ApexCharts 를 쓰지 않는다
+  }
+
+  /** 표 보기 — 라이트 팔레트 대비 완화 규칙이 요구하는 자리이자, 값을 그대로 읽는 자리다. */
+  function chartTableHtml(chart) {
+    const head = (chart.table || {}).head || [];
+    const rows = (chart.table || {}).rows || [];
+    if (!head.length || !rows.length) return '';
+    return `<details class="rp-chart-table"><summary>숫자 보기 (${rows.length}행)</summary>
+      <div class="table-scroll"><table><thead><tr>${
+        head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${
+        rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')
+      }</tbody></table></div></details>`;
+  }
+
+  /** 신호 판 — 사이클 3표. 색만으로 방향을 말하지 않는다 (화살표 + 글자를 함께 찍는다). */
+  function signalHtml(chart) {
+    const rows = ((chart.series[0] || {}).data) || [];
+    return `<div class="rp-signal">${rows.map((r) => `
+      <div class="rp-signal-row">
+        <span class="rp-signal-arrow ${r.up ? 'up' : 'down'}">${r.up ? '▲' : '▼'}</span>
+        <span class="rp-signal-name">${esc(r.label)}</span>
+        <span class="rp-signal-verdict">${esc(r.value)}</span>
+        <span class="rp-signal-detail">${esc(r.detail)}</span>
+      </div>`).join('')}</div>`;
+  }
+
+  /** 값 하나 — 막대 하나짜리 차트 대신 낸다 (`charts._maybe_stat`). */
+  function statHtml(chart) {
+    const name = chart.categories[0] || '';
+    const value = ((chart.series[0] || {}).data || [])[0];
+    return `<div class="rp-stat">
+      <div class="rp-stat-value">${esc(value)}<em>${esc(chart.unit)}</em></div>
+      <div class="rp-stat-label">${esc(name)} · ${esc(chart.series[0].name || '')}</div>
+    </div>`;
+  }
+
+  /** 차트 한 개의 자리(HTML)를 만든다. 그리기는 `drawReportCharts` 가 나중에 한다. */
+  function chartFigure(chart) {
+    if (!chart) return '';
+    const slot = chart.drawable && apexOptions(chart)
+      ? `<div class="chart" id="rpchart-${esc(chart.id)}"></div>`
+      : chart.kind === 'signal' ? signalHtml(chart)
+        : chart.kind === 'stat' ? statHtml(chart)
+          : `<p class="rp-gap">⚠ 이 차트는 그리지 못했다 — ${esc(chart.reason)}</p>`;
+    const ids = chart.data_ids || [];
+    return `<figure class="rp-chart">
+      <figcaption>
+        <b>${esc(chart.title)}</b>
+        <span class="muted">${esc(chart.chart_type)}${chart.unit ? ` · ${esc(chart.unit)}` : ''}</span>
+      </figcaption>
+      ${slot}
+      ${chart.note ? `<p class="rp-chart-note">⚠ ${esc(chart.note)}</p>` : ''}
+      ${chartTableHtml(chart)}
+      <p class="rp-chart-src">${ids.length
+        ? `근거 ${ids.slice(0, 6).map((id) => `<button type="button" data-evidence-id="${esc(id)}">${esc(id)}</button>`).join(' ')}${ids.length > 6 ? ` 외 ${ids.length - 6}건` : ''}`
+        : '<span class="muted">이 차트에 붙은 D- 가 없다 — 명세가 빈 채로 둔 자리다</span>'}
+        ${(chart.sources || []).length ? ` · 출처 ${esc(chart.sources.join(' · '))}` : ''}</p>
+    </figure>`;
+  }
+
+  /** innerHTML 이 자리를 만든 **뒤에** 실제로 그린다 (ApexCharts 는 DOM 이 있어야 한다). */
+  function drawReportCharts(charts) {
+    if (!window.ApexCharts) return;               // 없어도 표·신호판은 이미 보인다
+    for (const chart of charts) {
+      if (!chart.drawable) continue;
+      const options = apexOptions(chart);
+      if (!options) continue;
+      try {
+        App.draw(reportCharts, `rpchart-${chart.id}`, options);
+      } catch (error) {
+        // 차트 하나가 리포트를 죽이지 않는다 (불변원칙 §2-2)
+        const el = document.getElementById(`rpchart-${chart.id}`);
+        if (el) el.innerHTML = `<p class="rp-gap">⚠ 차트를 그리지 못했다 — ${esc(error.message || error)}</p>`;
+      }
+    }
+  }
+
+  function chartsOf(pack) {
+    return ((pack || {}).CX_workstream || {}).charts || [];
+  }
+
   function renderResult() {
     $('resultBox').hidden = false;
     renderSummary();
@@ -734,6 +977,8 @@ window.Research = (() => {
     const box = $('tabBody');
     if (!state.report) { box.innerHTML = '<p class="hint">리포트가 없다.</p>'; return; }
     const index = buildValueIndex(state.pack);
+    const allCharts = chartsOf(state.pack);
+    const chartById = new Map(allCharts.map((c) => [c.id, c]));
     let totals = 0;
     let links = 0;
 
@@ -762,29 +1007,52 @@ window.Research = (() => {
       const gaps = (page.gaps || []).length
         ? `<div class="rp-gap">⚠ ${page.gaps.map(esc).join(' / ')}</div>` : '';
 
+      // 차트 — 짝이 있으면 **실제로 그린다** (M8 · N84). 없으면 이름만 남는다.
+      const chart = chartById.get(page.visual_id || '');
+      const figure = chart ? chartFigure(chart) : '';
+
       return `<article class="rp">
         <div class="rp-head"><span class="rp-no">${page.page} / ${state.report.page_count}</span>
           <h3>${esc(page.title)}</h3>
           ${window.Shell ? Shell.grade(confidenceLevel(page.confidence), `신뢰도 ${page.confidence}`) : ''}</div>
         <p class="rp-key">${markTerms(key.html)}</p>
         <ul class="rp-body">${body}</ul>
-        ${card}${merged}${gaps}
+        ${figure}${card}${merged}${gaps}
         <div class="rp-meta">
           <span>출처: ${(page.sources || []).length ? page.sources.map(esc).join(' · ') : '—'}</span>
           <span>${esc(page.human_decision)}</span>
-          ${page.visual ? `<span>차트: ${esc(page.visual)}</span>` : ''}
+          ${page.visual && !chart ? `<span>차트: ${esc(page.visual)} — 그릴 계열이 없다</span>` : ''}
         </div>
       </article>`;
     }).join('');
+
+    // 어느 장에도 못 붙은 차트 — 버리지 않고 부록으로 낸다 (CORP-TP 에서 실제로 남는다)
+    const extraIds = (state.report.extra_chart_ids || []).filter((id) => chartById.has(id));
+    const extras = extraIds.length
+      ? `<article class="rp"><div class="rp-head"><span class="rp-no">부록</span>
+           <h3>장에 붙지 않은 차트 ${extraIds.length}개</h3></div>
+         <p class="rp-key">H05 가 명세를 만들었으나 그것을 놓는 장이 양식에 없다 —
+           그려 둔 것을 버리지 않고 여기 싣는다.</p>
+         ${extraIds.map((id) => chartFigure(chartById.get(id))).join('')}</article>`
+      : '';
+
+    const skipped = allCharts.filter((c) => !c.drawable);
 
     const missed = totals - links;
     box.innerHTML =
       `<p class="hint" id="linkNote">본문 수치 <b>${totals}개</b> 중 <b>${links}개</b>가 근거로 이어진다. ` +
       `나머지 ${missed}개는 <b>파생값</b>(밸류에이션 밴드 · CAGR · 점수 · 개수)이라 장부에 D- 번호가 없다 — ` +
       `없는 사슬을 만들지 않으려고 링크를 걸지 않았다. 원자료는 <b>장부</b> 탭에 전부 있다.</p>` +
+      // 차트를 몇 개 그렸는지 — **못 그린 수까지** 밝힌다 (불변원칙 §2-3)
+      `<p class="hint">차트 <b>${allCharts.length}개</b> 중 <b>${allCharts.length - skipped.length}개</b>를 그렸다.` +
+      (skipped.length
+        ? ` 못 그린 ${skipped.length}개: ${skipped.map((c) => `${esc(c.title)} — ${esc(c.reason)}`).join(' / ')}`
+        : ' 차트 안의 숫자는 <b>숫자 보기</b>를 펼치면 그대로 읽을 수 있다.') + '</p>' +
       (state.report.merged?.length
         ? `<p class="hint">밀도 조정: ${state.report.merged.map(esc).join(' · ')}</p>` : '') +
-      `<div class="rp-list">${pages}</div>`;
+      `<div class="rp-list">${pages}${extras}</div>`;
+    // 자리를 만든 **뒤에** 그린다 — ApexCharts 는 DOM 요소가 있어야 붙는다
+    drawReportCharts(allCharts);
     bindDrill(box);
     bindTips(box);
   }

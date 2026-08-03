@@ -171,19 +171,54 @@ function fakePack() {
       h02_timing: { count: 2, failed: [], slowest: '재무제표', slowest_seconds: 6.4, sum_seconds: 12.8,
                     saved_seconds: 6.4, text: '2건을 동시에 불렀다 — 가장 느린 것은 재무제표 6.4초 (순차였다면 12.8초)' },
       evaluation: { total: 78.4, grade: 'B', critical: [], scores: [] },
+      // 차트 (M8 · N84). **여기는 ApexCharts 가 없는 환경**이다 — 그림은 안 그려지고
+      // `숫자 보기`(표) · 신호판 · 값 하나만 남는다. 그 갈래가 살아 있는지를 본다.
+      // 그림까지 보는 것은 `render_charts.js` 쪽 일이다 (진짜 ApexCharts + 진짜 서버).
+      charts: [
+        { id: 'V-CORP-R-0002', kind: 'bar-line', title: '매출과 이익이 어떻게 움직였나?',
+          chart_type: '선 + 막대 조합', unit: '조원', axis: { x: '회계연도', y: '금액' },
+          categories: ['2023', '2024'], drawable: true, reason: '',
+          series: [{ name: '매출액', kind: 'bar', data: [70.1, 80.1] },
+                   { name: '영업이익', kind: 'line', data: [5.2, 6.6] }],
+          table: { head: ['회계연도', '매출액 (조원)'], rows: [['2023', '70.1'], ['2024', '80.1']] },
+          note: 'Y축을 0에서 시작하지 않으면 변화가 과장된다',
+          sources: ['DART 재무제표'], data_ids: ['D-CORP-R-0001'] },
+        { id: 'V-CORP-R-0004', kind: 'signal', title: '지금 어느 국면인가?',
+          chart_type: '신호 3단 패널', unit: '', axis: { x: '신호', y: '방향' },
+          categories: ['경기선행지수'], drawable: true, reason: '',
+          series: [{ name: '신호', kind: 'signal',
+                     data: [{ label: '경기선행지수', value: '확장', up: true, detail: '추세선 위' }] }],
+          table: { head: ['신호', '판정'], rows: [['경기선행지수', '확장']] },
+          note: '', sources: ['ECOS'], data_ids: [] },
+        { id: 'V-CORP-R-0003', kind: 'stat', title: '순위가 얼마나 단단한가?',
+          chart_type: '시나리오별 1위 빈도 막대', unit: '회', axis: { x: '시나리오', y: '1위 빈도' },
+          categories: ['삼성전자'], drawable: true, reason: '',
+          series: [{ name: '단독 1위', kind: 'stat', data: [17] }],
+          table: { head: ['종목', '단독 1위'], rows: [['삼성전자', '17']] },
+          note: '견줄 상대가 하나뿐이라 막대로 그리지 않고 값으로 낸다',
+          sources: [], data_ids: [] },
+        { id: 'V-CORP-R-0001', kind: 'line', title: '그릴 수 없는 차트',
+          chart_type: '가로 막대', unit: '', axis: { x: '', y: '' },
+          categories: [], series: [], table: { head: [], rows: [] },
+          note: '', sources: [], data_ids: [],
+          drawable: false, reason: '사업보고서에서 부문별 금액을 찾지 못했다' },
+      ],
       report: {
         page_count: 2, max_pages: 15, workstream_id: 'CORP-R', format: '고정양식',
         merged: ['slot 4 를 slot 3 에 합쳤다 (자료 없음)'], empty_slots: [4],
         policy: 'GIC v15 CORP-R 하네스설계서 §6.1 순서',
+        // 장에 못 붙은 **그릴 수 있는** 차트 — `_attach_charts` 가 이렇게 돌려준다.
+        // 못 그리는 것(V-0001)은 여기 들어가지 않는다.
+        extra_chart_ids: ['V-CORP-R-0004', 'V-CORP-R-0003'],
         pages: [
           { page: 1, slot: 1, title: 'Cover', key_message: '삼성전자 — 저평가 후보',
             body: ['분석 기준일 2026-08-02', '매출 80.1조 · 영업이익 6.6조'],
-            visual: '', interpretation: {}, sources: ['DART 사업보고서 2024'],
+            visual: '', visual_id: '', interpretation: {}, sources: ['DART 사업보고서 2024'],
             confidence: 'medium', human_decision: 'AI 제안 — 사람 승인 전',
             presenter_note: '', merged_from: [], gaps: [] },
           { page: 2, slot: 3, title: '회사 개요', key_message: '반도체와 스마트폰',
             body: ['영업이익률 8.2% 는 PER 밴드와 함께 읽는다', '검사 5건 중 통과 4'],
-            visual: '재무 시계열', interpretation: {}, sources: [],
+            visual: '재무 시계열', visual_id: 'V-CORP-R-0002', interpretation: {}, sources: [],
             confidence: 'high', human_decision: 'AI 제안 — 사람 승인 전',
             presenter_note: '', merged_from: [4], gaps: [] },
         ],
@@ -353,6 +388,21 @@ async function researchChecks() {
       ['연결률을 정직하게 밝힘', /근거로 이어진다/.test(doc.body.innerHTML)],
       ['h02_timing 을 모달이 보여 줌', /순차였다면/.test(doc.getElementById('h02Note').innerHTML)],
       ['용어 툴팁 표시가 붙음', doc.querySelectorAll('.term').length > 0],
+      // ── 차트 (M8 · N84) — 여기는 ApexCharts 가 **없는** 환경이다 ──
+      // 그림이 없어도 값을 읽을 수 있어야 한다. 그림까지는 `render_charts.js` 가 본다.
+      ['차트 자리가 장에 붙음', doc.querySelectorAll('.rp-chart').length >= 2],
+      ['차트 자리에 ApexCharts 컨테이너가 생김',
+        !!doc.getElementById('rpchart-V-CORP-R-0002')],
+      ['ApexCharts 없이도 숫자 보기(표)가 나온다',
+        doc.querySelectorAll('.rp-chart-table table').length > 0],
+      ['신호판이 화살표 + 글자로 나온다 (색만으로 방향을 말하지 않는다)',
+        doc.querySelectorAll('.rp-signal-row').length > 0
+        && /[▲▼]/.test(doc.querySelector('.rp-signal-arrow')?.textContent || '')],
+      ['값 하나(stat)가 막대 대신 나온다', doc.querySelectorAll('.rp-stat-value').length > 0],
+      ['장에 못 붙은 차트를 부록으로 낸다', /장에 붙지 않은 차트/.test(doc.body.innerHTML)],
+      ['못 그린 차트를 숨기지 않고 사유를 밝힌다',
+        /부문별 금액을 찾지 못했다/.test(doc.body.innerHTML)],
+      ['그린 수와 못 그린 수를 함께 센다', /차트 <b>4개<\/b> 중 <b>3개<\/b>/.test(doc.body.innerHTML)],
     ];
     checks.forEach(([label, ok]) => {
       if (!ok) failures++;

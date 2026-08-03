@@ -58,6 +58,7 @@ KINDS = (
     "radar",      # 레이더 — Quick Score 6차원 (기회/부담 분리)
     "timeline",   # 타임라인 — 공시 이벤트 (x 날짜 · y 성격)
     "signal",     # 신호 판 — 사이클 3표 (차트가 아니라 방향 표시판이다)
+    "stat",       # 값 하나 — 막대 하나짜리 차트는 **차트가 아니다** (아래 `_maybe_stat`)
 )
 
 TOP_N_BAR = 10          # 가로 막대에 몇 개까지 세울지. 넘치면 **자른 수를 밝힌다**
@@ -124,6 +125,29 @@ def _chart(spec: Dict, kind: str, categories: Sequence, series: List[Dict],
         "drawable": True,
         "reason": "",
     }
+
+
+def _maybe_stat(chart: Dict) -> Dict:
+    """막대 하나짜리 차트는 **값 하나로 낸다.**
+
+    한 칸짜리 막대는 차트가 아니다 — 길이를 견줄 상대가 없으니 축과 격자가
+    아무 일도 하지 않는다. 실제로 걸린다: IND-TP 민감도에서 후보가 한 곳이면
+    `단독 1위 17회` 라는 막대 하나가 나온다 (261 반도체 제조업 실측).
+
+    값·라벨·단위는 그대로 두고 `kind` 만 바꾼다. 표는 이미 만들어 둔 것을 쓴다.
+    """
+    if chart["kind"] not in ("bar", "bar-h"):
+        return chart
+    if len(chart["categories"]) != 1 or len(chart["series"]) != 1:
+        return chart
+    data = chart["series"][0].get("data") or []
+    if len(data) != 1:
+        return chart
+    chart["kind"] = "stat"
+    chart["series"][0]["kind"] = "stat"
+    extra = "견줄 상대가 하나뿐이라 막대로 그리지 않고 값으로 낸다"
+    chart["note"] = f"{chart['note']} / {extra}" if chart["note"] else extra
+    return chart
 
 
 def _undrawable(spec: Dict, reason: str) -> Dict:
@@ -544,7 +568,8 @@ def build(pack: Dict, analysis: Dict) -> List[Dict]:
             charts.append(_undrawable(spec, "이 명세를 그리는 규칙이 아직 없다"))
             continue
         try:
-            charts.append(builder(spec, analysis or {}))
+            built = builder(spec, analysis or {})
+            charts.append(_maybe_stat(built) if built.get("drawable") else built)
         except Exception as error:            # 차트 하나가 리서치를 죽이지 않는다 (§2-2)
             charts.append(_undrawable(spec, f"계열을 만들다 실패했다 — {error}"))
     return charts

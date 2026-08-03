@@ -8,17 +8,24 @@
  *   2. 셸     — 사이드바 · 티커바 · 본문 (shell.js 가 만드는 뼈대)
  *   3. 부품   — 카드 · 배지 · 컨트롤 · 표 · 차트 · 스파크라인 · 상태등급
  *
- * ── U3 색·타이포·차트 스타일 결정 (2026-08-01) ───────────────────────────
+ * ── U3 색·타이포·차트 스타일 결정 (2026-08-01 · 2026-08-03 재확인) ────────
  * `dataviz` 스킬의 절차대로 정하고 **검증기를 돌려서** 확정했다.
  *
- *   node scripts/validate_palette.js "<8색>" --mode light --surface "#ffffff"
- *   node scripts/validate_palette.js "<8색>" --mode dark  --surface "#1f2226"
+ * ⚠️ 검증기는 **이 저장소에 없다.** `dataviz` 스킬이 들고 있는 것을 그때그때 돌린다
+ *    (2026-08-01 판 주석은 `node scripts/validate_palette.js …` 라고 적었는데
+ *     `scripts/` 에 그런 파일이 없어 따라 할 수 없는 안내였다 — M8 에서 고쳤다).
+ *
+ *   node <dataviz 스킬>/scripts/validate_palette.js "<8색>" --mode light --surface "#ffffff"
+ *   node <dataviz 스킬>/scripts/validate_palette.js "<8색>" --mode dark  --surface "#1f2226"
  *
  * 결과 — 두 모드 모두 명도대역·채도하한·CVD 분리·정상시야 하한을 전부 통과했다.
- *   · 라이트 최악 인접쌍 CVD ΔE 9.1 (노랑↔아쿠아) · 정상시야 ΔE 19.6
- *   · 다크   최악 인접쌍 CVD ΔE 8.4 (노랑↔아쿠아) · 정상시야 ΔE 19.3
- *   · 라이트에서 아쿠아·노랑·마젠타 3색은 표면 대비 3:1 미만 → **완화 규칙 적용**:
- *     이 색을 쓰는 차트는 범례 + 직접 라벨(또는 표 보기)을 반드시 함께 낸다.
+ * (2026-08-03 M8 에서 8색 그대로 다시 돌려 같은 값을 받았다)
+ *   · 라이트 최악 인접쌍 CVD ΔE 9.1 (#eda100↔#1baf7a protan · tritan 5.8) · 정상시야 ΔE 19.6
+ *   · 다크   최악 인접쌍 CVD ΔE 8.4 (#c98500↔#199e70 protan · tritan 8.7) · 정상시야 ΔE 19.3
+ *   · 라이트에서 #1baf7a 2.82 · #eda100 2.17 · #e87ba4 2.69 는 표면 대비 3:1 미만 →
+ *     **완화 규칙 적용**: 이 색을 쓰는 차트는 범례 + 직접 라벨(또는 표 보기)을
+ *     반드시 함께 낸다. 리포트 차트는 `숫자 보기`(`.rp-chart-table`)로 그것을 지킨다.
+ *   · 다크는 8색 전부 3:1 이상이라 완화 규칙이 걸리지 않는다.
  *
  * 규칙 (지키지 않으면 색 체계가 무너진다)
  *   · 범주형 색은 **슬롯 순서대로** 쓴다. 돌려쓰지(cycle) 않는다. 9번째 계열은 '기타'로 접는다.
@@ -650,6 +657,54 @@ code { font-family: var(--mono); font-size: 0.92em; background: var(--surface-2)
   padding: 6px 10px; background: var(--surface-2); border-radius: 6px;
 }
 .rp-gap { margin-top: var(--sp-2); font-size: var(--t-xs); color: var(--warn); }
+
+/* ── 리포트 차트 (M8 · N84) ──────────────────── */
+/* U3 규칙 중 이 블록이 지키는 것
+     · 데이터만 진하고 나머지는 뒤로 물러난다 — 캡션·주의·출처는 muted 다.
+     · 라이트 팔레트에서 c3·c4·c5 는 표면 대비 3:1 미만이라 **완화 규칙**이 걸린다
+       (`app.css` 상단 U3 주석). 그래서 차트마다 `숫자 보기`(표)를 함께 낸다 —
+       색을 못 가려도 값을 읽을 수 있어야 한다. 2026-08-03 검증기 재확인:
+       라이트·다크 8색 모두 여섯 검사 통과 · 라이트만 대비 WARN.
+     · 격자·축은 실선 한 겹 (`App.draw` 의 strokeDashArray: 0). */
+.rp-chart {
+  margin: var(--sp-3) 0 0; padding: var(--sp-3);
+  border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-2);
+}
+.rp-chart figcaption {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2);
+  margin-bottom: var(--sp-2); font-size: var(--t-sm);
+}
+.rp-chart figcaption b { font-size: var(--t-md); }
+.rp-chart .chart { min-height: 200px; }
+.rp-chart-note { margin: var(--sp-2) 0 0; font-size: var(--t-xs); color: var(--warn); }
+.rp-chart-src { margin: var(--sp-2) 0 0; font-size: var(--t-xs); color: var(--muted); }
+.rp-chart-table { margin-top: var(--sp-2); font-size: var(--t-xs); }
+.rp-chart-table summary { cursor: pointer; color: var(--accent); }
+.rp-chart-table table { margin-top: 6px; }
+
+/* 신호 판 — 차트가 아니다. 세 신호의 x축이 서로 달라 한 그림에 겹칠 수 없다.
+   방향은 **화살표 + 글자**로 낸다 (색만으로 방향을 말하지 않는다). */
+.rp-signal { display: flex; flex-direction: column; gap: 6px; }
+.rp-signal-row {
+  display: grid; grid-template-columns: 20px 1fr auto; gap: var(--sp-2);
+  align-items: baseline; padding: 8px 10px;
+  background: var(--surface); border: 1px solid var(--border-soft); border-radius: 6px;
+  font-size: var(--t-sm);
+}
+.rp-signal-arrow { font-size: 12px; }
+.rp-signal-arrow.up { color: var(--up); }
+.rp-signal-arrow.down { color: var(--down); }
+.rp-signal-verdict { font-weight: 600; }
+.rp-signal-detail { grid-column: 2 / -1; font-size: var(--t-xs); color: var(--muted); }
+
+/* 값 하나 — 막대 하나짜리 차트 대신 낸다 (`charts._maybe_stat`) */
+.rp-stat { padding: var(--sp-3) 0; text-align: center; }
+.rp-stat-value { font-family: var(--mono); font-size: 40px; font-weight: 600; line-height: 1.1; }
+.rp-stat-value em { font-style: normal; font-size: 16px; color: var(--muted); margin-left: 4px; }
+.rp-stat-label { margin-top: 4px; font-size: var(--t-sm); color: var(--muted); }
+
+/* ApexCharts 사용자 툴팁 (산점도·타임라인은 라벨을 직접 찍는다) */
+.apex-tip { padding: 6px 9px; font-size: 12px; line-height: 1.5; }
 
 /* ── 근거 드릴다운 ───────────────────────────── */
 /* 근거로 되짚을 수 있는 수치. 밑줄 점선은 "누르면 더 있다" 는 뜻이다. */
