@@ -1,3 +1,7 @@
+; branch = main 을 명시하면 `git submodule update --remote` 가 항상 그 브랜치의
+; 최신 커밋을 따라간다. 명시하지 않으면 원격 HEAD 추정에 의존해 Git 버전마다 동작이 달라진다.
+; 강의 원본(lecture)은 읽기 전용이다. 모노레포의 scripts/sync-lecture.sh 가 함께 갱신한다.
 [submodule "lecture"]
 	path = lecture
 	url = https://github.com/edumgt/api-test2.git
+	branch = main
