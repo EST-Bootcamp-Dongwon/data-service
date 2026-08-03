@@ -522,37 +522,47 @@ def _h02_corp(pack: Dict, request: Dict) -> Dict:
             severity="medium", owner="EVID")
         result["gap_ids"].append(gap)
         contracts.downgrade(result, f"사업보고서 원문을 건너뛰었다 — {why}")
-        result["verified_result"] = [f"근거 {len(result['evidence_ids'])}건 발급", timing["text"]]
-        result["next_state_input"] = ["H03 이 이 근거들을 D- 로 정규화한다"]
-        return result
-
-    try:
-        # 공시 목록을 이미 받아 뒀다 — 사업보고서를 찾겠다고 **다시 부르지 않는다**.
-        # (배포본에서 DART 한 번이 9초다. 같은 목록을 두 번 받으면 그만큼 그냥 버린다)
-        facts = dart_report.fetch_report_facts(code, rows=rows)
-        _stash(pack, "report_facts", facts)
-        if facts.get("available"):
-            evidence_id = ledger.add_evidence(
-                pack, claim=f"{name} {facts.get('report_name')} 본문",
-                source="DART-사업보고서", url=facts.get("url", ""),
-                published=facts.get("rcept_date", ""),
-                location=f"접수번호 {facts.get('rcept_no')} · 본문 {facts.get('size_mb')}MB",
-                confidence="high")
-            result["evidence_ids"].append(evidence_id)
-            for key, label in (("segments", "부문별 매출"), ("market_share", "시장점유율"),
-                               ("capacity", "생산능력"), ("rnd", "연구개발")):
-                block = facts.get(key, {})
-                if not block.get("found"):
-                    gap = contracts.add_gap(
-                        pack, "G-DATA", f"{label} (사업보고서)",
-                        block.get("reason", "찾지 못했다"),
-                        "해당 장을 자료 없이 낸다", "사업보고서를 사람이 확인한다",
-                        severity="low", owner="EVID")
-                    result["gap_ids"].append(gap)
-        else:
-            contracts.downgrade(result, facts.get("reason", "사업보고서 원문을 받지 못했다"))
-    except Exception as error:
-        contracts.downgrade(result, f"사업보고서 원문 실패 — {error}")
+        # ⚠️ **여기서 함수를 끝내지 않는다** (M8 · 변경노트 N83).
+        #
+        # 아래 4)·5) 는 원문과 **아무 상관이 없는** 근거다 — KRX 일봉과 시장 스냅샷이다.
+        # M7 까지 이 자리에서 `return` 했기 때문에, 원문을 기본으로 끄는 **배포본에서는
+        # 그 두 근거가 아예 발급되지 않았다.**
+        #
+        # 그래서 N77 이 "피어 표의 PER·PBR 과 그것으로 만든 밸류에이션 밴드가
+        # 장부에 시작점이 없다" 를 고치려고 더한 5) 스냅샷 근거가, 정작 고치려던
+        # 배포본에서는 그대로 없는 상태였다.
+        #
+        # 실측 (2026-08-03 · 로컬 서버 8000 · 005930 CORP-R)
+        #     원문 ON   E- 23  (…20 재무제표 · 21 사업보고서 · 22 일봉 · 23 스냅샷)
+        #     원문 OFF  E- 20  ← 21·22·23 이 전부 없다. 없어야 하는 것은 21 하나뿐이다
+    else:
+        try:
+            # 공시 목록을 이미 받아 뒀다 — 사업보고서를 찾겠다고 **다시 부르지 않는다**.
+            # (배포본에서 DART 한 번이 9초다. 같은 목록을 두 번 받으면 그만큼 그냥 버린다)
+            facts = dart_report.fetch_report_facts(code, rows=rows)
+            _stash(pack, "report_facts", facts)
+            if facts.get("available"):
+                evidence_id = ledger.add_evidence(
+                    pack, claim=f"{name} {facts.get('report_name')} 본문",
+                    source="DART-사업보고서", url=facts.get("url", ""),
+                    published=facts.get("rcept_date", ""),
+                    location=f"접수번호 {facts.get('rcept_no')} · 본문 {facts.get('size_mb')}MB",
+                    confidence="high")
+                result["evidence_ids"].append(evidence_id)
+                for key, label in (("segments", "부문별 매출"), ("market_share", "시장점유율"),
+                                   ("capacity", "생산능력"), ("rnd", "연구개발")):
+                    block = facts.get(key, {})
+                    if not block.get("found"):
+                        gap = contracts.add_gap(
+                            pack, "G-DATA", f"{label} (사업보고서)",
+                            block.get("reason", "찾지 못했다"),
+                            "해당 장을 자료 없이 낸다", "사업보고서를 사람이 확인한다",
+                            severity="low", owner="EVID")
+                        result["gap_ids"].append(gap)
+            else:
+                contracts.downgrade(result, facts.get("reason", "사업보고서 원문을 받지 못했다"))
+        except Exception as error:
+            contracts.downgrade(result, f"사업보고서 원문 실패 — {error}")
 
     # 4) 시세 (KRX/야후는 ts_service 가 고른다 — 명세 N25)
     evidence_id = ledger.add_evidence(
@@ -573,7 +583,11 @@ def _h02_corp(pack: Dict, request: Dict) -> Dict:
     result["evidence_ids"].append(evidence_id)
 
     result["verified_result"] = [f"근거 {len(result['evidence_ids'])}건 발급", timing["text"]]
-    result["confidence"] = "high" if len(result["evidence_ids"]) >= 5 else "medium"
+    # 원문을 건너뛴 실행은 `medium` 에서 올리지 않는다. 못 본 자료가 있는데 신뢰도를
+    # '높음' 으로 말하면 안 된다 (불변원칙 §2-3). N83 으로 아래 근거가 살아난 뒤에도
+    # 이 판단은 그대로 둔다 — 근거 건수가 늘어난 것과 원문을 봤는지는 다른 얘기다.
+    result["confidence"] = ("high" if allowed and len(result["evidence_ids"]) >= 5
+                            else "medium")
     if result["status"] == "in-progress":
         result["status"] = "accepted"
     result["next_state_input"] = ["H03 이 이 근거들을 D- 로 정규화한다"]
