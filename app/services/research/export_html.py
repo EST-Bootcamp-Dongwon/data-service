@@ -591,6 +591,8 @@ td.num,th.num{{text-align:right;font-variant-numeric:tabular-nums}}
 .note{{margin:5px 0 0;font-size:10px;color:{WARN}}}
 .src{{margin:4px 0 0;font-size:10px;color:{MUTED}}}
 .gap{{margin:5px 0;font-size:11px;color:{WARN}}}
+.note{{margin:6px 0;font-size:11px;color:{MUTED};padding:6px 9px;
+  border-left:2px solid {BORDER};background:{SURFACE_2}}}
 .merged{{font-size:10px;color:{MUTED};font-style:italic}}
 .meta{{margin-top:8px;padding-top:6px;border-top:1px solid {BORDER_SOFT};
   font-size:10px;color:{MUTED};display:flex;gap:14px;flex-wrap:wrap}}
@@ -633,8 +635,8 @@ def to_html(pack: Dict, report: Dict) -> str:
             out.append(_table_html(tables.get(key)))
         card = page.get("interpretation") or {}
         if card.get("id"):
-            # ⚠️ 여섯 칸을 **전부** 낸다. 화면(`rp-card`)은 `causal_hypothesis` 를 빠뜨린다 —
-            #    인쇄본에서까지 빠뜨리지 않는다 (v2.1 안건으로 남긴 결함).
+            # 여섯 칸을 **전부** 낸다. M8 까지 화면(`rp-card`)만 `causal_hypothesis` 를
+            # 빠뜨렸는데 M9 에서 화면도 여섯 칸이 됐다 (N91) — 이제 셋이 같은 것을 낸다.
             out.append('<dl class="card">' + "".join(
                 f"<dt>{esc(label)}</dt><dd>{esc(card.get(key))}</dd>"
                 for key, label in (("observation", "관찰"), ("meaning", "의미"),
@@ -645,6 +647,9 @@ def to_html(pack: Dict, report: Dict) -> str:
             out.append(f'<p class="merged">이 장은 slot '
                        f'{esc(", ".join(str(s) for s in page["merged_from"]))} 을 합친 것이다 '
                        '— 자료가 없는 장을 억지로 만들지 않는다</p>')
+        # 발표 노트 (M9 · N92) — API JSON 에만 있고 아무 데도 안 나오던 값이다.
+        if page.get("presenter_note"):
+            out.append(f'<p class="note">🗣 <b>발표 노트</b> — {esc(page["presenter_note"])}</p>')
         for gap in page.get("gaps") or []:
             out.append(f'<p class="gap">⚠ {esc(gap)}</p>')
         out.append(f'<div class="meta"><span>출처: '

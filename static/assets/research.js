@@ -1159,11 +1159,16 @@ window.Research = (() => {
         return `<li>${markTerms(marked.html)}</li>`;
       }).join('');
 
+      // 해석카드는 **여섯 칸**이다 (공통계약 §7 봉투 18번 · H10 해석 품질 3×6=18점).
+      // M8 까지 화면만 `인과 가설` 한 칸을 빠뜨려서, MD·인쇄본과 다른 것을 보여 줬다
+      // (M9 · N91). 채점은 여섯 칸으로 하는데 화면이 다섯 칸만 보이면,
+      // 점수가 왜 그런지 화면에서 확인할 수 없다.
       const card = page.interpretation && page.interpretation.id ? `
         <dl class="rp-card">
           <dt>관찰</dt><dd>${markTerms(esc(page.interpretation.observation))}</dd>
           <dt>의미</dt><dd>${markTerms(esc(page.interpretation.meaning))}</dd>
-          <dt>대안 가설</dt><dd>${esc(page.interpretation.alternative)}</dd>
+          <dt>인과 가설</dt><dd>${markTerms(esc(page.interpretation.causal_hypothesis))}</dd>
+          <dt>다른 설명</dt><dd>${esc(page.interpretation.alternative)}</dd>
           <dt>한계</dt><dd>${esc(page.interpretation.limitation)}</dd>
           <dt>다음 확인</dt><dd>${esc(page.interpretation.next_check)}</dd>
         </dl>` : '';
@@ -1172,6 +1177,10 @@ window.Research = (() => {
       const merged = (page.merged_from || []).length
         ? `<div class="rp-merged">이 장은 slot ${page.merged_from.join(', ')} 을 합친 것이다 — 자료가 없는 장을 억지로 만들지 않는다 (§6.2)</div>`
         : '';
+      // 발표 노트 (M9 · N92) — M8 까지 API JSON 에만 있고 화면·MD·인쇄본
+      // 어디에도 안 나왔다. 만들어 놓고 아무 데도 안 내면 없는 것과 같다.
+      const note = page.presenter_note
+        ? `<div class="rp-note">🗣 <b>발표 노트</b> — ${esc(page.presenter_note)}</div>` : '';
       const gaps = (page.gaps || []).length
         ? `<div class="rp-gap">⚠ ${page.gaps.map(esc).join(' / ')}</div>` : '';
 
@@ -1188,7 +1197,7 @@ window.Research = (() => {
           ${window.Shell ? Shell.grade(confidenceLevel(page.confidence), `신뢰도 ${page.confidence}`) : ''}</div>
         <p class="rp-key">${markTerms(key.html)}</p>
         <ul class="rp-body">${body}</ul>
-        ${figure}${pageTables}${card}${merged}${gaps}
+        ${figure}${pageTables}${card}${note}${merged}${gaps}
         <div class="rp-meta">
           <span>출처: ${(page.sources || []).length ? page.sources.map(esc).join(' · ') : '—'}</span>
           <span>${esc(page.human_decision)}</span>

@@ -564,6 +564,7 @@ def _assemble_corp_tp(pack: Dict, analysis: Dict) -> Dict:
         rows = facts["segments"]["rows"]
         filled[3] = _page(slots[3], f"부문 {len(rows)}개",
                           [f"{r['segment']}: {r['values'][0]:,.0f}" for r in rows[:6]],
+                          interpretation=_card_by_question(cards, "매출이 어느 사업에서 나오나?"),
                           sources=[facts.get("report_name", "")], confidence="high")
 
     if events.get("available"):
@@ -591,6 +592,8 @@ def _assemble_corp_tp(pack: Dict, analysis: Dict) -> Dict:
                            for row in series[-3:]]
                           + ([f"영업현금흐름/영업이익 {quality['cash_conversion']:.2f} — "
                               f"{quality['why']}"] if quality.get("available") else []),
+                          interpretation=_card_by_question(
+                              cards, "이 회사의 매출과 이익은 어떤 모양으로 움직였나?"),
                           confidence="high", sources=["DART 재무제표"])
 
     position = (view or {}).get("per_position", {})
@@ -600,7 +603,10 @@ def _assemble_corp_tp(pack: Dict, analysis: Dict) -> Dict:
                            f"({position['peer_count']}곳)",
                            (view.get("quadrant") or {}).get("meaning", ""),
                            "**부담 점수는 높을수록 불리하다. 미확인을 저평가로 읽지 않는다.**"],
-                          visual="피어 PER 분포", confidence="medium")
+                          visual="피어 PER 분포",
+                          interpretation=_card_by_question(
+                              cards, "같은 업종·비슷한 크기의 회사와 견주면 어디쯤인가?"),
+                          confidence="medium")
 
     catalyst = next((r for r in card_deck.get("rows", []) if r["key"] == "catalyst"), {})
     risk = next((r for r in card_deck.get("rows", []) if r["key"] == "risk"), {})
@@ -631,12 +637,19 @@ def _assemble_corp_tp(pack: Dict, analysis: Dict) -> Dict:
                           [f"[{c['verdict']}] {c['check']} — {c['finding']}" for c in red["checks"]],
                           confidence="high", presenter_note="판정불가는 통과가 아니다")
 
+    # 예측 범위 카드·차트를 여기 붙인다 (M9 · N90) — CORP-R slot 14(시나리오·가치 범위)와
+    # 같은 자리다. ⚠️ **P/W/D 판정이 이 예측에서 나온 것이 아니다.** 판정은 Quick Score
+    # 문턱에서 나오고, 예측은 옆에 놓인 별개의 관찰이다. 그래서 본문에 그 경계를 적는다.
     filled[10] = _page(slots[10], f"{decision.get('verdict', '판정 유보')} 조건",
                        list(decision.get("conditions", [])) + [
                            f"문턱: Proceed ≥ {decision.get('thresholds', {}).get('proceed')} · "
                            f"Watch ≥ {decision.get('thresholds', {}).get('watch')}",
                            decision.get("note", ""),
+                           "아래 예측 범위는 **판정의 근거가 아니다** — 판정은 위 문턱에서 나왔고, "
+                           "예측은 같은 종목을 다른 방법으로 본 별개의 관찰이다",
                        ], confidence="medium",
+                       interpretation=_card_by_question(
+                           cards, "앞으로 어느 범위에서 움직일 가능성이 큰가?"),
                        human_decision="사람 승인 필요 — 재검토일을 함께 정한다")
 
     filled[11] = _page(slots[11], "CORP-R Handoff", [
@@ -676,11 +689,16 @@ def _assemble_ind_tp(pack: Dict, analysis: Dict) -> Dict:
         DISCLAIMER,
     ], presenter_note="모델 제안과 사람 결정을 갈라 말한다")
 
+    # 사이클 카드를 여기 붙인다 (M9 · N90). IND-TP 는 H04 에서 국면을 판정하지 않으므로
+    # 이 카드는 늘 "확인하지 못했다" 다 — 그것을 **보이는 자리에** 둔다.
+    # M8 까지 이 카드는 어느 장에도 안 붙어서, "국면을 판정하지 않았다" 는 사실이
+    # 팩 안에만 있고 리포트에는 없었다 (§2-3 — 판정불가를 조용히 지우지 않는다).
     filled[2] = _page(slots[2], "산업 → 후보 실적 경로", [
         industry.get("note", ""),
         "산업 변화가 후보 실적에 닿는 경로는 IND-R 에서 넘어온 맥락이다",
         "이 리포트는 **후보 간 상대 비교**만 한다 — 산업 자체의 매력도는 IND-R 이 다룬다",
-    ], confidence="low")
+    ], interpretation=_card_by_question(cards, "지금 이 산업은 어느 국면인가?"),
+        confidence="low")
 
     if universe.get("available"):
         filled[3] = _page(slots[3], f"후보 {universe['count']}곳 · 업종 시총의 "
@@ -798,7 +816,11 @@ def _cap_rank(peers: Dict) -> Dict:
 # 차트 이름만 글자로 남는다. **없는 차트를 만들어 붙이지 않는다.**
 CHART_SLOTS: Dict[str, Dict[int, int]] = {
     "CORP-R": {4: 1, 8: 2, 10: 3, 14: 4},
-    "CORP-TP": {4: 5, 6: 3, 8: 6},
+    # M9 · N90 — 3·5·10 을 채웠다. 해석카드와 차트는 **같은 번호를 쓴다**
+    # (`narrative.card` 가 `I-{ws}-{n}` 과 `V-{ws}-{n}` 을 짝으로 발급한다).
+    # M8 까지 카드 1·2·3·4 가 고아였고 차트 1·2·4 가 부록으로 밀려 있었는데,
+    # 둘은 같은 네 가지 관찰이었다 — 자리를 주니 카드와 차트가 함께 붙는다.
+    "CORP-TP": {3: 1, 4: 5, 5: 2, 6: 3, 8: 6, 10: 4},
     "IND-R": {4: 1, 5: 2, 6: 3, 9: 1, 13: 4},
     "IND-TP": {4: 5, 7: 6},
 }
@@ -1162,6 +1184,12 @@ def to_markdown(pack: Dict, report: Dict) -> str:
                                ("limitation", "한계"), ("next_check", "다음 확인")):
                 if card.get(key):
                     lines.append(f"| {label} | {card[key]} |")
+
+        # 발표 노트 (M9 · N92) — M8 까지 이 값은 API JSON 에만 있고 화면·MD·인쇄본
+        # 어디에도 안 나왔다. 만들어 놓고 아무 데도 안 내면 없는 것과 같다.
+        if page.get("presenter_note"):
+            lines.append("")
+            lines.append(f"> 🗣 **발표 노트** — {page['presenter_note']}")
 
         if page.get("gaps"):
             lines.append("")
