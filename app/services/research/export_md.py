@@ -31,6 +31,7 @@ M5 — 워크스트림마다 양식이 다르다
 """
 from __future__ import annotations
 
+import base64
 from typing import Dict, List, Optional
 
 from . import contracts, tables
@@ -986,12 +987,40 @@ def _finalize(filled: Dict[int, Dict], pack: Dict, workstream: str = "CORP-R",
     }
 
 
-def _chart_markdown(chart: Dict, heading: str = "") -> List[str]:
-    """차트 하나를 마크다운으로 낸다.
+def _chart_image_md(chart: Dict) -> List[str]:
+    """차트를 **그림으로** 낸다 — data URI 로 SVG 를 심는다 (M9 · N94).
 
-    **마크다운은 그림을 담지 못한다.** 그래서 그리는 대신 그 차트가 쓴 숫자를
-    표로 싣는다 — 화면·인쇄용 HTML 은 같은 값을 그림으로 그리므로 셋이 같은 것을 낸다.
-    차트가 어느 `D-` 를 그리는지도 함께 적어 되짚을 수 있게 한다.
+    인쇄용 HTML 이 쓰는 것과 **같은 SVG** 다 (`export_html.chart_svg_standalone`).
+    값을 여기서 다시 만들지 않는다 — 계열 규칙은 `charts.py` 한 곳에만 있다.
+
+    담지 못하는 자리는 **빈 목록**을 낸다 (`signal`·`stat` 은 SVG 가 아니고,
+    못 그린 차트는 사유 문단이다). 그 자리는 아래 숫자 표가 그대로 맡는다.
+    """
+    from . import export_html                # 인쇄본 쪽이 export_md 를 지연 import 한다
+
+    svg = export_html.chart_svg_standalone(chart)
+    if not svg:
+        return []
+    encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    # 대체 텍스트에서 `]` `)` 를 뺀다 — 마크다운 링크 문법이 깨진다
+    alt = f"{chart.get('title', '')} {chart.get('chart_type', '')}".translate(
+        str.maketrans("", "", "[]()"))
+    return ["", f"![{alt.strip()}](data:image/svg+xml;base64,{encoded})"]
+
+
+def _chart_markdown(chart: Dict, heading: str = "") -> List[str]:
+    """차트 하나를 마크다운으로 낸다 — **그림과 숫자 표를 둘 다** 낸다.
+
+    M8 까지는 숫자 표만 냈다 ("마크다운은 그림을 담지 못한다"). 담을 수 있다 —
+    `data:` URI 로 SVG 를 심으면 된다. 다만 **어디서나 보이지는 않는다** (M9 · N94):
+
+    | 뷰어 | data URI 그림 |
+    |---|---|
+    | Obsidian · VS Code 미리보기 · Typora · 브라우저 | 보인다 |
+    | **GitHub · GitLab** | **막힌다** (렌더러가 `data:` 를 지운다) |
+
+    그래서 **숫자 표를 그대로 남긴다.** 그림이 안 보이는 곳에서도 같은 값을 읽을 수
+    있어야 하고, 표는 되짚을 `D-` 를 달고 있기 때문이다. 그림은 더한 것이지 대신한 것이 아니다.
     """
     lines: List[str] = [""]
     if heading:
@@ -1003,6 +1032,8 @@ def _chart_markdown(chart: Dict, heading: str = "") -> List[str]:
     if not chart.get("drawable"):
         lines += ["", f"> ⚠️ 이 차트는 그리지 못했다 — {chart.get('reason', '')}"]
         return lines
+
+    lines += _chart_image_md(chart)
 
     table = chart.get("table") or {}
     head = table.get("head") or []
@@ -1142,6 +1173,13 @@ def to_markdown(pack: Dict, report: Dict) -> str:
         "",
         f"> 분석 기준일 {charter.get('as_of')} · {report['page_count']}장 (상한 15장)",
         f"> 워크스트림 {charter.get('workstream_id')} · 스키마 {pack.get('schema_version')}",
+        "",
+        # 그림이 안 보이는 뷰어가 있다는 것을 **먼저** 말한다 (M9 · N94).
+        # 안 보이는데 이유를 모르면 "차트가 빠진 리포트" 로 읽힌다.
+        "> 🖼 차트는 `data:` URI 로 심은 SVG 다 — Obsidian · VS Code 미리보기 · Typora ·"
+        " 브라우저에서 보인다. **GitHub · GitLab 은 `data:` 를 막는다** —"
+        " 그래서 그림 아래 **숫자 표를 그대로 남겼다.** 그림이 안 보여도 같은 값을 읽을 수 있다."
+        " 그림째로 필요하면 `POST /api/research/export/html` 인쇄본을 쓴다.",
         "",
         DISCLAIMER,
         "",

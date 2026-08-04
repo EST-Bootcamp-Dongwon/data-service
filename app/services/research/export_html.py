@@ -380,6 +380,33 @@ _DRAWERS = {"bar-h": _bar_h, "bar": _bar_v, "line": _line, "scatter": _scatter,
             "range": _range, "radar": _radar, "timeline": _timeline}
 
 
+SVG_FONT = ("-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic',"
+            "'Apple SD Gothic Neo',sans-serif")
+
+
+def chart_svg_standalone(chart: Dict) -> str:
+    """페이지 CSS 없이 혼자 서는 SVG (M9 · N94 — 마크다운이 그림으로 실을 것).
+
+    `chart_svg` 가 낸 것을 그대로 쓰되 세 가지를 더한다. 인쇄본 안에서는
+    페이지 `<style>` 이 채워 주던 것들이라, 파일 밖으로 꺼내면 사라진다.
+
+      ① **픽셀 폭** — `width="100%"` 는 `<img>` 안에서 기준이 될 부모가 없다
+      ② **font-family** — 상속받을 `<style>` 이 없어 한글이 기본 세리프로 떨어진다
+      ③ **흰 배경** — 글자색이 진한 회색이라 어두운 배경에서는 안 보인다
+
+    SVG 가 아닌 것에는 **빈 문자열**을 낸다 — `signal`·`stat` 은 SVG 가 아니라 HTML 이고,
+    못 그린 차트는 사유 문단이다. 그림으로 담지 못하는 것을 담은 척하지 않는다
+    (그 자리는 `export_md` 가 숫자 표로 낸다).
+    """
+    svg = chart_svg(chart)
+    if not svg.startswith("<svg"):
+        return ""
+    head, _, rest = svg.partition(">")
+    head = head.replace('width="100%"', f'width="{W}"')
+    return (f'{head} font-family="{SVG_FONT}">'
+            f'<rect width="100%" height="100%" fill="#ffffff"/>{rest}')
+
+
 def chart_svg(chart: Dict) -> str:
     """차트 하나 → SVG(또는 표/값). **못 그리면 못 그린다고 적는다.**"""
     if not chart.get("drawable"):
