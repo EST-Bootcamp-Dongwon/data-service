@@ -51,6 +51,15 @@ SERIES = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100",
 TONE_COLOR = {"good": OK, "warning": WARN, "serious": ERROR, "critical": ERROR,
               "up": UP, "down": DOWN, "flat": FLAT, "neutral": MUTED, "": ACCENT}
 
+# 표지에 찍는 문서 종류 (M9 · N95) — `contracts.WORKSTREAMS` 의 이름을 옮긴 것이 아니라
+# **표지에서 읽히는 말**로 적는다. 리서치와 Top Pick 은 성격이 다른 문서다.
+WORKSTREAM_LABEL = {
+    "CORP-R": "기업 리서치 보고서",
+    "CORP-TP": "기업 Top Pick 스크리닝",
+    "IND-R": "산업 리서치 보고서",
+    "IND-TP": "산업 Top Pick 스크리닝",
+}
+
 
 def esc(value) -> str:
     return html.escape(str(value if value is not None else ""), quote=True)
@@ -625,8 +634,62 @@ td.num,th.num{{text-align:right;font-variant-numeric:tabular-nums}}
   font-size:10px;color:{MUTED};display:flex;gap:14px;flex-wrap:wrap}}
 .foot{{margin:14px 0 0;padding-top:8px;border-top:1px solid {BORDER_SOFT};
   font-size:10px;color:{MUTED}}}
-@media print{{body{{padding:0;font-size:11px}} .page{{page-break-inside:avoid}}
-  .fig,.tbl{{page-break-inside:avoid}}}}
+/* ── 표지 · 목차 · 러닝헤더 (M9 · N95) ────────────────────────── */
+.cover-sheet{{display:flex;flex-direction:column;min-height:240mm}}
+.cs-top{{flex:1}}
+.cs-kind{{font-size:11px;letter-spacing:2px;color:{MUTED};text-transform:uppercase}}
+.cs-title{{font-size:32px;font-weight:700;margin:6px 0 2px;line-height:1.25}}
+.cs-sub{{font-size:14px;color:{MUTED};margin-bottom:22px}}
+.cs-rule{{height:3px;background:{INK};margin:0 0 22px}}
+.cs-grid{{display:grid;grid-template-columns:repeat(2,1fr);gap:10px 24px;margin:18px 0}}
+.cs-k{{font-size:10px;color:{MUTED}}}
+.cs-v{{font-size:13px;font-weight:600}}
+.cs-bot{{margin-top:auto;padding-top:16px;border-top:1px solid {BORDER}}}
+.toc-sheet ol{{margin:0;padding-left:22px;font-size:12.5px;line-height:2}}
+.toc-sheet li::marker{{color:{MUTED}}}
+.toc-t{{color:{MUTED};font-size:11px;margin-left:6px}}
+.runhead,.runfoot{{display:none}}
+.ch{{font-size:10px;color:{MUTED};font-weight:600;letter-spacing:.5px}}
+
+/* ── 인쇄 판형 (M9 · N95) ──────────────────────────────────────
+   증권사 리서치 보고서 판형: A4 · 표지 한 장 · 목차 한 장 ·
+   장마다 새 쪽 · 매 쪽 러닝헤더와 고지 바닥글.
+
+   ★ 쪽(sheet) 번호는 **찍지 않는다.** 우리가 아는 것은 `page["page"]` 곧
+     **장 번호**이고, 한 장이 A4 한 쪽을 넘치면 둘이 갈라진다. 브라우저는
+     쪽 번호를 CSS 로 알려 주지 않으므로(Chrome 은 @page 여백상자를 지원하지 않는다),
+     아는 것만 찍는다 — `제 N 장 / 총 M 장`. 이 값은 넘치든 말든 **항상 맞다**.
+     쪽 번호까지 필요하면 Chrome 인쇄 대화상자의 '머리글/바닥글' 을 켜라. */
+@page{{size:A4;margin:16mm 14mm 15mm}}
+@media print{{
+  body{{padding:0;max-width:none;font-size:10.5px;line-height:1.55}}
+  /* 러닝헤더·바닥글 — position:fixed 는 인쇄에서 **매 쪽 반복된다** */
+  .runhead{{display:block;position:fixed;top:0;left:0;right:0;
+    font-size:9px;color:{MUTED};border-bottom:.5px solid {BORDER};padding-bottom:3px}}
+  .runfoot{{display:block;position:fixed;bottom:0;left:0;right:0;
+    font-size:8.5px;color:{MUTED};border-top:.5px solid {BORDER};padding-top:3px}}
+  .rh-r,.rf-r{{float:right}}
+  /* 고정 머리글·바닥글과 겹치지 않게 본문에 여유를 준다 */
+  .sheet-body{{padding:10mm 0 9mm}}
+  .cover-sheet,.toc-sheet{{page-break-after:always;min-height:0}}
+  /* 장마다 새 쪽. 표지·목차의 `page-break-after` 와 붙어도 **빈 쪽이 생기지 않는다** —
+     맞닿은 강제 개행은 브라우저가 하나로 합친다 (CSS Fragmentation §3). 그래서
+     표지 → 목차 → 표지 요약 → 1장 … 이 각각 한 쪽씩 간다. */
+  .page{{page-break-before:always;border-top:none;padding-top:0}}
+  /* 그림과 표만 쪼개지 않는다. **카드·표지요약에는 걸지 않는다** — 실측에서
+     둘 다 한 쪽에 안 들어가는 크기라, `avoid` 를 걸면 브라우저가 앞쪽을 비워 두고
+     넘겨 버려 종이만 늘었다 (CORP-R 27쪽 기준 측정). 안 들어가는 것에 `avoid` 는
+     지켜지지도 않는다. */
+  .fig,.tbl{{page-break-inside:avoid}}
+  .card dt,.card dd{{page-break-inside:avoid}}
+  h2,h3{{page-break-after:avoid}}
+  tr,li{{page-break-inside:avoid}}
+  a{{color:inherit;text-decoration:none}}
+}}
+@media screen{{
+  .cover-sheet{{min-height:0}}
+  .toc-sheet{{padding:14px 0;border-top:1px solid {BORDER}}}
+}}
 """
 
 
@@ -641,17 +704,58 @@ def to_html(pack: Dict, report: Dict) -> str:
     tables = {t.get("key", ""): t for t in (report.get("tables") or [])}
     title = charter.get("task_name") or f"{target.get('name', '')} 리서치"
 
-    out = [f'<div class="cover"><h1>{esc(title)}</h1>',
-           f'<div class="muted">분석 기준일 {esc(charter.get("as_of"))} · '
-           f'{report.get("page_count", 0)}장 (상한 15장) · '
-           f'워크스트림 {esc(charter.get("workstream_id"))} · '
-           f'스키마 {esc(pack.get("schema_version"))}</div>',
-           f'<div class="disclaimer">{esc(export_md.DISCLAIMER)}</div></div>',
-           _headline_html(extension.get("headline") or {})]
+    headline = extension.get("headline") or {}
+    workstream = charter.get("workstream_id") or ""
+    pages = report.get("pages") or []
+
+    # ── 표지 한 장 (M9 · N95) ──
+    # 판정을 지어내지 않는다 — `headline.verdict` 가 워크스트림마다 내는 우리 판정을
+    # 그대로 옮긴다 (`headline.py` 머리말: BUY 자리에 우리 판정을 놓는다).
+    verdict = headline.get("verdict") if isinstance(headline.get("verdict"), dict) else {}
+    out = [
+        f'<div class="runhead">{esc(title)} · {esc(workstream)}'
+        f'<span class="rh-r">기준일 {esc(charter.get("as_of"))}</span></div>',
+        f'<div class="runfoot">GIC 학회 내부 학습 자료 — 투자 권유가 아닙니다'
+        f'<span class="rf-r">{esc(report.get("generated_at"))} 생성</span></div>',
+        '<div class="sheet-body">',
+        '<section class="cover-sheet"><div class="cs-top">',
+        f'<div class="cs-kind">{esc(WORKSTREAM_LABEL.get(workstream, workstream))}</div>',
+        f'<div class="cs-title">{esc(title)}</div>',
+        f'<div class="cs-sub">{esc(target.get("code") or "")} · '
+        f'분석 기준일 {esc(charter.get("as_of"))}</div>',
+        '<div class="cs-rule"></div>',
+        '<div class="cs-grid">'
+        + "".join(f'<div><div class="cs-k">{esc(k)}</div><div class="cs-v">{esc(v)}</div></div>'
+                  for k, v in (
+                      ("워크스트림", f'{workstream} · {report.get("format", "")}'),
+                      ("구성", f'{report.get("page_count", 0)}장 (상한 {report.get("max_pages", 15)}장)'),
+                      # ★ 판정을 지어내지 않는다 — `headline` 이 낸 우리 판정을
+                      #   그대로 옮기고, **무엇에 대한 판정인지**(`kind`)를 함께 적는다.
+                      #   `BUY` 로 읽히면 안 된다 (`headline.py` 머리말).
+                      (f'AI 제안 — {verdict.get("kind") or "판정"}',
+                       verdict.get("label") or "판정 없음"),
+                      ("사람 결정",
+                       verdict.get("human_decision") or "승인 전 — AI 는 제안만 한다"),
+                      ("근거", f'E- {len(pack.get("C1_evidence") or [])}건 · '
+                               f'D- {len(pack.get("C2_data") or [])}건'),
+                      ("스키마", pack.get("schema_version") or ""))) + '</div>',
+        '</div><div class="cs-bot">'
+        f'<div class="disclaimer">{esc(export_md.DISCLAIMER)}</div></div></section>',
+        # ── 목차 한 장 ──
+        # ★ **장 번호**를 적는다 (쪽 번호가 아니다). 한 장이 A4 한 쪽을 넘치면
+        #   둘이 갈라지는데, 브라우저가 쪽 번호를 CSS 로 주지 않으므로 아는 것만 적는다.
+        '<section class="toc-sheet"><h2>목차</h2>'
+        '<p class="muted">아래 번호는 <b>장 번호</b>다 — 인쇄 쪽 번호와 다를 수 있다.</p><ol>'
+        + "".join(f'<li>{esc(p.get("title"))}'
+                  f'<span class="toc-t">slot {p.get("slot")}</span></li>' for p in pages)
+        + '</ol></section>',
+        _headline_html(headline)]
 
     for page in report.get("pages") or []:
-        out.append(f'<section class="page"><div class="page-no">'
-                   f'{page.get("page")} / {report.get("page_count")}</div>'
+        # ★ `쪽` 이 아니라 `장` 이다 (M9 · N95). 한 장이 A4 한 쪽을 넘치면 둘이 갈라지는데
+        #   브라우저는 쪽 번호를 CSS 로 주지 않는다. **아는 것만 찍는다.**
+        out.append(f'<section class="page"><div class="page-no ch">'
+                   f'제 {page.get("page")} 장 / 총 {report.get("page_count")} 장</div>'
                    f'<h2>{esc(page.get("title"))}</h2>'
                    f'<p class="key">{esc(page.get("key_message"))}</p>'
                    '<ul class="body">'
@@ -720,7 +824,12 @@ def to_html(pack: Dict, report: Dict) -> str:
 
     out.append(f'<p class="foot">{esc(export_md.DISCLAIMER)} · '
                f'생성 {esc(report.get("generated_at"))} · '
-               'CDN·외부 파일을 부르지 않는 자체완결 문서다 (브라우저 인쇄로 PDF 가 된다).</p>')
+               'CDN·외부 파일을 부르지 않는 자체완결 문서다. '
+               '<b>PDF 로 저장하려면</b> Ctrl+P(⌘P) → 대상을 “PDF 로 저장”, '
+               '용지 A4·배율 기본·<b>배경 그래픽 켜기</b>. '
+               '쪽 번호가 필요하면 “머리글/바닥글”도 켜라 — 문서 안의 번호는 '
+               '<b>장 번호</b>이지 쪽 번호가 아니다.</p>')
+    out.append("</div>")                       # .sheet-body — 고정 머리글·바닥글과 겹치지 않게 감쌌다
 
     return (f'<!doctype html><html lang="ko"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'

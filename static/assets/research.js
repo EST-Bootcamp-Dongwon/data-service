@@ -1538,6 +1538,52 @@ window.Research = (() => {
   }
 
   // ══════════════════════════════════════════════════════════
+  // 6-2. PDF 내보내기 — 인쇄용 HTML 을 새 창에 띄우고 인쇄 대화상자를 연다
+  // ══════════════════════════════════════════════════════════
+  //
+  // 서버가 PDF 를 만들지 않는다. **브라우저가 만든다** — 그래야 한글이 깨지지 않고
+  // (뷰어 폰트를 그대로 쓴다) 글자가 벡터로 남아 선택·검색이 된다. PDF 라이브러리를
+  // 서버에 넣으면 배포 용량(현재 341MB / 한도 500MB)과 한글 폰트 파일이 걸리고,
+  // 클라이언트 래스터 라이브러리(html2canvas 계열)를 쓰면 글자가 이미지가 된다.
+  //
+  // ⚠️ 창은 **await 앞에서** 연다. 네트워크를 기다린 뒤에 열면 클릭 제스처가 만료돼
+  //    팝업 차단에 걸린다.
+  async function exportPdf() {
+    const button = $('pdfBtn');
+    const status = $('exportStatus');
+    if (!state.pack) return;
+    const win = window.open('', '_blank');
+    if (!win) {
+      status.textContent = '새 창이 막혔다 — 이 사이트의 팝업을 허용해 달라';
+      return;
+    }
+    win.document.write('<!doctype html><meta charset="utf-8"><title>리포트 만드는 중…</title>'
+      + '<p style="font:14px sans-serif;padding:24px">인쇄용 리포트를 만드는 중…</p>');
+    button.disabled = true;
+    status.textContent = '인쇄본 만드는 중…';
+    try {
+      // MD 와 같은 규칙 — H09 가 조립해 팩에 실어 둔 리포트를 함께 보낸다
+      const made = await App.post('/api/research/export/html', {
+        context_pack: state.pack,
+        report: state.report || undefined,
+      });
+      win.document.open();
+      win.document.write(made.html);
+      win.document.close();
+      // 그림·표가 자리를 잡은 뒤에 인쇄 대화상자를 연다
+      win.addEventListener('load', () => win.focus() || win.print(), { once: true });
+      const kb = (new Blob([made.html]).size / 1024).toFixed(1);
+      status.textContent = `인쇄본 ${made.page_count}장 · ${kb}KB — 새 창에서 `
+        + `Ctrl+P → “PDF 로 저장” · A4 · 배경 그래픽 켜기`;
+    } catch (error) {
+      win.close();
+      status.textContent = `인쇄본을 만들지 못했다 — ${error.message}`;
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════
   // 시작
   // ══════════════════════════════════════════════════════════
   async function boot() {
@@ -1571,6 +1617,7 @@ window.Research = (() => {
     $('modalDone').addEventListener('click', closeModal);
     $('drillClose').addEventListener('click', () => { $('drill').hidden = true; });
     $('exportBtn').addEventListener('click', exportMarkdown);
+    $('pdfBtn').addEventListener('click', exportPdf);
     document.querySelectorAll('#resultTabs .pill').forEach((el) => {
       el.addEventListener('click', () => { state.tab = el.dataset.tab; renderTab(); });
     });
