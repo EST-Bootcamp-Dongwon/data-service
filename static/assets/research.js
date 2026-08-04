@@ -1233,8 +1233,12 @@ window.Research = (() => {
             ? ` 못 만든 ${skippedTables.length}개: ${skippedTables.map((t) => `${esc(t.title)} — ${esc(t.reason)}`).join(' / ')}`
             : ' 표는 <b>본문이 아니다</b> — 그래서 본문 수치 연결률이 표 때문에 달라지지 않는다.') + '</p>'
         : '') +
+      // 밀도 조정 — 합친 장(MERGE)과 만들지 않은 장(OMIT)을 갈라 밝힌다 (M9 · N89).
+      // 한 문장으로 묶어 "합쳤다" 라고만 적으면 빠진 장의 내용이 어딘가에 있는 것으로 읽힌다.
       (state.report.merged?.length
-        ? `<p class="hint">밀도 조정: ${state.report.merged.map(esc).join(' · ')}</p>` : '') +
+        ? `<p class="hint">밀도 조정 — 15장은 상한이지 목표가 아니다:</p>` +
+          `<ul class="hint rp-omit">${state.report.merged.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>`
+        : '') +
       headlineHtml(headline) +
       `<div class="rp-list">${pages}${extras}${extraTables}</div>`;
     // 자리를 만든 **뒤에** 그린다 — ApexCharts 는 DOM 요소가 있어야 붙는다

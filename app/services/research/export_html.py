@@ -664,6 +664,15 @@ def to_html(pack: Dict, report: Dict) -> str:
 
     out.append(_references(pack))
 
+    # 밀도 조정 — 무엇을 합쳤고 무엇을 **만들지 않았는지**를 갈라 밝힌다 (M9 · N89).
+    # 인쇄본만 이 목록이 없어서, 읽는 사람이 빠진 장을 알 방법이 없었다.
+    if report.get("omissions") or report.get("merged"):
+        out.append('<section class="page"><h2>밀도 조정 — 합친 장과 만들지 않은 장</h2>'
+                   '<p class="muted">15장은 상한이지 목표가 아니다. 자료가 없는 장을 '
+                   '억지로 만들지 않았고, 그 사실을 여기 남긴다.</p><ul>'
+                   + "".join(f'<li>{esc(note)}</li>' for note in (report.get("merged") or []))
+                   + "</ul></section>")
+
     logs = pack.get("logs") or {}
     gaps = logs.get("gaps") or []
     if gaps:

@@ -872,24 +872,49 @@ def _attach_tables(pages: List[Dict], built: List[Dict], workstream: str) -> Lis
 
 def _finalize(filled: Dict[int, Dict], pack: Dict, workstream: str = "CORP-R",
               analysis: Optional[Dict] = None) -> Dict:
-    """밀도 조정 — 빈 슬롯을 정해진 순서대로 합치고 번호를 매긴다.
+    """밀도 조정 — 자료가 없는 슬롯을 정해진 순서대로 처리하고 번호를 매긴다.
 
     합치는 순서는 워크스트림마다 다르다 (각 하네스설계서). CORP-R 은 §6.2,
-    IND-R 은 §9 의 "인접 슬롯 MERGE", TP 두 개는 §10 의 자유양식 논리 순서를 따른다.
+    IND-R 은 §9 의 "인접 슬롯 MERGE 또는 OMIT", TP 두 개는 §10 의 자유양식 논리 순서를 따른다.
+
+    ★ **MERGE 와 OMIT 은 다른 일이다** (M9 · 변경노트 N89). 설계서가 둘을 갈라 적었는데
+    코드가 한 이름으로 묶어 부르고 있었다.
+
+    | | 무슨 일이 일어나나 | 리포트에 어떻게 적나 |
+    |---|---|---|
+    | **MERGE** | 앞 슬롯이 살아 있고 뒤 슬롯이 비었다 → 앞 장이 뒤 슬롯의 역할까지 맡는다 | 그 장에 `merged_from` 을 남긴다 |
+    | **OMIT** | 앞 슬롯이 비었다 → 뒤 장이 **자리만** 앞으로 당겨진다 | `merged_from` 을 남기지 않는다 — 합친 적이 없다 |
+
+    OMIT 을 `merged_from` 으로 적으면 그 장이 **자기 슬롯 번호를 합쳤다**고 말하게 된다
+    (실측 — IND-TP 6장이 "이 장은 slot 6 을 합친 것이다" 를 냈다). 렌더러 셋이 모두
+    그 문장을 그대로 냈다. 불변원칙 §2-3 위반이라 M9 에서 갈랐다.
     """
     layout = FORMATS.get(workstream, FORMATS["CORP-R"])
+    titles = {s["slot"]: s["title"] for s in layout["slots"]}
+    # ★ 빈 슬롯은 **밀도 조정 전에** 센다. 조정은 자리를 옮기므로, 옮긴 뒤에 세면
+    #   "옮겨 온 뒤 슬롯이 비었다" 로 뒤집혀 보고된다 (M8 까지 실제로 그랬다).
+    built = set(filled)
     merged_notes: List[str] = []
+    absorbed_by: Dict[int, int] = {}                   # 빈 슬롯 → 그 역할을 맡은 슬롯
+    pulled_up: set = set()                             # 뒤 장이 앞으로 당겨진 빈 슬롯
     for keep, drop in layout["merge"]:
         if drop in filled and keep in filled:
-            continue                                  # 둘 다 있으면 합치지 않는다
+            continue                                  # 둘 다 있으면 손대지 않는다
         if drop in filled and keep not in filled:
-            # 앞 슬롯이 비었으면 뒤엣것을 앞자리로 올린다 (순서 보존)
+            # OMIT — 앞 슬롯 자료가 없다. 뒤엣것을 앞자리로 **옮기기만** 한다 (순서 보존).
+            # 합친 것이 아니므로 `merged_from` 을 남기지 않는다.
             filled[keep] = filled.pop(drop)
-            filled[keep]["merged_from"] = [drop]
-            merged_notes.append(f"slot {keep} 자리에 slot {drop} 을 올렸다 (앞 슬롯 자료 없음)")
+            if keep not in built:
+                pulled_up.add(keep)
         elif keep in filled and drop not in filled:
+            # MERGE — 앞 장이 뒤 슬롯의 역할까지 맡는다.
+            # 앞자리에 놓인 장이 **다른 슬롯에서 당겨져 온 것일 수도** 있으므로
+            # 그 장이 실제로 들고 있는 슬롯 번호로 적는다 (자리 번호로 적으면 어긋난다).
+            host = filled[keep].get("slot", keep)
             filled[keep]["merged_from"] = list(filled[keep].get("merged_from", [])) + [drop]
-            merged_notes.append(f"slot {drop} 을 slot {keep} 에 합쳤다 (자료 없음)")
+            absorbed_by[drop] = host
+            merged_notes.append(
+                f"slot {drop}({titles.get(drop, '')}) 을 slot {host}({titles.get(host, '')}) 에 합쳤다 (자료 없음)")
 
     pages = [filled[slot] for slot in sorted(filled)]
     for number, page in enumerate(pages, 1):
@@ -903,7 +928,21 @@ def _finalize(filled: Dict[int, Dict], pack: Dict, workstream: str = "CORP-R",
                                 or (pack.get("CX_workstream") or {}).get("analysis") or {})
     extra_tables = _attach_tables(pages, built_tables, workstream)
 
-    missing = [s["slot"] for s in layout["slots"] if s["slot"] not in filled]
+    # ★ `built`(조정 전) 로 센다. `filled`(조정 후) 로 세면 당겨 온 자리가 채워진 것으로
+    #   보여, 실제로 없는 슬롯 대신 **옮겨 온 슬롯**이 비었다고 뒤집혀 나온다.
+    missing = [s["slot"] for s in layout["slots"] if s["slot"] not in built]
+    omissions: List[Dict] = []
+    for slot in missing:
+        if slot in absorbed_by:
+            reason = f"slot {absorbed_by[slot]}({titles.get(absorbed_by[slot], '')}) 이 이 역할을 함께 맡았다"
+        elif slot in pulled_up:
+            reason = "자료가 없어 이 장을 만들지 않았다 — 뒤 장이 앞으로 당겨졌다 (OMIT)"
+        else:
+            reason = "자료가 없어 이 장을 만들지 않았다 (OMIT)"
+        omissions.append({"slot": slot, "title": titles.get(slot, ""), "reason": reason})
+        merged_notes.append(f"slot {slot}({titles.get(slot, '')}) — {reason}"
+                            if slot not in absorbed_by else "")
+    merged_notes = [n for n in merged_notes if n]
     return {
         "pages": pages,
         "page_count": len(pages),
@@ -913,6 +952,9 @@ def _finalize(filled: Dict[int, Dict], pack: Dict, workstream: str = "CORP-R",
         "slot_count": len(layout["slots"]),
         "merged": merged_notes,
         "empty_slots": missing,
+        # 빈 슬롯마다 **왜** 없는지를 함께 낸다 (M9 · N89). H09 가 이것을 그대로 읽어
+        # `unavailable_or_unverifiable` 에 싣는다 — "합쳤다" 로 뭉뚱그리지 않기 위해서다.
+        "omissions": omissions,
         "extra_chart_ids": [c.get("id", "") for c in extra_charts],
         "tables": built_tables,
         "extra_table_keys": extra_tables,
@@ -1178,8 +1220,10 @@ def to_markdown(pack: Dict, report: Dict) -> str:
         f"· 사용자 의견 {len(pack.get('C6_decisions', {}).get('feedback_log', []))}건",
         "",
     ]
+    # "합침" 이라고만 적으면 **만들지 않은 장**까지 어딘가에 있는 것처럼 읽힌다 (M9 · N89).
     if report.get("merged"):
-        lines.append("장 합침: " + " / ".join(report["merged"]))
+        lines.append("밀도 조정 (MERGE·OMIT):")
+        lines += [f"- {note}" for note in report["merged"]]
         lines.append("")
     for gap in logs.get("gaps", []):
         lines.append(f"- `{gap['id']}` {gap.get('affected_claim_or_field')} — "

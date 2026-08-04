@@ -657,6 +657,9 @@ code { font-family: var(--mono); font-size: 0.92em; background: var(--surface-2)
   padding: 6px 10px; background: var(--surface-2); border-radius: 6px;
 }
 .rp-gap { margin-top: var(--sp-2); font-size: var(--t-xs); color: var(--warn); }
+/* 밀도 조정 목록 (M9 · N89) — 합친 장과 만들지 않은 장을 한 줄씩 갈라 보인다 */
+.rp-omit { margin: 4px 0 var(--sp-2); padding-left: 18px; }
+.rp-omit li { margin: 2px 0; }
 
 /* ── 리포트 차트 (M8 · N84) ──────────────────── */
 /* U3 규칙 중 이 블록이 지키는 것

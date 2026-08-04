@@ -1931,9 +1931,12 @@ def h09_assemble(pack: Dict, request: Dict) -> Dict:
     ]
     if report["merged"]:
         result["provisional_interpretation"] = report["merged"]
-    if report["empty_slots"]:
-        result["unavailable_or_unverifiable"] = [
-            f"slot {slot} — 자료가 없어 다른 장에 합쳤다" for slot in report["empty_slots"]]
+    # 빈 슬롯은 **왜 없는지를 갈라** 적는다 (M9 · N89). M8 까지는 전부 "다른 장에 합쳤다"
+    # 로 찍었는데, 실제로 합친 것은 그중 일부뿐이고 나머지는 그냥 만들지 않은 장이었다.
+    # 없는 장을 "합쳤다" 로 적으면 독자가 그 내용이 어딘가에 있다고 읽는다 (§2-3 위반).
+    for omission in report.get("omissions") or []:
+        result["unavailable_or_unverifiable"].append(
+            f"slot {omission['slot']}({omission['title']}) — {omission['reason']}")
     result["status"] = "accepted"
     result["next_state_input"] = ["H10 이 100점 루브릭으로 채점한다"]
     return result
