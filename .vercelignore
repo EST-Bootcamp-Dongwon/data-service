@@ -58,6 +58,9 @@ data/krx_bundle.db-wal
 data/krx_bundle.db-shm
 data/report_index.db-wal
 data/report_index.db-shm
+# 재빌드 전 백업 (M9) — `.db` 본체는 배포에 실어야 하지만 **백업까지 실을 이유는 없다.**
+# 실측: `report_index.db.bak` 하나가 18.4MB 다.
+data/*.bak
 data/kosis_rss/
 data/yf/
 

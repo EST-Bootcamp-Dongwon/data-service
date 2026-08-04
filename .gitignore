@@ -49,6 +49,11 @@ data/report_index.db
 data/report_index.db-wal
 data/report_index.db-shm
 
+# 재빌드 전 백업 (M9). 색인을 다시 만들 때는 **먼저 복사해 두고** 돌린다 —
+# 빌드가 제자리(in-place)로 25곳마다 중간 저장하므로 중간에 끊기면 되돌릴 것이 없다.
+# ★ `.vercelignore` 에도 **반드시** 넣는다 — 안 넣으면 배포 번들에 18MB 가 그냥 실린다.
+data/*.bak
+
 # KOSIS 공지 크롤링 결과 (재수집 가능한 산출물)
 # ./test.sh 또는 scripts/kosis_rss.py 로 언제든 다시 만들 수 있다.
 data/kosis_rss/

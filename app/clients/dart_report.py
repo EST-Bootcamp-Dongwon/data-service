@@ -216,12 +216,82 @@ def _parse_segments(tables: List[Dict]) -> Dict:
     }
 
 
+SHARE_LABEL_MAX = 20            # 이보다 긴 칸은 머리표가 아니라 문장이다
+
+
+def _share_labelled(rows: List[List[str]]) -> bool:
+    """머리행에 **'점유율' 이라고 이름 붙은 칸**이 있는지 본다 (M9 · N96).
+
+    두 가지를 걸러야 한다 — 둘 다 실측에서 실제로 잡혔다.
+
+    | 거르는 것 | 왜 | 실측 |
+    |---|---|---|
+    | **긴 칸 안에 섞인 '점유율'** | 문장이지 머리표가 아니다 | HLB펩 — `시장상황` 산문 칸에 "시장점유율 1위" 가 있어서 **시장규모 표**(세계 25,015억)가 점유율로 잡혔다 |
+    | **'매출액 점유율'** | 회사가 그렇게 쓰지만 뜻은 **매출 비중**이다 | 시그네틱스(해외 72%/국내 28%) · 상아프론테크(부문별 50.6%) |
+
+    매출 비중을 slot 7(경쟁구조·시장 위치)에 싣는 것은 시장에서의 위치를 잘못 말하는 것이다.
+    """
+    for row in rows[:2]:
+        for cell in row:
+            text = cell.strip()
+            if "점유율" not in text or len(text) > SHARE_LABEL_MAX:
+                continue
+            if "매출" in text:                 # 매출액 점유율 = 매출 비중
+                continue
+            return True
+    return False
+
+
+def _percent_column(rows: List[List[str]]) -> bool:
+    """데이터 행 중 **한 칸줄이 통째로 백분율**인 것이 있는지 본다 (M9 · N96).
+
+    2단 머리행 표를 살리려고 만든 검사다. `금액 / 점유율` 을 번갈아 싣는 표는
+    칸의 절반이 금액이라 '전체 칸의 60% 가 %' 라는 문턱을 못 넘는다
+    (NH투자증권 실측 44%·39% — **진짜 점유율 표인데 떨어졌다**).
+
+    자리(column)로 보면 점유율 칸줄은 100% 가 % 다. 그것만 확인한다.
+    """
+    if not rows:
+        return False
+    width = max(len(row) for row in rows)
+    for column in range(1, width):
+        cells = [row[column] for row in rows if column < len(row) and row[column].strip()]
+        if len(cells) >= 2 and sum(1 for c in cells if "%" in c) >= len(cells) * 0.6:
+            return True
+    return False
+
+
 def _parse_share(tables: List[Dict]) -> Dict:
     """시장점유율 표.
 
     문맥에 '점유율' 이 있다는 것만으로는 부족했다 — 옆에 있던 매출 비중표·광고시장 규모표가
     딸려 왔다(SK하이닉스·카카오 실측). 그래서 **값이 실제로 백분율 표기(%)** 인 것까지 본다.
     점유율은 반드시 % 로 적히고, 매출액 표는 그렇지 않다.
+
+    ── M9 에서 넓힌 곳 (N96) ────────────────────────────────────
+    전종목 검출률이 **7.3%** 였다. 표본 30곳을 관문별로 세어 어디서 떨어지는지 봤다.
+
+    | 관문 | 표본 30곳 | 고칠 수 있나 |
+    |---|---:|---|
+    | ① 문맥에 '점유율' 이라는 낱말 자체가 없다 | 16곳 (53%) | **없다** — 회사가 점유율을 안 쓴다 |
+    | ② 머리행 검사(칸 40자)에서 전멸 | 3곳 (10%) | 문단형 '표' 라 맞다 |
+    | ③ % 비율 60% 문턱에서 전멸 | **8곳 (27%)** | **일부만** |
+    | 통과 | 3곳 (10%) | |
+
+    ③ 을 눈으로 봤더니 **두 부류**였다.
+
+    - **진짜 점유율 표인데 떨어진 것** — `금액 / 점유율` 을 번갈아 싣는 **2단 머리행** 표.
+      칸의 절반이 금액이라 문턱을 못 넘는다 (NH투자증권 44%·39%).
+    - **떨어지는 게 맞는 것** — 매출 '비율' 표(성우테크론) · 판매경로표(HL홀딩스) ·
+      연혁표(가비아) · 수주잔고표(케이씨티). 문맥 600자 안에 '점유율' 이 있었을 뿐이다.
+
+    그래서 문턱을 **낮추지 않고**, 아래 둘을 **동시에** 만족할 때만 예외로 받는다.
+
+      ① 머리행(최대 두 줄)에 **'점유율' 이라고 이름 붙은 칸이 있다**
+      ② 데이터 행에 **통째로 백분율인 칸줄이 있다** (`_percent_column`)
+
+    ①이 매출 '비율' 표를 막고(머리행이 `비율` 이지 `점유율` 이 아니다),
+    ②가 문맥만 스친 잡표를 막는다. 둘 중 하나만으로는 못 막는다.
     """
     picked: List[Dict] = []
     for entry in tables:
@@ -239,7 +309,13 @@ def _parse_share(tables: List[Dict]) -> Dict:
             continue
         percent = sum(1 for cell in value_cells if "%" in cell)
         if percent < len(value_cells) * 0.6:
-            continue
+            # 2단 머리행 예외 — 머리행이 '점유율' 이라 **이름 붙였고**
+            # 실제로 백분율만 담은 칸줄이 있을 때만 받는다 (N96)
+            # 부머리행(숫자가 하나도 없는 줄)은 빼고 자리별로 본다
+            data_rows = [row for row in rows[1:]
+                         if any(_number(cell) is not None for cell in row[1:])]
+            if not (_share_labelled(rows) and _percent_column(data_rows)):
+                continue
 
         parsed = _numeric_rows(rows[1:])
         if parsed:
