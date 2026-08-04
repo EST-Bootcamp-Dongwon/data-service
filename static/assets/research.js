@@ -250,6 +250,55 @@ window.Research = (() => {
     });
   }
 
+  // ── 자연어로 종목 찾기 (M8 · 변경노트 N85) ──
+  //
+  // 위의 자동완성(`searchTarget`)과 **가른다.** 저쪽은 이름을 글자로 맞추고 몇 ms 안에
+  // 답하는 오프라인 검색이고, 이쪽은 사업보고서 임베딩이라 HuggingFace 왕복이 든다
+  // (실측 콜드 4.4초 · 웜 0.1초). 타이핑마다 부르면 안 되므로 **버튼으로 받는다.**
+  //
+  // 정직하게 낸다 — 코사인 원값(`similarity`)과 규모 보정값(`score`)을 둘 다 보이고,
+  // 왜 그 종목이 나왔는지(원문 조각)를 함께 낸다. 임베딩이 죽어 이름 검색으로 떨어지면
+  // 배지로 밝힌다.
+  async function runSemantic() {
+    const box = $('semanticBox');
+    const query = $('semanticInput').value.trim();
+    if (!query) { box.hidden = true; return; }
+    box.hidden = false;
+    box.innerHTML = '<p class="hint">사업보고서 원문에서 찾는 중…</p>';
+    try {
+      const found = await App.get(`/api/search/semantic?q=${encodeURIComponent(query)}&limit=8`);
+      const rows = found.rows || [];
+      if (!rows.length) {
+        box.innerHTML = `<p class="hint">맞는 종목을 찾지 못했다${
+          found.degraded_reason ? ` — ${esc(found.degraded_reason)}` : ''}</p>`;
+        return;
+      }
+      const badge = found.degraded
+        ? `<div class="badge warn">⚠ 임베딩을 쓰지 못해 <b>이름 검색</b>으로 답했다 — ${esc(found.degraded_reason)}</div>`
+        : `<div class="badge ok">사업보고서 원문 검색 · 색인 ${esc(found.index?.reports ?? '—')}곳 (${esc(found.index?.built_at || '')}) · ${esc(found.elapsed_sec ?? '')}초</div>`;
+      box.innerHTML = badge +
+        `<div class="sem-list">${rows.map((r) => `
+          <button type="button" class="sem-row" data-code="${esc(r.code)}" data-name="${esc(r.name)}">
+            <span class="sem-head"><b>${esc(r.name)}</b> <span class="muted">${esc(r.code)}</span>
+              ${r.similarity != null
+                ? `<span class="muted">유사도 ${r.similarity.toFixed(3)}${
+                    r.cap_bonus ? ` + 규모 ${r.cap_bonus.toFixed(3)}` : ''} = <b>${r.score.toFixed(3)}</b></span>`
+                : '<span class="muted">이름 매칭</span>'}</span>
+            <span class="sem-why">${esc(r.why || '원문 조각이 없다')}</span>
+          </button>`).join('')}</div>` +
+        `<p class="hint">${esc(found.note || '')}</p>`;
+      box.querySelectorAll('.sem-row').forEach((el) => {
+        el.addEventListener('click', () => {
+          state.target = { code: el.dataset.code, name: el.dataset.name };
+          $('targetInput').value = `${el.dataset.name} (${el.dataset.code})`;
+          paintTargetState();
+        });
+      });
+    } catch (error) {
+      box.innerHTML = `<p class="hint">검색 실패 — ${esc(error.message)}</p>`;
+    }
+  }
+
   function paintTargetState() {
     const button = $('runBtn');
     if (button) button.disabled = !state.target || state.running;
@@ -1499,6 +1548,10 @@ window.Research = (() => {
       state.target = null;
       paintTargetState();
       searchTarget(event.target.value);
+    });
+    $('semanticBtn').addEventListener('click', runSemantic);
+    $('semanticInput').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') { event.preventDefault(); runSemantic(); }
     });
     $('runBtn').addEventListener('click', run);
     $('modalClose').addEventListener('click', closeModal);

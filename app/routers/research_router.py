@@ -26,7 +26,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Body, HTTPException, Path
 
 from app.repositories import industry_store, snapshot_store
-from app.services.research import contracts, export_md, ledger, plan, stages
+from app.services.research import contracts, export_html, export_md, ledger, plan, stages
 from app.services.research.knowledge import glossary
 
 router = APIRouter(prefix="/api/research", tags=["리서치 하네스"])
@@ -270,6 +270,34 @@ def export_markdown(payload: Dict = Body(...)) -> Dict:
         "max_pages": 15,
         "merged": report.get("merged", []),
         "bytes": len(markdown.encode("utf-8")),
+    }
+
+
+@router.post("/export/html", summary="Context Pack → 인쇄용 HTML (자체완결)")
+def export_html_report(payload: Dict = Body(...)) -> Dict:
+    """CDN·외부 파일을 **부르지 않는** HTML 한 덩어리를 돌려준다.
+
+    차트는 인라인 SVG 로 그린다 (ApexCharts 를 쓸 수 없으므로). 계열은
+    `charts.py` 것을, 표지는 `headline.py` 것을, 표는 `tables.py` 것을 **그대로** 쓴다 —
+    그리는 방법만 다르고 값은 만들지 않는다. 그래서 화면·마크다운·인쇄본이 같은 수를 낸다.
+
+    브라우저에서 열어 인쇄하면 PDF 가 된다.
+    """
+    pack = contracts.ensure_pack(payload.get("context_pack"))
+    extension = pack.get("CX_workstream") or {}
+    # MD 와 **같은 규칙**으로 리포트를 고른다 — H09 가 본 것과 다른 리포트가 나오면 안 된다
+    report = payload.get("report") or extension.get("report")
+    if not report:
+        analysis = payload.get("analysis") or extension.get("analysis") or {}
+        analysis = {**analysis, "red_team": extension.get("red_team") or {}}
+        report = export_md.assemble(pack, analysis)
+    document = export_html.to_html(pack, report)
+    return {
+        "html": document,
+        "page_count": report.get("page_count", 0),
+        "bytes": len(document.encode("utf-8")),
+        "self_contained": True,
+        "note": "외부 요청이 없다 — 파일 하나로 열린다. 인쇄하면 PDF 가 된다.",
     }
 
 

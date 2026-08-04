@@ -43,11 +43,22 @@
   <section class="card">
     <h2>② 무엇을 분석할까</h2>
     <p class="hint" id="targetHint"></p>
+    <div id="semanticBox" hidden></div>
     <div class="controls" style="margin-bottom:12px">
       <label style="flex:1; min-width:260px">대상
         <div class="pick-list">
           <input id="targetInput" type="text" autocomplete="off" style="width:100%" />
           <div class="pick-drop" id="pickDrop"></div>
+        </div>
+      </label>
+      <!-- 자연어 검색 (M8 · N85) — 이름이 아니라 **하는 일**로 찾는다.
+           자동완성(위 입력)과 성격이 달라 입력을 가른다: 위는 몇 ms 오프라인,
+           이쪽은 HuggingFace 왕복이라 버튼을 눌러야 나간다. -->
+      <label style="flex:1; min-width:260px">하는 일로 찾기
+        <div class="controls" style="gap:6px; margin:0">
+          <input id="semanticInput" type="text" autocomplete="off" style="flex:1"
+                 placeholder="예: 메모리 반도체를 만드는 회사" />
+          <button type="button" id="semanticBtn" class="btn">찾기</button>
         </div>
       </label>
       <label>분석 기준일

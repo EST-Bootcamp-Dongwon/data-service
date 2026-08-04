@@ -59,9 +59,14 @@ MAX_BATCH = 64                       # 한 번에 보낼 텍스트 수 (그보�
 
 KEY_NAMES = ("HUGGINGFACE_ACCESS_TOKEN", "HF_TOKEN", "HUGGINGFACE_API_KEY")
 
-# 쓰는 모델 두 개 — 왜 이것인지는 위 4번 참고
+# 쓰는 모델 세 개 — 감성·분류는 위 4번, 임베딩은 `scripts/build_report_index.py` 머리말 참고
 SENTIMENT_MODEL = "snunlp/KR-FinBert-SC"
 ZEROSHOT_MODEL = "joeddav/xlm-roberta-large-xnli"
+# 한국어 검색 전용 모델. 실측 top1 91% · top3 95% (사업보고서 42곳 · 자연어 질의 22건).
+# ⚠️ **빌드 스크립트와 반드시 같은 모델이어야 한다.** 다르면 질의와 색인이 다른 공간에
+#    놓여 결과가 무작위가 된다 — `report_index.nearest` 가 차원이 다르면 빈 결과를 준다.
+EMBED_MODEL = "nlpai-lab/KURE-v1"
+EMBED_PATH = "/pipeline/feature-extraction"     # 기본 경로는 400 이 난다 (아래 embed 참고)
 
 # 감성 라벨 → 우리 표기 (모델마다 라벨 이름이 다르므로 여기서 한 번 맞춘다)
 LABEL_MAP = {"positive": "긍정", "negative": "부정", "neutral": "중립",
@@ -233,6 +238,68 @@ def classify(text: str, labels: Sequence[str], model: str = ZEROSHOT_MODEL,
     return _cached(key, produce)
 
 
+# ─────────────────────────────────────────────────────────────
+# 3. 임베딩 — 자연어 질의를 벡터로 (M8 · 변경노트 N85)
+# ─────────────────────────────────────────────────────────────
+def embed(texts: Sequence[str], model: str = EMBED_MODEL) -> Dict:
+    """문장 묶음을 벡터로 바꾼다.
+
+    ⚠️ **경로가 다르다.** 감성·분류와 달리 이 모델들은 sentence-similarity 로 등록돼
+    있어서 기본 경로로 부르면 400 이 난다 (실측 2026-08-04):
+
+        POST …/models/nlpai-lab/KURE-v1
+        → 400 SentenceSimilarityPipeline.__call__() missing 'sentences'
+
+        POST …/models/nlpai-lab/KURE-v1/pipeline/feature-extraction
+        → 200 [[…1024개…], …]
+
+    **문서 쪽은 여기서 임베딩하지 않는다.** 종목 하나의 사업보고서에 표가 2천~4천 개라
+    요청 안에서 돌리면 서버리스 60초를 몇 배로 넘긴다. 문서는 빌드타임에 미리 계산해
+    `data/report_index.db` 에 넣어 두고(`scripts/build_report_index.py`),
+    런타임에는 **질의 한 건만** 이 함수로 임베딩한다.
+
+    실패하면 예외가 아니라 값으로 돌려준다 (이 모듈의 책임 경계) — 부르는 쪽이
+    낱말 검색으로 떨어지고 그 사실을 화면에 밝힌다.
+    """
+    clean = [str(t or "").strip() for t in texts]
+    wanted = [t for t in clean if t]
+    if not wanted:
+        return _failure("임베딩할 문장이 없다")
+
+    key = ("embed", model, tuple(wanted))
+
+    def produce() -> Dict:
+        started = time.monotonic()
+        vectors: List[List[float]] = []
+        try:
+            for offset in range(0, len(wanted), MAX_BATCH):
+                chunk = wanted[offset:offset + MAX_BATCH]
+                raw = _post(f"{model}{EMBED_PATH}", {"inputs": chunk})
+                if not isinstance(raw, list) or len(raw) != len(chunk):
+                    return _failure(f"응답 모양이 예상과 다르다 (입력 {len(chunk)} · 응답 "
+                                    f"{len(raw) if isinstance(raw, list) else type(raw).__name__})")
+                for item in raw:
+                    if not isinstance(item, list) or not item:
+                        return _failure("응답 안의 벡터 모양이 예상과 다르다")
+                    vectors.append([float(x) for x in item])
+        except HTTPError as error:
+            return _failure(f"HTTP {error.code} — {error.reason}")
+        except (URLError, TimeoutError) as error:
+            return _failure(f"연결 실패 — {error}")
+        except Exception as error:
+            return _failure(f"{type(error).__name__}: {str(error)[:120]}")
+
+        _last_attempt.update(result="ok", detail=f"{len(vectors)}건 임베딩")
+        return {
+            "available": True, "model": model, "texts": wanted, "vectors": vectors,
+            "dim": len(vectors[0]) if vectors else 0,
+            "elapsed_sec": round(time.monotonic() - started, 2),
+            "note": "문서 쪽 벡터는 빌드타임에 미리 계산한다 — 여기서는 질의만 임베딩한다.",
+        }
+
+    return _cached(key, produce)
+
+
 def get_status() -> Dict:
     """인증키 상태 진단 (토큰 값은 노출하지 않는다)."""
     token, source = load_hf_key()
@@ -241,7 +308,8 @@ def get_status() -> Dict:
         "source": source,
         "masked": secrets.mask(token) if token else "",
         "endpoint": HF_BASE_URL,
-        "models": {"sentiment": SENTIMENT_MODEL, "zeroshot": ZEROSHOT_MODEL},
+        "models": {"sentiment": SENTIMENT_MODEL, "zeroshot": ZEROSHOT_MODEL,
+                   "embed": EMBED_MODEL},
         "last_result": _last_attempt.get("result"),
         "last_detail": _last_attempt.get("detail"),
         "note": ("원격 추론이라 transformers·torch 를 설치하지 않는다 (배포 번들 한도). "
