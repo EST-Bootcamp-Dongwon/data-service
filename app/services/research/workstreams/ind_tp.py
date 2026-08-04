@@ -557,49 +557,21 @@ def sensitivity(entries: Sequence[Dict]) -> Dict:
 
 
 # ─────────────────────────────────────────────────────────────
-# 입구 — H04 가 부른다
+# ⚠️ 이 모듈에는 `analyze()` 가 **없다** — 형제 모듈 셋과 다른 점이다 (M9 · N93)
 # ─────────────────────────────────────────────────────────────
-def analyze(target: Dict, index_row: Optional[Dict] = None,
-            redteam_map: Optional[Dict] = None) -> Dict:
-    """후보 → 점수 → 순위 → 민감도 3단을 한 번에 만든다 (명세 §5.4)."""
-    universe = candidates(target)
-    if not universe.get("available"):
-        return {"available": False, "universe": universe,
-                "reason": universe.get("reason", "후보를 못 골랐다")}
-
-    # 후보별 공격 질문 — 모든 후보에 **같은 세 질문**을 던진다 (설계서 ITP-T09 비대칭 방지)
-    attacks = redteam_map or redteam_candidates(universe["rows"])
-    entries = score_candidates(universe["rows"], redteam_map=attacks)
-    ranking = rank(entries)
-    swings = sensitivity(entries)
-
-    top = next((r for r in ranking if r.get("rank") == 1), None)
-    return {
-        "available": True,
-        "universe": universe,
-        "entries": entries,
-        "ranking": ranking,
-        "red_team": {"per_candidate": attacks,
-                     "questions_each": len(next(iter(attacks.values()), [])),
-                     "note": ("모든 후보에 같은 질문을 던졌다 — 후보마다 다른 질문을 만들면 "
-                              "어느 쪽에 유리한 질문을 골랐는지 알 수 없다 (설계서 ITP-T09)"),
-                     "limitation": ("시장 스냅샷으로 답할 수 있는 것만 물었다. "
-                                    "실적·현금흐름 검증은 후보마다 DART 를 불러야 해서 하지 않았다.")},
-        "sensitivity": swings,
-        "weights": WEIGHTS,
-        "anchor": ANCHOR,
-        "proposal": {
-            "top_pick": None if not top else {"code": top["code"], "name": top["name"],
-                                              "adjusted": top.get("adjusted_display"),
-                                              "coverage": top.get("coverage_display"),
-                                              "tied": top.get("tied", False)},
-            "ai_proposal": True,
-            "human_decision": ("사람 승인 필요 — 총점 1위를 Top Pick 으로 **확정하지 않는다** "
-                               "(설계서 ITP-T10)"),
-            "stability": swings.get("stability"),
-            "caution": (f"순위 안정성이 '{swings.get('stability')}' 이다. "
-                        f"{swings.get('flip_count', 0)}개 시나리오에서 1위가 바뀐다."
-                        if swings.get("available") else "민감도를 못 냈다"),
-        },
-        "basis": "GIC v15 산업TopPick 하네스설계서 §7 · §8",
-    }
+#
+# `corp_tp.analyze` · `ind_r.analyze` 는 `stages.h04_analyze` 가 실제로 부르지만,
+# 여기 있던 `analyze()` 는 **호출자가 0건인 죽은 코드**였다. `stages._h04_ind_tp` 가
+# 같은 3단(후보 → 점수 → 순위 → 민감도)을 직접 조립하기 때문이다.
+#
+# 왜 stages 쪽이 직접 조립하나 —
+#   ① 후보 수를 사용자 답변(`Q-H01-2`)으로 정해야 해서 `candidates(target, want=…)` 를
+#      먼저 부른다. 죽은 `analyze()` 에는 `want` 인자가 없었다.
+#   ② 그 사이사이에 Gap 발행과 장부 등재(`add_derived`)가 끼어든다.
+#
+# 그냥 안 쓰이기만 한 것이 아니라 **내용이 갈라져 있었다** — `note`·`limitation` 문구가
+# 달랐고 `anchor` 키가 더 있었다. 아무도 검증하지 않는 두 번째 진실이 있는 셈이라,
+# 누군가 죽은 쪽을 고치면 리포트는 그대로인 채 고쳤다고 믿게 된다. 그래서 지웠다.
+#
+# **다시 만들지 마라.** 3단을 한 함수로 묶고 싶으면 `stages._h04_ind_tp` 를 고치고,
+# 이 모듈은 조각 함수(`candidates` · `score_candidates` · `rank` · `sensitivity`)만 낸다.
