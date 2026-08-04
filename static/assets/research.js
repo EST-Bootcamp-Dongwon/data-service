@@ -928,6 +928,122 @@ window.Research = (() => {
     }
   }
 
+  // ══════════════════════════════════════════════════════════
+  // 5.6 리포트 표지 · 표 (M8 · 변경노트 N86 · N87)
+  // ══════════════════════════════════════════════════════════
+  //
+  // **값은 여기서 만들지 않는다.** 서버(`headline.py` · `tables.py`)가 실어 준 것을
+  // 그대로 찍는다 — 차트(5.5)와 같은 규칙이다.
+  //
+  //   · 판정을 `BUY` 로 바꾸지 않는다. 우리 판정(Proceed/프리미엄/확장 국면/1위 후보)을 낸다.
+  //   · 부호를 감추지 않는다 — 현재가 대비가 음수면 음수로 찍는다.
+  //   · 9축 막대는 **한 색**이고 상태만 얹는다. 축마다 색을 주면 "색이 아홉인데 이야기는
+  //     숫자 하나" 가 된다. 그리고 색 옆에 늘 숫자를 찍는다 (색만으로 말하지 않는다).
+
+  /** 표 한 개 — 숫자 칸은 오른쪽 정렬한다 (자릿수가 맞아야 세로로 견줄 수 있다). */
+  function reportTableHtml(table) {
+    if (!table) return '';
+    if (!table.drawable) {
+      return `<div class="rp-table"><h4>${esc(table.title)}</h4>
+        <p class="rp-gap">⚠ 이 표는 만들지 못했다 — ${esc(table.reason)}</p></div>`;
+    }
+    const start = table.align_right_from ?? 1;
+    const head = (table.head || []).map((h, i) =>
+      `<th${i >= start ? ' class="num"' : ''}>${esc(h)}</th>`).join('');
+    const rows = (table.rows || []).map((row) => `<tr>${row.map((cell, i) =>
+      `<td${i >= start ? ' class="num"' : ''}>${esc(cell)}</td>`).join('')}</tr>`).join('');
+    const ids = table.data_ids || [];
+    return `<div class="rp-table">
+      <h4>${esc(table.title)}</h4>
+      <div class="table-scroll"><table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+      ${table.note ? `<p class="rp-chart-note">⚠ ${esc(table.note)}</p>` : ''}
+      <p class="rp-chart-src">${ids.length
+        ? `근거 ${ids.slice(0, 6).map((id) => `<button type="button" data-evidence-id="${esc(id)}">${esc(id)}</button>`).join(' ')}${ids.length > 6 ? ` 외 ${ids.length - 6}건` : ''}`
+        : '<span class="muted">이 표에 붙은 D- 가 없다</span>'}${
+        table.basis ? ` · 기준 ${esc(table.basis)}` : ''}</p>
+    </div>`;
+  }
+
+  /** 9축 가로 막대. 채움은 한 색이고 상태만 얹는다 — 숫자를 늘 함께 찍는다. */
+  function axesHtml(axes, evaluation) {
+    if (!axes.length) return '';
+    const critical = (evaluation.critical || []).length
+      ? `<div class="badge warn">⚠ 중대 결함 ${evaluation.critical.length}건 — ${evaluation.critical.map(esc).join(' / ')}</div>`
+      : '';
+    return `<section class="rp-axes">
+      <h4>품질 평가 9축 <span class="muted">${esc(String(evaluation.total ?? '—'))}/100 · 등급 ${esc(evaluation.grade || '—')}</span></h4>
+      ${critical}
+      ${axes.map((a) => `<div class="rp-axis" title="${esc(a.why)}">
+        <span class="rp-axis-name">${esc(a.axis)}</span>
+        <span class="rp-axis-track"><span class="rp-axis-fill ${esc(a.tone)}" style="width:${a.pct ?? 0}%"></span></span>
+        <span class="rp-axis-num">${esc(a.score_text)}<em>/${esc(String(a.max))}</em></span>
+      </div>
+      <p class="rp-axis-why">${esc(a.why)}</p>`).join('')}
+    </section>`;
+  }
+
+  /** Bear · Base · Bull 3칼럼. 색만으로 방향을 말하지 않는다 (부호·화살표를 함께 찍는다). */
+  function scenariosHtml(scenarios) {
+    const columns = scenarios.columns || [];
+    if (!columns.length) {
+      return scenarios.note ? `<p class="rp-chart-note">⚠ ${esc(scenarios.note)}</p>` : '';
+    }
+    const arrow = (tone) => (tone === 'up' ? '▲' : tone === 'down' ? '▼' : '▬');
+    const cells = columns.map((c) => {
+      const body = scenarios.kind === 'price'
+        ? (scenarios.fields || []).map(([key, label]) =>
+          `<dt>${esc(label)}</dt><dd>${esc(c[key] ?? '')}</dd>`).join('')
+        : (c.cells || []).map((cell) =>
+          `<dt>${esc(cell.horizon)}</dt><dd>${esc(cell.condition)}${
+            cell.watch ? `<span class="muted"> · 지켜볼 것: ${esc(cell.watch)}</span>` : ''}</dd>`).join('');
+      return `<div class="rp-scn ${esc(c.tone)}">
+        <div class="rp-scn-head"><span class="rp-scn-arrow">${arrow(c.tone)}</span>
+          <b>${esc(c.name)}</b> <span class="muted">${esc(c.label)}</span></div>
+        <dl>${body}</dl></div>`;
+    }).join('');
+    return `<section class="rp-scenarios">
+      <h4>시나리오 <span class="muted">Bear · Base · Bull</span></h4>
+      <div class="rp-scn-grid">${cells}</div>
+      ${scenarios.note ? `<p class="rp-chart-note">⚠ ${esc(scenarios.note)}</p>` : ''}
+    </section>`;
+  }
+
+  /** 표지 전체 — 리포트 맨 앞에 온다. */
+  function headlineHtml(headline) {
+    const verdict = headline.verdict || {};
+    if (!verdict.label) {
+      return headline.note ? `<p class="hint">${esc(headline.note)}</p>` : '';
+    }
+    const metrics = (headline.metrics || []).map((m) => `
+      <div class="tile">
+        <div class="tile-label">${esc(m.label)}</div>
+        <div class="tile-value ${esc(m.tone || '')}">${esc(m.text)}${
+          m.unit ? `<em>${esc(m.unit)}</em>` : ''}</div>
+        <div class="tile-sub">${esc(m.sub)}</div>
+      </div>`).join('');
+    const list = (label, items) => (items || []).length
+      ? `<div class="rp-hl-list"><span class="rp-hl-list-label">${esc(label)}</span>
+           <ul>${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul></div>` : '';
+    return `<section class="rp-headline">
+      <div class="rp-hl-top">
+        <div>
+          <div class="rp-hl-kind">${esc(verdict.kind)}</div>
+          <div class="rp-hl-verdict">
+            ${window.Shell ? Shell.grade(verdict.tone === 'neutral' ? 'good' : verdict.tone, verdict.label) : esc(verdict.label)}
+          </div>
+        </div>
+        <div class="rp-hl-target">${esc(headline.target)}<span class="muted"> · 기준일 ${esc(headline.as_of)}</span></div>
+      </div>
+      ${verdict.ai_proposal ? `<p class="rp-hl-human">🖐 ${esc(verdict.human_decision)}</p>` : ''}
+      <div class="tiles">${metrics}</div>
+      ${list('판단 근거', verdict.reasons)}${list('조건 · 남은 것', verdict.conditions)}
+      ${verdict.caveat ? `<p class="rp-chart-note">⚠ ${esc(verdict.caveat)}</p>` : ''}
+      ${scenariosHtml(headline.scenarios || {})}
+      ${axesHtml(headline.axes || [], headline.evaluation || {})}
+      <p class="rp-hl-foot">${esc(headline.disclaimer || '')}</p>
+    </section>`;
+  }
+
   function chartsOf(pack) {
     return ((pack || {}).CX_workstream || {}).charts || [];
   }
@@ -979,6 +1095,9 @@ window.Research = (() => {
     const index = buildValueIndex(state.pack);
     const allCharts = chartsOf(state.pack);
     const chartById = new Map(allCharts.map((c) => [c.id, c]));
+    const allTables = state.report.tables || [];
+    const tableByKey = new Map(allTables.map((t) => [t.key, t]));
+    const headline = (state.pack?.CX_workstream || {}).headline || {};
     let totals = 0;
     let links = 0;
 
@@ -1010,6 +1129,9 @@ window.Research = (() => {
       // 차트 — 짝이 있으면 **실제로 그린다** (M8 · N84). 없으면 이름만 남는다.
       const chart = chartById.get(page.visual_id || '');
       const figure = chart ? chartFigure(chart) : '';
+      // 표 (M8 · N87) — 본문 불릿이 아니라 별도 자리다 (linkcheck 가 세지 않는다)
+      const pageTables = (page.table_keys || [])
+        .map((key) => reportTableHtml(tableByKey.get(key))).join('');
 
       return `<article class="rp">
         <div class="rp-head"><span class="rp-no">${page.page} / ${state.report.page_count}</span>
@@ -1017,7 +1139,7 @@ window.Research = (() => {
           ${window.Shell ? Shell.grade(confidenceLevel(page.confidence), `신뢰도 ${page.confidence}`) : ''}</div>
         <p class="rp-key">${markTerms(key.html)}</p>
         <ul class="rp-body">${body}</ul>
-        ${figure}${card}${merged}${gaps}
+        ${figure}${pageTables}${card}${merged}${gaps}
         <div class="rp-meta">
           <span>출처: ${(page.sources || []).length ? page.sources.map(esc).join(' · ') : '—'}</span>
           <span>${esc(page.human_decision)}</span>
@@ -1037,6 +1159,14 @@ window.Research = (() => {
       : '';
 
     const skipped = allCharts.filter((c) => !c.drawable);
+    // 어느 장에도 못 붙은 표 — 차트와 같이 부록으로 낸다 (버리지 않는다)
+    const extraTableKeys = (state.report.extra_table_keys || []).filter((k) => tableByKey.has(k));
+    const extraTables = extraTableKeys.length
+      ? `<article class="rp"><div class="rp-head"><span class="rp-no">부록</span>
+           <h3>장에 붙지 않은 표 ${extraTableKeys.length}개</h3></div>
+         ${extraTableKeys.map((k) => reportTableHtml(tableByKey.get(k))).join('')}</article>`
+      : '';
+    const skippedTables = allTables.filter((t) => !t.drawable);
 
     const missed = totals - links;
     box.innerHTML =
@@ -1048,9 +1178,16 @@ window.Research = (() => {
       (skipped.length
         ? ` 못 그린 ${skipped.length}개: ${skipped.map((c) => `${esc(c.title)} — ${esc(c.reason)}`).join(' / ')}`
         : ' 차트 안의 숫자는 <b>숫자 보기</b>를 펼치면 그대로 읽을 수 있다.') + '</p>' +
+      (allTables.length
+        ? `<p class="hint">표 <b>${allTables.length}개</b> 중 <b>${allTables.length - skippedTables.length}개</b>를 실었다.` +
+          (skippedTables.length
+            ? ` 못 만든 ${skippedTables.length}개: ${skippedTables.map((t) => `${esc(t.title)} — ${esc(t.reason)}`).join(' / ')}`
+            : ' 표는 <b>본문이 아니다</b> — 그래서 본문 수치 연결률이 표 때문에 달라지지 않는다.') + '</p>'
+        : '') +
       (state.report.merged?.length
         ? `<p class="hint">밀도 조정: ${state.report.merged.map(esc).join(' · ')}</p>` : '') +
-      `<div class="rp-list">${pages}${extras}</div>`;
+      headlineHtml(headline) +
+      `<div class="rp-list">${pages}${extras}${extraTables}</div>`;
     // 자리를 만든 **뒤에** 그린다 — ApexCharts 는 DOM 요소가 있어야 붙는다
     drawReportCharts(allCharts);
     bindDrill(box);

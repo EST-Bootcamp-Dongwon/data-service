@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from . import contracts
+from . import contracts, tables
 
 # §6.1 기본 15개 슬롯 — 순서를 바꾸지 않는다
 SLOTS = [
@@ -139,6 +139,9 @@ def _page(slot: Dict, key_message: str, body: List[str], visual: str = "",
         "key_message": key_message,
         "body": body,
         "visual": visual,
+        # 이 장에 붙는 표의 `key`. `_finalize` → `_attach_tables` 가 채운다 (M8 · N87).
+        # **본문이 아니다** — 그래서 `linkcheck` 가 세는 수치 개수가 달라지지 않는다.
+        "table_keys": [],
         # 이 장에 실제로 그릴 차트의 `V-` 번호. `_finalize` → `_attach_charts` 가 채운다
         # (M8 · N84). 짝이 없으면 빈 문자열이고, 그 장은 차트 이름만 글자로 남는다.
         "visual_id": "",
@@ -362,7 +365,7 @@ def _assemble_corp_r(pack: Dict, analysis: Dict) -> Dict:
         DISCLAIMER,
     ], confidence="medium", human_decision="사람 승인 필요 — H08 에서 확인한다")
 
-    return _finalize(filled, pack, "CORP-R")
+    return _finalize(filled, pack, "CORP-R", analysis)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -516,7 +519,7 @@ def _assemble_ind_r(pack: Dict, analysis: Dict) -> Dict:
     ], confidence="medium", human_decision="사람 승인 필요 — H08 에서 확인한다",
         presenter_note="산업리서치는 1위 기업을 확정하지 않는다 (설계서 ERR-TOP-PICK-BOUNDARY)")
 
-    return _finalize(filled, pack, "IND-R")
+    return _finalize(filled, pack, "IND-R", analysis)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -643,7 +646,7 @@ def _assemble_corp_tp(pack: Dict, analysis: Dict) -> Dict:
         DISCLAIMER,
     ], confidence="medium", human_decision="사람 승인 후 CORP-R 로 넘긴다")
 
-    return _finalize(filled, pack, "CORP-TP")
+    return _finalize(filled, pack, "CORP-TP", analysis)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -751,7 +754,7 @@ def _assemble_ind_tp(pack: Dict, analysis: Dict) -> Dict:
     ], confidence="medium",
         presenter_note="승인 후보를 CORP-TP Proceed 로 그대로 복사하지 않는다 (설계서 ITP-T17)")
 
-    return _finalize(filled, pack, "IND-TP")
+    return _finalize(filled, pack, "IND-TP", analysis)
 
 
 def _card_by_question(cards: List[Dict], question: str) -> Dict:
@@ -800,6 +803,21 @@ CHART_SLOTS: Dict[str, Dict[int, int]] = {
     "IND-TP": {4: 5, 7: 6},
 }
 
+# ── 장 ↔ 표 짝 (M8 · 변경노트 N87) ──
+#
+# 차트와 **같은 방식**이다 — `slot` 번호 → `tables.py` 가 만드는 표의 `key`.
+# 한 장에 표가 둘 이상 붙을 수 있어 값이 튜플이다.
+#
+# ⚠️ 표는 `page.body` 가 **아니다.** `linkcheck` 는 본문 수치만 세므로 표를 본문에
+#    넣으면 데이터를 하나도 안 고쳤는데 H10 증거 추적성 점수가 움직인다
+#    (`tables.py` 머리말 · M7 에서 루브릭과 데이터를 한 커밋에 넣어 중간 상태를 잃었다).
+TABLE_SLOTS: Dict[str, tuple] = {
+    "CORP-R": {8: ("financial_years",), 9: ("financial_ratios",), 10: ("peer_compare",)},
+    "CORP-TP": {5: ("financial_years", "financial_ratios"), 6: ("peer_compare",)},
+    "IND-R": {9: ("industry_members",)},
+    "IND-TP": {3: ("industry_members",), 4: ("candidate_scores",)},
+}
+
 
 def _chart_index(pack: Dict) -> Dict[int, Dict]:
     """`CX_workstream.charts` 를 명세 번호로 찾을 수 있게 만든다.
@@ -837,7 +855,23 @@ def _attach_charts(pages: List[Dict], pack: Dict, workstream: str) -> List[Dict]
             if i not in used and by_index[i].get("drawable")]
 
 
-def _finalize(filled: Dict[int, Dict], pack: Dict, workstream: str = "CORP-R") -> Dict:
+def _attach_tables(pages: List[Dict], built: List[Dict], workstream: str) -> List[str]:
+    """장마다 `table_keys` 를 붙이고, **아무 장에도 못 붙은 표의 key 를 돌려준다.**
+
+    차트와 같은 규칙이다 (`_attach_charts`) — 붙지 않은 것을 조용히 버리지 않는다.
+    """
+    by_key = {t.get("key"): t for t in built if t.get("drawable")}
+    mapping = TABLE_SLOTS.get(workstream, {})
+    used: set = set()
+    for page in pages:
+        keys = [k for k in mapping.get(page.get("slot"), ()) if k in by_key]
+        page["table_keys"] = keys
+        used.update(keys)
+    return [k for k in by_key if k not in used]
+
+
+def _finalize(filled: Dict[int, Dict], pack: Dict, workstream: str = "CORP-R",
+              analysis: Optional[Dict] = None) -> Dict:
     """밀도 조정 — 빈 슬롯을 정해진 순서대로 합치고 번호를 매긴다.
 
     합치는 순서는 워크스트림마다 다르다 (각 하네스설계서). CORP-R 은 §6.2,
@@ -863,6 +897,11 @@ def _finalize(filled: Dict[int, Dict], pack: Dict, workstream: str = "CORP-R") -
 
     # 차트를 장에 붙인다 (M8 · N84). 붙을 자리가 없는 차트는 부록으로 넘긴다.
     extra_charts = _attach_charts(pages, pack, workstream)
+    # 표도 같은 방식으로 붙인다 (M8 · N87). **본문(`body`)은 건드리지 않는다** —
+    # 그래야 이번 변경이 H10 증거 추적성 점수를 움직이지 않는다.
+    built_tables = tables.build(pack, analysis
+                                or (pack.get("CX_workstream") or {}).get("analysis") or {})
+    extra_tables = _attach_tables(pages, built_tables, workstream)
 
     missing = [s["slot"] for s in layout["slots"] if s["slot"] not in filled]
     return {
@@ -875,6 +914,8 @@ def _finalize(filled: Dict[int, Dict], pack: Dict, workstream: str = "CORP-R") -
         "merged": merged_notes,
         "empty_slots": missing,
         "extra_chart_ids": [c.get("id", "") for c in extra_charts],
+        "tables": built_tables,
+        "extra_table_keys": extra_tables,
         "policy": (f"{layout['policy_note']} · {layout['kind']}. "
                    "15장은 상한이지 목표가 아니다 — 자료 없는 장을 만들지 않는다."),
         "generated_at": contracts.now_kst(),
@@ -923,6 +964,111 @@ def _chart_markdown(chart: Dict, heading: str = "") -> List[str]:
     return lines
 
 
+def _table_markdown(table: Dict) -> List[str]:
+    """표 하나를 마크다운으로 낸다 (M8 · N87)."""
+    lines: List[str] = ["", f"**{table.get('title', '')}**"]
+    if not table.get("drawable"):
+        return lines + ["", f"> ⚠️ 이 표는 만들지 못했다 — {table.get('reason', '')}"]
+    head = table.get("head") or []
+    rows = table.get("rows") or []
+    if not head or not rows:
+        return lines + ["", "> ⚠️ 표에 실을 값이 없다"]
+    # 숫자 칸은 오른쪽 정렬 — 자릿수가 맞아야 세로로 견줄 수 있다
+    start = table.get("align_right_from", 1)
+    align = ["---" if i < start else "---:" for i in range(len(head))]
+    lines += ["",
+              "| " + " | ".join(str(h) for h in head) + " |",
+              "|" + "|".join(align) + "|"]
+    lines += ["| " + " | ".join(str(c) for c in row) + " |" for row in rows]
+    if table.get("note"):
+        lines += ["", f"> ⚠️ {table['note']}"]
+    if table.get("data_ids"):
+        ids = table["data_ids"]
+        shown = " · ".join(ids[:8]) + (f" 외 {len(ids) - 8}건" if len(ids) > 8 else "")
+        lines.append(f"근거 데이터: {shown}")
+    if table.get("basis"):
+        lines.append(f"기준: {table['basis']}")
+    return lines
+
+
+def _headline_markdown(headline: Dict) -> List[str]:
+    """표지를 마크다운으로 낸다 (M8 · N86).
+
+    **판정을 `BUY` 로 바꾸지 않는다.** `headline.py` 가 실은 우리 판정을 그대로 찍는다.
+    """
+    if not headline or not (headline.get("verdict") or {}).get("label"):
+        return []
+    verdict = headline["verdict"]
+    lines = ["---", "", "## 표지 — 판정과 핵심 수치", "",
+             f"### {verdict.get('kind', '')}: **{verdict.get('label', '')}**", ""]
+    if verdict.get("ai_proposal"):
+        lines += [f"> {verdict.get('human_decision', '')}", ""]
+
+    metrics = headline.get("metrics") or []
+    if metrics:
+        lines += ["| 항목 | 값 | 설명 |", "|---|---:|---|"]
+        for metric in metrics:
+            unit = f" {metric['unit']}" if metric.get("unit") else ""
+            lines.append(f"| {metric.get('label','')} | {metric.get('text','')}{unit} "
+                         f"| {metric.get('sub','')} |")
+        lines.append("")
+    for label, key in (("판단 근거", "reasons"), ("조건 · 남은 것", "conditions")):
+        if verdict.get(key):
+            lines.append(f"**{label}**")
+            lines += [f"- {item}" for item in verdict[key]]
+            lines.append("")
+    if verdict.get("caveat"):
+        lines += [f"> ⚠️ {verdict['caveat']}", ""]
+
+    scenarios = headline.get("scenarios") or {}
+    columns = scenarios.get("columns") or []
+    if columns and scenarios.get("kind") == "price":
+        fields = scenarios.get("fields") or []
+        lines += ["### 시나리오 (Bear · Base · Bull)", "",
+                  "| | " + " | ".join(f"**{c['name']}** ({c['label']})" for c in columns) + " |",
+                  "|---|" + "|".join(["---"] * len(columns)) + "|"]
+        for key, label in fields:
+            lines.append(f"| {label} | "
+                         + " | ".join(str(c.get(key, "")) for c in columns) + " |")
+        lines += ["", f"> {scenarios.get('note', '')}", ""]
+    elif columns and scenarios.get("kind") == "condition":
+        lines += ["### 시나리오 (Bear · Base · Bull)", ""]
+        horizons = [cell["horizon"] for cell in (columns[0].get("cells") or [])]
+        lines += ["| 기간 | " + " | ".join(f"**{c['name']}** ({c['label']})"
+                                           for c in columns) + " |",
+                  "|---|" + "|".join(["---"] * len(columns)) + "|"]
+        for index, horizon in enumerate(horizons):
+            row = []
+            for column in columns:
+                cell = (column.get("cells") or [{}])[index] if index < len(column.get("cells") or []) else {}
+                text = str(cell.get("condition", ""))
+                if cell.get("watch"):
+                    text += f" (지켜볼 것: {cell['watch']})"
+                row.append(text)
+            lines.append(f"| {horizon} | " + " | ".join(row) + " |")
+        lines += ["", f"> {scenarios.get('note', '')}", ""]
+    elif scenarios.get("note"):
+        lines += [f"> {scenarios['note']}", ""]
+
+    axes = headline.get("axes") or []
+    if axes:
+        evaluation = headline.get("evaluation") or {}
+        lines += [f"### 품질 평가 9축 — {evaluation.get('total', '—')}/100 "
+                  f"({evaluation.get('grade', '—')})", "",
+                  "| 평가축 | 점수 | 배점 | 달성 | 세부 |", "|---|---:|---:|---:|---|"]
+        for axis in axes:
+            lines.append(f"| {axis['axis']} | {axis['score_text']} | {axis['max']} "
+                         f"| {axis['pct'] if axis['pct'] is not None else '—'}% "
+                         f"| {axis['why']} |")
+        lines.append("")
+        for item in evaluation.get("critical") or []:
+            lines.append(f"> ⚠️ 중대 결함 — {item}")
+        if evaluation.get("critical"):
+            lines.append("")
+    lines += [f"*{headline.get('disclaimer', '')}*", ""]
+    return lines
+
+
 def to_markdown(pack: Dict, report: Dict) -> str:
     """페이지 계약 → GIC 양식 마크다운."""
     charter = pack.get("C0_charter", {})
@@ -939,6 +1085,10 @@ def to_markdown(pack: Dict, report: Dict) -> str:
 
     chart_by_id = {c.get("id", ""): c
                    for c in (pack.get("CX_workstream") or {}).get("charts") or []}
+    table_by_key = {t.get("key", ""): t for t in (report.get("tables") or [])}
+
+    # 표지 — 판정 · 핵심 수치 · 시나리오 · 9축 (M8 · N86). H11 이 팩에 실어 둔다.
+    lines += _headline_markdown((pack.get("CX_workstream") or {}).get("headline") or {})
 
     for page in report["pages"]:
         lines.append(f"## {page['page']}. {page['title']}")
@@ -955,6 +1105,10 @@ def to_markdown(pack: Dict, report: Dict) -> str:
         elif page.get("visual"):
             lines.append("")
             lines.append(f"*차트: {page['visual']} — 이 장에는 그릴 계열이 없다*")
+        # 표 (M8 · N87) — 본문 불릿이 아니라 별도 자리다
+        for key in page.get("table_keys") or []:
+            if key in table_by_key:
+                lines += _table_markdown(table_by_key[key])
 
         card = page.get("interpretation") or {}
         if card:
@@ -983,6 +1137,16 @@ def to_markdown(pack: Dict, report: Dict) -> str:
     # 운영 부록 — 공통계약 §14 "Evidence Ledger 전체는 부록으로 분리할 수 있다"
     # 차트 부록 — 어느 장에도 못 붙은 차트 (M8 · N84).
     # **버리지 않는다.** CORP-TP 는 명세가 6건인데 차트를 놓는 장이 3개뿐이라 실제로 남는다.
+    extra_table_keys = [k for k in (report.get("extra_table_keys") or [])
+                        if k in table_by_key]
+    if extra_table_keys:
+        lines += ["---", "", "## 부록 · 장에 붙지 않은 표", "",
+                  f"아래 {len(extra_table_keys)}개는 만들었으나 놓을 장이 양식에 없다. "
+                  "버리지 않고 여기 싣는다.", ""]
+        for key in extra_table_keys:
+            lines += _table_markdown(table_by_key[key])
+        lines.append("")
+
     extra_ids = [i for i in (report.get("extra_chart_ids") or []) if i in chart_by_id]
     if extra_ids:
         lines += ["---", "",
@@ -1002,6 +1166,8 @@ def to_markdown(pack: Dict, report: Dict) -> str:
         "---", "",
         "## 부록 · 운영 기록",
         "",
+        f"- 표 {len(report.get('tables') or [])}개 · 실은 것 "
+        f"{len([t for t in (report.get('tables') or []) if t.get('drawable')])}개",
         f"- 차트 명세 {len(charts_list)}건 · 그린 것 {len(drawable)}건"
         + (f" · 그리지 못한 것 {len(charts_list) - len(drawable)}건"
            if len(charts_list) != len(drawable) else ""),

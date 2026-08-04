@@ -763,3 +763,82 @@ code { font-family: var(--mono); font-size: 0.92em; background: var(--surface-2)
   .state-row .st-note { grid-column: 2 / -1; }
   .drill { width: 100%; }
 }
+
+/* ── 리포트 표지 · 표 · 9축 (M8 · 변경노트 N86 · N87) ─────────
+ *
+ * 규칙 (U3 · dataviz 스킬)
+ *   · 9축 막대는 **한 색**이고 상태만 얹는다. 축마다 색을 주면 "색이 아홉인데
+ *     이야기는 숫자 하나" 라는 전형적 오답이 된다. 트랙은 같은 색의 옅은 단계다.
+ *   · 색만으로 방향을 말하지 않는다 — 막대 옆에 늘 숫자가, 시나리오에는 화살표가 붙는다.
+ *   · 상태색(--ok/--warn/--error)은 예약색이라 계열 색으로 재사용하지 않는다.
+ */
+.rp-headline {
+  padding: var(--sp-4); margin-bottom: var(--sp-4);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.rp-hl-top { display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-2); }
+.rp-hl-kind { font-size: var(--t-xs); color: var(--muted); }
+.rp-hl-verdict { margin-top: 4px; font-size: var(--t-lg); }
+.rp-hl-target { font-size: var(--t-md); font-weight: 600; text-align: right; }
+.rp-hl-human { margin: 0 0 var(--sp-3); font-size: var(--t-sm); color: var(--warn); }
+/* 등락 방향 — 국내 관행(상승 빨강·하락 파랑). 부호를 늘 함께 찍으므로 색은 보조 채널이다 */
+.rp-headline .tile-value.up { color: var(--up); }
+.rp-headline .tile-value.down { color: var(--down); }
+.rp-headline .tile-value.good { color: var(--ok); }
+.rp-headline .tile-value.warning { color: var(--warn); }
+.rp-headline .tile-value.serious { color: var(--error); }
+.rp-headline .tile-value em { margin-left: 3px; font-style: normal; font-size: var(--t-sm);
+  font-weight: 400; color: var(--muted); }
+.rp-hl-list { margin-bottom: var(--sp-2); font-size: var(--t-sm); }
+.rp-hl-list-label { color: var(--muted); font-size: var(--t-xs); }
+.rp-hl-list ul { margin: 2px 0 0; padding-left: 18px; line-height: 1.65; }
+.rp-hl-foot { margin: var(--sp-3) 0 0; padding-top: var(--sp-2);
+  border-top: 1px solid var(--border-soft); font-size: var(--t-xs); color: var(--muted); }
+
+/* 시나리오 3칼럼 — 모바일에서는 세로로 쌓인다 */
+.rp-scenarios { margin-top: var(--sp-4); }
+.rp-scenarios h4, .rp-axes h4 { margin: 0 0 var(--sp-2); font-size: var(--t-md); }
+.rp-scn-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: var(--sp-3); }
+.rp-scn { padding: var(--sp-3); background: var(--surface-2);
+  border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
+  border-top: 3px solid var(--flat); }
+.rp-scn.up { border-top-color: var(--up); }
+.rp-scn.down { border-top-color: var(--down); }
+.rp-scn-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: var(--sp-2);
+  font-size: var(--t-md); }
+.rp-scn-arrow { font-size: 11px; }
+.rp-scn.up .rp-scn-arrow { color: var(--up); }
+.rp-scn.down .rp-scn-arrow { color: var(--down); }
+.rp-scn.flat .rp-scn-arrow { color: var(--flat); }
+.rp-scn dl { margin: 0; font-size: var(--t-xs); line-height: 1.6; }
+.rp-scn dt { color: var(--muted); }
+.rp-scn dd { margin: 0 0 6px; }
+
+/* 9축 가로 막대 (메터) — 트랙은 채움과 같은 색의 옅은 단계다 */
+.rp-axes { margin-top: var(--sp-4); }
+.rp-axis { display: grid; grid-template-columns: minmax(120px, 1fr) 3fr auto;
+  align-items: center; gap: var(--sp-2); margin-bottom: 2px; font-size: var(--t-sm); }
+.rp-axis-name { color: var(--text); }
+.rp-axis-track { height: 8px; border-radius: 4px; background: var(--accent-soft); overflow: hidden; }
+.rp-axis-fill { display: block; height: 100%; border-radius: 4px; background: var(--accent); }
+.rp-axis-fill.warning { background: var(--warn); }
+.rp-axis-fill.serious { background: var(--error); }
+.rp-axis-num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.rp-axis-num em { font-style: normal; color: var(--muted); }
+.rp-axis-why { margin: 0 0 var(--sp-2); padding-left: 2px;
+  font-size: var(--t-xs); color: var(--muted); line-height: 1.55; }
+
+/* 리포트 표 — 본문이 아니라 별도 자리다 (linkcheck 가 세지 않는다) */
+.rp-table { margin-top: var(--sp-3); }
+.rp-table h4 { margin: 0 0 var(--sp-2); font-size: var(--t-md); }
+.rp-table table { font-size: var(--t-sm); }
+.rp-table td.num, .rp-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 860px) {
+  .rp-hl-top { flex-direction: column; }
+  .rp-hl-target { text-align: left; }
+  .rp-axis { grid-template-columns: 1fr auto; }
+  .rp-axis-track { grid-column: 1 / -1; }
+}

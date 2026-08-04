@@ -30,9 +30,10 @@ from typing import Callable, Dict, List, Optional
 
 from ...clients import dart_data, dart_report, hf_data
 from ...core import parallel
-from ...repositories import industry_store, snapshot_store
+from ...repositories import industry_store, report_index, snapshot_store
 from .. import ts_service
-from . import charts, contracts, export_md, ledger, linkcheck, narrative, plan, redteam
+from . import (charts, contracts, export_md, headline, ledger, linkcheck,
+               narrative, plan, redteam)
 from .knowledge import financials, macro, valuation
 from .workstreams import corp_r, corp_tp, ind_r, ind_tp
 
@@ -513,12 +514,54 @@ def _h02_corp(pack: Dict, request: Dict) -> Dict:
     if elapsed > H02_BUDGET_SECONDS:
         allowed, why = False, (f"필수 수집에 {elapsed:.0f}초가 걸려 건너뛴다 "
                                f"(예산 {H02_BUDGET_SECONDS}초)")
-    if not allowed:
+
+    # ★ **원문 색인을 먼저 본다** (M8 · 변경노트 N85).
+    #
+    #   배포본이 원문을 못 받는 이유는 DART 조회가 아니라 **0.8MB ZIP 내려받기**였다
+    #   (N41). 그 내려받기를 빌드타임으로 옮겨 `data/report_index.db` 에 넣어 두었으므로
+    #   런타임에는 **네트워크 0회 · 0ms** 로 같은 값을 집을 수 있다.
+    #
+    #   그래서 `_report_document_allowed` 가 False 를 줘도 — 즉 배포본이어도 — 색인에
+    #   있으면 slot 4·5·7 이 산다. 색인에 없는 종목만 예전 규칙대로 간다.
+    #
+    #   결정론(§1.1)은 그대로다 — 색인은 빌드타임에 얼어 있고 **종목코드로 직접** 집는다.
+    #   대신 **언제 얼린 것인지**를 근거에 적어 오래된 것을 오래되었다고 말한다.
+    indexed = report_index.facts(code) if report_index.available() else {"available": False}
+    if indexed.get("available"):
+        _stash(pack, "report_facts", indexed)
+        evidence_id = ledger.add_evidence(
+            pack, claim=f"{name} {indexed.get('report_name')} 본문",
+            source="DART-사업보고서", url=indexed.get("url", ""),
+            published=indexed.get("rcept_date", ""),
+            location=(f"접수번호 {indexed.get('rcept_no')} · 본문 {indexed.get('size_mb')}MB "
+                      f"· 원문 색인 {indexed.get('indexed_at', '')} 기준"),
+            directness="직접", confidence="high",
+            reason="빌드타임에 미리 받아 둔 사업보고서 원문이다 (네트워크 왕복 없음)")
+        result["evidence_ids"].append(evidence_id)
+        for key, label in (("segments", "부문별 매출"), ("market_share", "시장점유율"),
+                           ("capacity", "생산능력"), ("rnd", "연구개발")):
+            block = indexed.get(key, {})
+            if not block.get("found"):
+                gap = contracts.add_gap(
+                    pack, "G-DATA", f"{label} (사업보고서)",
+                    block.get("reason", "찾지 못했다"),
+                    "해당 장을 자료 없이 낸다", "사업보고서를 사람이 확인한다",
+                    severity="low", owner="EVID")
+                result["gap_ids"].append(gap)
+        # 원문을 **봤다.** 네트워크로 받았는지 색인에서 꺼냈는지는 값이 같으므로
+        # 신뢰도를 가르지 않는다 — 대신 위 `location` 이 언제 얼린 것인지 말한다.
+        allowed = True
+        why = f"원문 색인에서 꺼냈다 ({indexed.get('indexed_at', '')} 기준 · 네트워크 0회)"
+    elif not allowed:
+        # 색인을 봤는데 없었다면 그 사유도 함께 남긴다 (왜 없는지가 곧 Gap 의 내용이다)
+        if indexed.get("reason"):
+            why = f"{why} / {indexed['reason']}"
         _stash(pack, "report_facts", {"available": False, "reason": why})
         gap = contracts.add_gap(
             pack, "G-DATA", "사업보고서 원문 (부문별 매출 · 점유율 · 생산능력)", why,
             "slot 4·5·7 을 자료 없이 낸다 — 피어 안 순위로 대신한다",
-            "로컬에서 돌리거나 options.include_report_document=true 로 켠다",
+            "로컬에서 돌리거나 options.include_report_document=true 로 켠다 · "
+            "색인을 다시 만들려면 `python3 scripts/build_report_index.py`",
             severity="medium", owner="EVID")
         result["gap_ids"].append(gap)
         contracts.downgrade(result, f"사업보고서 원문을 건너뛰었다 — {why}")
@@ -536,6 +579,7 @@ def _h02_corp(pack: Dict, request: Dict) -> Dict:
         #     원문 ON   E- 23  (…20 재무제표 · 21 사업보고서 · 22 일봉 · 23 스냅샷)
         #     원문 OFF  E- 20  ← 21·22·23 이 전부 없다. 없어야 하는 것은 21 하나뿐이다
     else:
+        # 색인에 없는 종목인데 원문을 받아도 되는 상황 — 예전처럼 DART 에서 직접 받는다
         try:
             # 공시 목록을 이미 받아 뒀다 — 사업보고서를 찾겠다고 **다시 부르지 않는다**.
             # (배포본에서 DART 한 번이 9초다. 같은 목록을 두 번 받으면 그만큼 그냥 버린다)
@@ -2186,6 +2230,17 @@ def h11_complete(pack: Dict, request: Dict) -> Dict:
     evaluation = _stashed(pack, "evaluation") or {}
     report = _stashed(pack, "report") or {}
     logs = pack.get("logs", {})
+
+    # 리포트 표지 — 판정 · 핵심 수치 · 3칼럼 시나리오 · 9축 (M8 · 변경노트 N86).
+    #
+    # **왜 H11 인가**: 표지는 `analysis`(H04) 와 `evaluation`(H10) 을 **둘 다** 읽는다.
+    # H09 조립 시점에는 9축이 아직 없고, H10 시점에는 표지가 평가 대상이 아니다.
+    # 둘 다 끝나 있는 첫 자리가 여기다.
+    #
+    # **새 값을 만들지 않는다** — 팩에 이미 있는 값을 한 모양으로 모으기만 한다.
+    # 그래서 H10 점수도 리포트 장수도 이 코드 때문에 달라지지 않는다.
+    _stash(pack, "headline",
+           headline.build(pack, _stashed(pack, "analysis") or {}, evaluation))
 
     unresolved = [f"{g['id']} {g.get('affected_claim_or_field')}" for g in logs.get("gaps", [])]
     result["verified_result"] = [

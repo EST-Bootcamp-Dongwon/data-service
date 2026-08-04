@@ -203,8 +203,63 @@ function fakePack() {
           note: '', sources: [], data_ids: [],
           drawable: false, reason: '사업보고서에서 부문별 금액을 찾지 못했다' },
       ],
+      // 표지 (M8 · N86) — H11 이 팩에 실어 둔다. 값은 `headline.py` 가 만든 모양 그대로다.
+      headline: {
+        workstream_id: 'CORP-R', target: '삼성전자 (005930)', as_of: '2026-08-04',
+        verdict: {
+          label: '프리미엄', kind: '밸류에이션 스크리닝', tone: 'warning',
+          basis: '08강 08.md', reasons: ['매출이 성장 중이다 (+4.5%)'],
+          conditions: ['피어 대비 +32.4% — 뚜렷한 디스카운트가 아니다'],
+          ai_proposal: true, human_decision: '사람 승인 필요 — 투자 판단이 아니라 스크리닝 결과다',
+          caveat: '투자 권유가 아니라 밸류에이션 연습 결과다.',
+        },
+        // **부호를 감추지 않는다** — 실측 삼성전자가 -24.5% 다 (N86 의 핵심 규칙)
+        metrics: [
+          { label: '가치 범위 (중앙)', value: 198186, text: '198,186', unit: '원',
+            sub: '밴드 158,549 ~ 237,823원', tone: '' },
+          { label: '현재가 대비', value: -24.5, text: '-24.5', unit: '%',
+            sub: '현재가 262,500원 기준', tone: 'down' },
+        ],
+        scenarios: {
+          kind: 'price', unit: '원',
+          fields: [['target_text', '목표'], ['prob_text', '확률']],
+          columns: [
+            { name: 'Bear', label: '하락', tone: 'down', target_text: '192,818', prob_text: '4.9%' },
+            { name: 'Base', label: '횡보', tone: 'flat', target_text: '266,630', prob_text: '94.9%' },
+            { name: 'Bull', label: '상승', tone: 'up', target_text: '372,325', prob_text: '0.2%' },
+          ],
+          note: '경계는 기술적이고 확률은 통계적이다',
+        },
+        axes: [
+          { axis: '대상·범위 정합성', max: 10, score: 10, score_text: '10.0', ratio: 1,
+            pct: 100, tone: 'good', why: '대상 확정 삼성전자', parts: [] },
+          { axis: '증거 추적성', max: 15, score: 12.2, score_text: '12.2', ratio: 0.813,
+            pct: 81.3, tone: 'warning', why: '본문 수치 79개 중 34개', parts: [] },
+          { axis: '해석 품질', max: 20, score: 12, score_text: '12.0', ratio: 0.6,
+            pct: 60, tone: 'serious', why: '대안 설명이 얕다', parts: [] },
+        ],
+        evaluation: { total: 94.5, grade: 'A', critical: [] },
+        note: '',
+        disclaimer: '표지는 본문에 있는 값을 모아 보인 것이다 — 여기서 새로 만든 수치는 없다.',
+      },
       report: {
         page_count: 2, max_pages: 15, workstream_id: 'CORP-R', format: '고정양식',
+        // 표 (M8 · N87) — `page.body` 가 **아니다.** 그래서 본문 수치 개수가 달라지지 않는다.
+        tables: [
+          { key: 'financial_years', title: '연도별 재무 (2021~2025)', drawable: true, reason: '',
+            head: ['항목 (조원)', '2024', '2025'], align_right_from: 1,
+            rows: [['매출액', '300.9', '333.6'], ['영업이익', '32.7', '43.6']],
+            note: 'CAGR 4.5% (4년) · 성장 둔화', basis: 'DART 연결재무제표',
+            data_ids: ['D-CORP-R-0001'] },
+          { key: 'peer_compare', title: '피어 비교', drawable: false,
+            reason: '피어를 고르지 못했다', head: [], rows: [], note: '', basis: '',
+            data_ids: [], align_right_from: 1 },
+          { key: 'financial_ratios', title: '재무비율 (최신 연도)', drawable: true, reason: '',
+            head: ['지표', '값'], align_right_from: 1, rows: [['ROE', '10.36']],
+            note: '', basis: '08강 06.md', data_ids: [] },
+        ],
+        // 어느 장에도 못 붙은 **그릴 수 있는** 표 (차트와 같은 규칙)
+        extra_table_keys: ['financial_ratios'],
         merged: ['slot 4 를 slot 3 에 합쳤다 (자료 없음)'], empty_slots: [4],
         policy: 'GIC v15 CORP-R 하네스설계서 §6.1 순서',
         // 장에 못 붙은 **그릴 수 있는** 차트 — `_attach_charts` 가 이렇게 돌려준다.
@@ -213,12 +268,14 @@ function fakePack() {
         pages: [
           { page: 1, slot: 1, title: 'Cover', key_message: '삼성전자 — 저평가 후보',
             body: ['분석 기준일 2026-08-02', '매출 80.1조 · 영업이익 6.6조'],
-            visual: '', visual_id: '', interpretation: {}, sources: ['DART 사업보고서 2024'],
+            visual: '', visual_id: '', table_keys: [], interpretation: {},
+            sources: ['DART 사업보고서 2024'],
             confidence: 'medium', human_decision: 'AI 제안 — 사람 승인 전',
             presenter_note: '', merged_from: [], gaps: [] },
           { page: 2, slot: 3, title: '회사 개요', key_message: '반도체와 스마트폰',
             body: ['영업이익률 8.2% 는 PER 밴드와 함께 읽는다', '검사 5건 중 통과 4'],
-            visual: '재무 시계열', visual_id: 'V-CORP-R-0002', interpretation: {}, sources: [],
+            visual: '재무 시계열', visual_id: 'V-CORP-R-0002', table_keys: ['financial_years'],
+            interpretation: {}, sources: [],
             confidence: 'high', human_decision: 'AI 제안 — 사람 승인 전',
             presenter_note: '', merged_from: [4], gaps: [] },
         ],
@@ -403,6 +460,45 @@ async function researchChecks() {
       ['못 그린 차트를 숨기지 않고 사유를 밝힌다',
         /부문별 금액을 찾지 못했다/.test(doc.body.innerHTML)],
       ['그린 수와 못 그린 수를 함께 센다', /차트 <b>4개<\/b> 중 <b>3개<\/b>/.test(doc.body.innerHTML)],
+
+      // ── 표지 (M8 · N86) ──
+      ['표지가 우리 판정을 낸다 (BUY 를 만들지 않는다)',
+        /밸류에이션 스크리닝/.test(doc.body.innerHTML)
+        && /프리미엄/.test(doc.body.innerHTML)
+        && !/\bBUY\b/.test(doc.body.innerHTML)],
+      ['표지가 사람 승인 문구를 함께 낸다',
+        /사람 승인 필요/.test(doc.querySelector('.rp-hl-human')?.textContent || '')],
+      ['현재가 대비의 **음수 부호를 감추지 않는다**',
+        /-24\.5/.test(doc.querySelector('.rp-headline .tiles')?.innerHTML || '')],
+      ['3칼럼이 Bear · Base · Bull 순으로 나온다',
+        [...doc.querySelectorAll('.rp-scn-head b')].map((e) => e.textContent).join(',')
+          === 'Bear,Base,Bull'],
+      ['시나리오가 색만으로 방향을 말하지 않는다 (화살표를 함께 찍는다)',
+        [...doc.querySelectorAll('.rp-scn-arrow')].every((e) => /[▲▼▬]/.test(e.textContent))],
+      ['9축이 막대와 숫자를 함께 낸다',
+        doc.querySelectorAll('.rp-axis-fill').length === 3
+        && doc.querySelectorAll('.rp-axis-num').length === 3],
+      ['9축 막대가 축마다 다른 색을 쓰지 않는다 (상태만 얹는다)',
+        [...doc.querySelectorAll('.rp-axis-fill')]
+          .every((e) => ['', 'good', 'warning', 'serious']
+            .includes(e.className.replace('rp-axis-fill', '').trim()))],
+      ['9축 채움 너비가 달성률과 같다',
+        (doc.querySelectorAll('.rp-axis-fill')[1] || {}).style?.width === '81.3%'],
+
+      // ── 표 (M8 · N87) ──
+      ['표가 장에 붙어 나온다', /연도별 재무 \(2021~2025\)/.test(doc.body.innerHTML)],
+      ['표의 숫자 칸이 오른쪽 정렬이다',
+        doc.querySelectorAll('.rp-table td.num').length > 0],
+      ['못 만든 표를 숨기지 않고 사유를 밝힌다',
+        /피어를 고르지 못했다/.test(doc.body.innerHTML)],
+      ['장에 못 붙은 표를 부록으로 낸다', /장에 붙지 않은 표/.test(doc.body.innerHTML)],
+      ['실은 표 수와 못 만든 표 수를 함께 센다',
+        /표 <b>3개<\/b> 중 <b>2개<\/b>/.test(doc.body.innerHTML)],
+      // ★ 이것이 N87 의 핵심 계약이다 — 표는 본문이 아니므로 수치 개수를 바꾸면 안 된다.
+      //   깨지면 H10 증거 추적성 5점이 데이터와 무관하게 움직인다.
+      ['표가 본문 수치 개수를 바꾸지 않는다',
+        !/rp-body/.test(doc.querySelector('.rp-table')?.closest('ul')?.className || 'x')
+        && doc.querySelectorAll('.rp-table .rp-body').length === 0],
     ];
     checks.forEach(([label, ok]) => {
       if (!ok) failures++;
