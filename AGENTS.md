@@ -1,4 +1,4 @@
-# AGENTS.md — data-service
+﻿# AGENTS.md — data-service
 
 > 공통 규칙 정본: `../quant-contract/AGENTS.md`
 > 이 파일에는 **이 모듈에만 해당하는 것**만 적는다. 공통 규칙을 복사하지 않는다.
@@ -19,7 +19,7 @@
 | 기호 | 이전 이름 | 현재 |
 |---|---|---|
 | ④ | `api-test` | **`projects/data-service`** |
-| ① | `investment-portfolio-site` | **`projects/dashboard`** |
+| ① | `investment-portfolio-site` | **`projects/investment-dashboard`** |
 
 ### 읽기 전용 — 수정 금지
 
