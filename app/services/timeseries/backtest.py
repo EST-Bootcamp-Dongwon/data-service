@@ -25,7 +25,6 @@ ARIMA 의 RMSE 가 얼마인지는 그 자체로 의미가 없다. **아무것�
 
 from __future__ import annotations
 
-import math
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -90,7 +89,6 @@ def walk_forward(prices: Sequence, order: Optional[Tuple[int, int, int]] = None,
     horizon = max(1, int(horizon))
     folds = max(1, int(folds))
 
-    needed = min_train + horizon * folds
     if n < min_train + horizon + 1:
         return {
             "available": False,

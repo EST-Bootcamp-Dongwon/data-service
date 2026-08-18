@@ -14,12 +14,12 @@
 - **자른 것은 반드시 알린다.** 시리즈·행을 잘랐으면 `meta` 에 몇 개를 잘랐는지 담는다.
 """
 
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.clients import kosis_data as api        # 외부 연동 (KOSIS 호출)
+from app.clients import kosis_data as api  # 외부 연동 (KOSIS 호출)
 
 router = APIRouter(prefix="/api/kosis", tags=["KOSIS 통계 실험실"])
 
@@ -134,7 +134,7 @@ def _guard(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except api.KosisError as error:
-        raise HTTPException(status_code=error.status, detail=str(error))
+        raise HTTPException(status_code=error.status, detail=str(error)) from error
 
 
 # ==================================================

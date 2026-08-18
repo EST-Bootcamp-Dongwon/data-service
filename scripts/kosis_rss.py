@@ -133,7 +133,7 @@ def parse_feed(xml_text: str) -> list[dict]:
   try:
     root = ET.fromstring(xml_text)
   except ET.ParseError as error:
-    raise RuntimeError(f"RSS 파싱 실패: {error}")
+    raise RuntimeError(f"RSS 파싱 실패: {error}") from error
 
   channel = root.find("channel")
   if channel is None:
@@ -433,7 +433,9 @@ if __name__ == "__main__":
     raise SystemExit(main())
   except KeyboardInterrupt:
     print("\n중단했습니다.", file=sys.stderr)
-    raise SystemExit(130)
+    # 사용자가 일부러 끊은 것이라 원인 예외를 체인으로 달 이유가 없다.
+    raise SystemExit(130) from None
   except RuntimeError as error:
     print(f"오류: {error}", file=sys.stderr)
-    raise SystemExit(1)
+    # 메시지는 위에서 이미 보여 줬다. 추적을 남기되 화면을 두 번 채우지 않는다.
+    raise SystemExit(1) from error

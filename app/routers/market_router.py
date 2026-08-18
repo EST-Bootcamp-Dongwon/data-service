@@ -12,8 +12,8 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
-from app.repositories import krx_store as store   # 저장소 (SQLite 캐시)
-from app.services import market_data as service   # 서비스 (분석 계산)
+from app.repositories import krx_store as store  # 저장소 (SQLite 캐시)
+from app.services import market_data as service  # 서비스 (분석 계산)
 
 router = APIRouter(prefix="/api", tags=["시장 분석"])
 

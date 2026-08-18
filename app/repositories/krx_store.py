@@ -16,19 +16,19 @@ KRX OpenAPI 는 **하루치 전 종목 스냅샷**만 준다. 캔들 차트나 �
 
 from __future__ import annotations
 
-import os                                       # 환경변수 · 쓰기 권한 확인
-import sqlite3                                   # 파일 기반 DB (표준 라이브러리)
-import tempfile                                  # 읽기 전용 환경에서 쓸 임시 폴더
-import threading                                 # 쓰기 직렬화용 자물쇠
-import time                                      # 라이브 조회 메모리 캐시 TTL
-from contextlib import contextmanager            # 직접 만드는 with 블록
-from datetime import date, datetime, timedelta
+import os  # 환경변수 · 쓰기 권한 확인
+import sqlite3  # 파일 기반 DB (표준 라이브러리)
+import tempfile  # 읽기 전용 환경에서 쓸 임시 폴더
+import threading  # 쓰기 직렬화용 자물쇠
+import time  # 라이브 조회 메모리 캐시 TTL
+from contextlib import contextmanager  # 직접 만드는 with 블록
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from app.clients import krx_data as api                 # KRX 호출·정규화 (외부 통신 담당)
-from app.core.trading_calendar import today_kst, to_iso, trading_days   # 거래일 계산 (공통 유틸)
-from app.repositories import krx_bundle                 # 배포용 축약본 (원본이 없을 때의 대타)
+from app.clients import krx_data as api  # KRX 호출·정규화 (외부 통신 담당)
+from app.core.trading_calendar import to_iso, today_kst, trading_days  # 거래일 계산 (공통 유틸)
+from app.repositories import krx_bundle  # 배포용 축약본 (원본이 없을 때의 대타)
 
 # 이 파일은 app/repositories/ 안에 있으므로 parents[2] 가 프로젝트 루트다.
 # (parents[0]=repositories, parents[1]=app, parents[2]=프로젝트 루트)

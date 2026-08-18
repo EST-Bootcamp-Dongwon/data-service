@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional
 
 DATA_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "industry_map.json"
 

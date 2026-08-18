@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import html
 import math
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Sequence
 
 # ── 색 (app.css 토큰을 값으로 옮겼다 · 라이트 전용) ──
 INK = "#1c2024"
@@ -431,7 +431,7 @@ def chart_svg(chart: Dict) -> str:
     if not drawer:
         return f'<p class="gap">⚠ `{esc(kind)}` 은 인쇄본에서 그리는 규칙이 아직 없다</p>'
     try:
-        return drawer(chart) or f'<p class="gap">⚠ 그릴 점이 없다</p>'
+        return drawer(chart) or '<p class="gap">⚠ 그릴 점이 없다</p>'
     except Exception as error:      # 차트 하나가 리포트를 죽이지 않는다 (§2-2)
         return f'<p class="gap">⚠ 그리다 실패했다 — {esc(type(error).__name__)}</p>'
 
@@ -695,7 +695,7 @@ td.num,th.num{{text-align:right;font-variant-numeric:tabular-nums}}
 
 def to_html(pack: Dict, report: Dict) -> str:
     """Context Pack + 페이지 계약 → 자체완결 HTML 한 덩어리."""
-    from . import export_md            # DISCLAIMER 한 곳에서만 정의한다
+    from . import export_md  # DISCLAIMER 한 곳에서만 정의한다
 
     charter = pack.get("C0_charter") or {}
     target = charter.get("target") or {}

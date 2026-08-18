@@ -22,15 +22,15 @@ FastAPI 에 의존하지 않는 순수 함수 모음이라 단독으로 실행·
 
 from __future__ import annotations
 
-import json                                              # KRX 응답 파싱
-import re                                                # 날짜 형식 검증
-from pathlib import Path                                 # 파일 경로
+import json  # KRX 응답 파싱
+import re  # 날짜 형식 검증
+from pathlib import Path  # 파일 경로
 from typing import Dict, List, Optional, Tuple
-from urllib.error import HTTPError, URLError             # 네트워크 오류 종류
-from urllib.parse import urlencode                       # 쿼리스트링 생성
-from urllib.request import Request, urlopen              # HTTP 요청 (표준 라이브러리)
+from urllib.error import HTTPError, URLError  # 네트워크 오류 종류
+from urllib.parse import urlencode  # 쿼리스트링 생성
+from urllib.request import Request, urlopen  # HTTP 요청 (표준 라이브러리)
 
-from app.core import secrets                             # 인증키 로딩 (공통)
+from app.core import secrets  # 인증키 로딩 (공통)
 
 # 이 파일은 app/clients/ 안에 있으므로 parents[2] 가 프로젝트 루트다.
 # (parents[0]=clients, parents[1]=app, parents[2]=프로젝트 루트)
@@ -289,7 +289,10 @@ def summarize(items: List[Dict]) -> Dict:
         "total_value": sum(i.get("value") or 0 for i in items),
         "total_volume": sum(i.get("volume") or 0 for i in items),
         "top_value": top_value,
-        "histogram": [{"label": l, "count": c} for l, c in zip(labels, counts)],
+        "histogram": [
+            {"label": label, "count": count}
+            for label, count in zip(labels, counts, strict=False)
+        ],
         "by_market": [{"market": m, **v} for m, v in sorted(by_market.items())],
     }
 

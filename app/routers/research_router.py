@@ -21,7 +21,7 @@
 stage_result 는 GIC 공통계약 §7 의 봉투를 **필드명 그대로** 쓰는데, DTO 로 고정하면
 계약이 바뀔 때 조용히 잘려 나간다.
 """
-from typing import Dict, List, Optional
+from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Path
 

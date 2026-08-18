@@ -11,7 +11,7 @@
 여기서는 **요청 검증 + 응답 형식(DTO) + 예외 → HTTP 상태 코드** 만 담당한다.
 """
 
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
@@ -160,7 +160,7 @@ def stock(
     try:
         data = service.fetch_stock(ticker, months)
     except service.StockError as error:
-        raise HTTPException(status_code=error.status, detail=str(error))
+        raise HTTPException(status_code=error.status, detail=str(error)) from error
 
     # 거시지표는 있으면 얹고, 실패해도 주가 응답 자체는 살린다
     ids = [s for s in (macro or "").split(",") if s.strip()]

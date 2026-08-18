@@ -32,8 +32,16 @@
    `backtest.walk_forward` 는 이기지 못하면 그 사실을 `verdict` 에 적는다 (기획서 D6).
 """
 
-from app.services.timeseries import (backtest, correlogram, decompose, forecast,
-                                     models, numerics, stationarity, transform)
+from app.services.timeseries import (
+                                     backtest,
+                                     correlogram,
+                                     decompose,
+                                     forecast,
+                                     models,
+                                     numerics,
+                                     stationarity,
+                                     transform,
+)
 
 __all__ = ["backtest", "correlogram", "decompose", "forecast",
            "models", "numerics", "stationarity", "transform"]

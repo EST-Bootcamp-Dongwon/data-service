@@ -39,14 +39,12 @@
 
 from __future__ import annotations
 
-import math
 from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
 from app.services.timeseries import transform
-from app.services.timeseries.numerics import (norm_cdf, norm_ppf, norm_sf,
-                                              truncated_mean)
+from app.services.timeseries.numerics import norm_cdf, norm_ppf, norm_sf, truncated_mean
 
 # 시나리오의 지지·저항을 읽는 기간 (거래일). 분기 남짓이라 최근 국면을 대표한다.
 SCENARIO_LOOKBACK = 60
@@ -184,8 +182,8 @@ def interval(model: Dict, horizon: int = 20, alpha: float = 0.05) -> Dict:
 
     return {
         "point": [float(v) for v in center],
-        "lower": [float(c - z * s) for c, s in zip(center, se)],
-        "upper": [float(c + z * s) for c, s in zip(center, se)],
+        "lower": [float(c - z * s) for c, s in zip(center, se, strict=False)],
+        "upper": [float(c + z * s) for c, s in zip(center, se, strict=False)],
         "se": [float(s) for s in se],
         "alpha": alpha,
         "z": z,
@@ -227,7 +225,7 @@ def direction_prob(model: Dict, horizon: int = 20) -> Dict:
     # 하루 단위로도 낸다 — "20일 뒤" 보다 "매일" 이 직관적인 독자가 있다
     daily = [
         float(norm_sf((current - p) / s)) if s > 0 else (1.0 if p > current else 0.0)
-        for p, s in zip(band["point"], band["se"])
+        for p, s in zip(band["point"], band["se"], strict=False)
     ]
 
     return {

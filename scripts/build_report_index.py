@@ -90,8 +90,8 @@ from urllib.request import Request, urlopen
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.clients import dart_report          # noqa: E402
-from app.core import secrets                 # noqa: E402
+from app.clients import dart_report  # noqa: E402
+from app.core import secrets  # noqa: E402
 
 INDEX_DB = PROJECT_ROOT / "data" / "report_index.db"
 STOCK_MASTER = PROJECT_ROOT / "data" / "stock_master.json"
@@ -350,7 +350,7 @@ def build_vectors(resume: bool = False) -> dict:
                 print(f"      ⚠ 배치 {index} 실패 — {error or '응답 길이 불일치'}", flush=True)
                 continue
             conn.executemany("INSERT OR REPLACE INTO vector (code, vec) VALUES (?,?)",
-                             [(code, to_int8(vec)) for (code, _), vec in zip(batch, vectors)])
+                             [(code, to_int8(vec)) for (code, _), vec in zip(batch, vectors, strict=False)])
             conn.commit()
             saved += len(batch)
             if index % 10 == 0 or index == len(batches):
@@ -436,7 +436,7 @@ def main() -> None:
     print(f"사업보고서 원문 색인 — {scope} · {_now_kst()}")
 
     stats = {}
-    print(f"[1/3] 대상 목록 …")
+    print("[1/3] 대상 목록 …")
     picked, skipped = targets(args.limit)
     print(f"      {len(picked):,}곳 (DART 고유번호 없는 {len(skipped):,}곳 제외)")
 

@@ -18,10 +18,10 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
-from app.clients import krx_data as api            # 외부 연동 (KRX 호출)
-from app.repositories import krx_store as store    # 저장소 (SQLite 캐시)
-from app.services import market_data as analysis   # 서비스 (분석 계산)
-from app.core.trading_calendar import to_iso, trading_days   # 공통 유틸 (거래일·KST)
+from app.clients import krx_data as api  # 외부 연동 (KRX 호출)
+from app.core.trading_calendar import to_iso, trading_days  # 공통 유틸 (거래일·KST)
+from app.repositories import krx_store as store  # 저장소 (SQLite 캐시)
+from app.services import market_data as analysis  # 서비스 (분석 계산)
 
 router = APIRouter(prefix="/api/krx", tags=["KRX 일별 시세"])
 
@@ -233,7 +233,7 @@ def get_krx_stocks(
                     f"시세 캐시가 비어 있어 KRX 에 직접 조회했지만 실패했습니다 — {error} "
                     "(로컬에서는 `python3 scripts/fetch_krx.py` 로 캐시를 채울 수 있습니다.)"
                 ),
-            )
+            ) from error
 
     if not items:
         raise HTTPException(

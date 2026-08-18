@@ -101,7 +101,7 @@ def find_gaps(rows: Sequence[Dict],
     calendar_days = _calendar_set(trading_days)
     gaps: List[Dict] = []
 
-    for previous, current in zip(rows, rows[1:]):
+    for previous, current in zip(rows, rows[1:], strict=False):
         start, end = _to_date(previous.get("date", "")), _to_date(current.get("date", ""))
         if not start or not end:
             continue

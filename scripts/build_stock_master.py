@@ -30,7 +30,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE_DIR))
 
-from app.repositories import krx_store as store   # noqa: E402  (경로 설정 뒤에 import)
+from app.repositories import krx_store as store  # noqa: E402  (경로 설정 뒤에 import)
 
 MASTER_PATH = BASE_DIR / "data" / "stock_master.json"
 

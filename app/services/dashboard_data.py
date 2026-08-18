@@ -25,7 +25,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from app.clients import fred_data
 from app.core.trading_calendar import to_iso

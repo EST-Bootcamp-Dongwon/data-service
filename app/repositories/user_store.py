@@ -8,10 +8,9 @@ DB 가 아니라 메모리라서 **서버를 끄면 추가한 사용자도 함�
 나중에 진짜 DB 로 바꿔도 **이 파일만 고치면** 되도록 하기 위함이다.
 """
 
-from typing import Dict, List, Optional
-
 # Mock 사용자의 나이를 무작위로 만들기 위해 사용
 import random
+from typing import Dict, List, Optional
 
 MOCK_USER_COUNT = 30            # 서버 시작 시 만들어 두는 Mock 사용자 수
 MOCK_AGE_RANGE = (18, 60)       # Mock 나이 범위 (양끝 포함)

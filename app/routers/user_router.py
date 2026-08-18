@@ -23,7 +23,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Path, status
 from pydantic import BaseModel, Field
 
-from app.repositories import user_store as store   # 저장소 (메모리 리스트)
+from app.repositories import user_store as store  # 저장소 (메모리 리스트)
 
 # prefix 를 주면 아래 경로 앞에 자동으로 붙는다 ("/users" → "/api/users")
 router = APIRouter(prefix="/api", tags=["사용자"])

@@ -75,7 +75,7 @@ def acf(values: Sequence, nlags: int = 40, alpha: float = 0.05) -> Dict:
     z = norm_ppf(1.0 - alpha / 2.0)
     upper: List[float] = []
     running = 0.0                       # Σ r_j² (앞 시차들의 제곱합)
-    for k, r in enumerate(values_out, start=1):
+    for r in values_out:
         se = math.sqrt((1.0 + 2.0 * running) / n)
         upper.append(z * se)
         running += r * r                # 다음 시차의 띠에 반영된다
@@ -88,7 +88,7 @@ def acf(values: Sequence, nlags: int = 40, alpha: float = 0.05) -> Dict:
         "n": int(n),
         "method": "bartlett",
         "alpha": alpha,
-        "significant_lags": [k for k, r, u in zip(range(1, nlags + 1), values_out, upper)
+        "significant_lags": [k for k, r, u in zip(range(1, nlags + 1), values_out, upper, strict=False)
                              if abs(r) > u],
         "note": "신뢰띠는 Bartlett 공식이라 시차가 커질수록 넓어집니다. "
                 "띠 안쪽 값은 0과 구별되지 않습니다.",
@@ -153,7 +153,7 @@ def pacf(values: Sequence, nlags: int = 40, alpha: float = 0.05) -> Dict:
         "n": int(n),
         "method": "durbin-levinson",
         "alpha": alpha,
-        "significant_lags": [k for k, v in zip(lags, phi_kk) if abs(v) > band],
+        "significant_lags": [k for k, v in zip(lags, phi_kk, strict=False) if abs(v) > band],
         "note": "신뢰띠는 ±z/√n 로 시차와 무관하게 일정합니다. "
                 "띠를 벗어난 마지막 시차가 AR 차수 p 의 후보입니다.",
     }

@@ -31,12 +31,12 @@
 """
 from __future__ import annotations
 
-from statistics import fmean, median
-from typing import Dict, List, Optional, Sequence
+from statistics import median
+from typing import Dict, List, Optional
 
 from ....clients import hf_data, kosis_data
 from ....repositories import industry_store, krx_store, snapshot_store
-from ..knowledge import macro, portfolio, valuation
+from ..knowledge import macro, portfolio
 
 # KOSIS 전산업생산지수 (실측 확인 — 2000~2026 · 월별 · 5계열)
 KOSIS_PRODUCTION = {"org_id": "101", "tbl_id": "DT_1JH20201",
@@ -297,7 +297,7 @@ def market_size(target: Dict, production: Dict) -> Dict:
     TAM/SAM/SOM 은 정의 자체를 못 세우므로 `G-SCOPE` 로 남긴다.
     """
     rows = []
-    caps, revenues = [], []
+    caps, _revenues = [], []
     for member in target.get("members", []):
         snapshot = snapshot_store.get(member.get("code", ""))
         if not snapshot:

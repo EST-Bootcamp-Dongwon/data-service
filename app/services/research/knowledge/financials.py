@@ -230,12 +230,12 @@ def growth_series(values: Sequence[Optional[float]], labels: Sequence[str]) -> D
 
     values 는 **오래된 것부터** 넣는다 (2021 → 2025).
     """
-    clean = [(label, value) for label, value in zip(labels, values) if value is not None]
+    clean = [(label, value) for label, value in zip(labels, values, strict=False) if value is not None]
     if len(clean) < 2:
         return {"available": False, "reason": "연도가 둘 미만이라 성장률을 못 낸다"}
 
     growths = []
-    for (prev_label, prev), (label, value) in zip(clean, clean[1:]):
+    for (prev_label, prev), (label, value) in zip(clean, clean[1:], strict=False):
         rate = None if prev <= 0 else (value / prev - 1) * 100
         growths.append({"period": f"{prev_label}→{label}", "growth": None if rate is None else round(rate, 2)})
 

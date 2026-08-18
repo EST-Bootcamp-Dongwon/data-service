@@ -35,9 +35,9 @@ from datetime import date, datetime, timedelta, timezone
 from statistics import fmean
 from typing import Dict, List, Optional, Sequence
 
-from ....clients import dart_data, hf_data
-from ....repositories import industry_store, snapshot_store
-from ..knowledge import financials, macro, valuation
+from ....clients import hf_data
+from ....repositories import industry_store
+from ..knowledge import financials, macro
 
 KST = timezone(timedelta(hours=9))
 
@@ -165,7 +165,7 @@ def classify_events(rows: Sequence[Dict], window: Dict,
         titles = [e["title"] for e in events[:SENTIMENT_LIMIT]]
         judged = hf_data.sentiment(titles)
         if judged.get("available"):
-            for event, row in zip(events, judged["rows"]):
+            for event, row in zip(events, judged["rows"], strict=False):
                 event["sentiment"] = {"label": row["label"], "score": row["score"]}
             sentiment_summary = {
                 "available": True,

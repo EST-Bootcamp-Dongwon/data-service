@@ -34,7 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.services import semantic_search           # noqa: E402
+from app.services import semantic_search  # noqa: E402
 
 # 질의 → 정답 종목코드. **정답은 여럿일 수 있다.**
 # 코드 옆 이름은 사람이 읽으려고 적은 것이고 채점에는 코드만 쓴다.

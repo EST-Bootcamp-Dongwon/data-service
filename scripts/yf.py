@@ -122,7 +122,7 @@ def plot_stock_movement(ticker_symbol: str, save_path: str = "", english: bool =
     # 3. 값을 못 받은 항목이 있으면 0 으로 두고 그린다 (막대 높이 0 = 데이터 없음)
     values = [p if p is not None else 0 for p in prices]
 
-    import matplotlib.pyplot as plt                    # 폰트 설정을 끝낸 뒤 import 한다
+    import matplotlib.pyplot as plt  # 폰트 설정을 끝낸 뒤 import 한다
 
     plt.figure(figsize=(10, 6))
 
@@ -162,7 +162,7 @@ def plot_stock_movement(ticker_symbol: str, save_path: str = "", english: bool =
     # 6. 터미널에도 같은 값을 찍어 둔다. 차트를 못 띄우는 환경에서도 값은 확인할 수 있다.
     print(f"\n{name} ({quote['ticker']}) · {quote['fetched_at']} · 장 상태 {quote['market_state'] or '-'}")
     # 터미널 출력은 폰트 문제가 없으므로 차트 언어와 무관하게 한국어 라벨로 적는다.
-    for label, price in zip(chart["categories"], prices):
+    for label, price in zip(chart["categories"], prices, strict=False):
         print(f"  {label:<12} {format_price(price, currency) if price is not None else '-':>14} {currency}")
     change = quote["change"]
     if change["diff"] is not None:

@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sqlite3
 import sys
 import time
@@ -296,7 +295,7 @@ def main() -> None:
         raise SystemExit(f"원본 캐시가 없습니다: {SOURCE_DB}\n"
                          "`python3 scripts/fetch_krx.py --days 250` 으로 먼저 채우세요.")
 
-    print(f"[1/2] 파생 JSON (거래일 캘린더 · 시장의 폭) …")
+    print("[1/2] 파생 JSON (거래일 캘린더 · 시장의 폭) …")
     derived = build_derived()
     print(f"      {derived['path']} · {derived['size_kb']}KB · {derived['days']}거래일 "
           f"({derived['first_date']}~{derived['last_date']}) · {derived['elapsed']}초")

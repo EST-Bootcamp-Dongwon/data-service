@@ -18,13 +18,13 @@ KRX 일별매매정보에는 **재무제표가 없다.** PER·PBR·ROE·부채�
 
 from __future__ import annotations
 
-import math                                              # sqrt 등 수학 함수
-import random                                            # 포트폴리오 비중 추첨
-import statistics                                        # 평균·표준편차
+import math  # sqrt 등 수학 함수
+import random  # 포트폴리오 비중 추첨
+import statistics  # 평균·표준편차
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from app.repositories import krx_store as store          # SQLite 캐시 (데이터 공급원)
-from app.core.trading_calendar import round_half_up, to_iso, today_kst
+from app.core.trading_calendar import round_half_up, to_iso
+from app.repositories import krx_store as store  # SQLite 캐시 (데이터 공급원)
 
 # 분석에 쓰는 기본 관측 기간(거래일). 60일 ≒ 3개월.
 DEFAULT_WINDOW = 60
@@ -319,7 +319,7 @@ RISK_FREE_RATE = RISK_FREE_FALLBACK      # 하위 호환 — 옛 이름을 쓰�
 
 def risk_free_rate() -> Dict:
     """무위험수익률을 실측해 온다 (U8). 실패하면 대비값과 그 사실을 함께 돌려준다."""
-    from .research.knowledge import macro          # 순환 import 를 피해 함수 안에서 부른다
+    from .research.knowledge import macro  # 순환 import 를 피해 함수 안에서 부른다
 
     row = macro.risk_free_rate()
     value = row.get("value")

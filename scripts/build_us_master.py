@@ -21,7 +21,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import sys
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -71,7 +70,7 @@ def _fetch(url: str) -> list:
         parts = line.split("|")
         if len(parts) != len(header):
             continue
-        rows.append(dict(zip(header, parts)))
+        rows.append(dict(zip(header, parts, strict=False)))
     return rows
 
 

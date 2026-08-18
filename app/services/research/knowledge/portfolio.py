@@ -59,7 +59,7 @@ def performance(prices: Sequence[float], risk_free: Optional[float] = None,
                            f"(최소 {MIN_OBSERVATIONS}일 — 한 달치로 연 변동성을 말하지 않는다)")}
 
     if risk_free is None:
-        from . import macro                             # 순환 import 를 피해 함수 안에서 부른다
+        from . import macro  # 순환 import 를 피해 함수 안에서 부른다
         rate_row = macro.risk_free_rate()
         risk_free = (rate_row.get("value") or macro.FALLBACK_RISK_FREE_PCT) / 100
         rate_source = rate_row.get("source") or "fallback"
@@ -157,7 +157,7 @@ def correlation(a: Sequence[float], b: Sequence[float]) -> Optional[float]:
     ⚠️ **수준(가격)끼리 재지 않는다.** 둘 다 우상향이면 허위 상관이 나온다
     (U7 결정에서 이미 못박은 규칙 — `/market` 겹쳐보기와 같은 규약을 쓴다).
     """
-    pairs = [(x, y) for x, y in zip(a, b)
+    pairs = [(x, y) for x, y in zip(a, b, strict=False)
              if isinstance(x, (int, float)) and isinstance(y, (int, float))]
     if len(pairs) < 3:
         return None

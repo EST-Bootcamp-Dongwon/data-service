@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import math
 import re
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Dict, List, Optional, Sequence
 
 # D- 의 지표 이름은 영어다 (`revenue` · `operating_income` · `261.per` …).

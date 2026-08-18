@@ -37,7 +37,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app.clients import dart_data                                    # noqa: E402
+from app.clients import dart_data  # noqa: E402
 
 OUT_FILE = ROOT / "data" / "industry_map.json"
 KST = timezone(timedelta(hours=9))

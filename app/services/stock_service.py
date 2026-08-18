@@ -36,7 +36,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence
 
 from app.clients import fred_data as fred
 from app.clients import yf_data as yahoo

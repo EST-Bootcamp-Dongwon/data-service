@@ -28,12 +28,11 @@ import os
 import time
 from typing import Callable, Dict, List, Optional
 
-from ...clients import dart_data, dart_report, hf_data
+from ...clients import dart_data, dart_report
 from ...core import parallel
 from ...repositories import industry_store, report_index, snapshot_store
 from .. import ts_service
-from . import (charts, contracts, export_md, headline, ledger, linkcheck,
-               narrative, plan, redteam)
+from . import charts, contracts, export_md, headline, ledger, linkcheck, narrative, redteam
 from .knowledge import financials, macro, valuation
 from .workstreams import corp_r, corp_tp, ind_r, ind_tp
 
@@ -905,7 +904,7 @@ def _h04_ind_r(pack: Dict, request: Dict) -> Dict:
     market = analysis.get("market", {})
     cycle = analysis.get("cycle", {})
     rivalry = analysis.get("competition", {})
-    index_row = analysis.get("index", {})
+    analysis.get("index", {})
 
     # ── 산업 파생값을 장부에 올린다 (M7 · 변경노트 N69) ──
     #

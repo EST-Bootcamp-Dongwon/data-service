@@ -24,7 +24,6 @@ DTO 로 고정하면 엔진을 손볼 때마다 두 곳을 고쳐야 하고, 빠
 글로 적어 둔다.
 """
 
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 

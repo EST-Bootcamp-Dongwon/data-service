@@ -43,7 +43,7 @@ import json
 import threading
 import time
 from statistics import median
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen

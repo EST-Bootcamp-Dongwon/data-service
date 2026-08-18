@@ -155,7 +155,7 @@ def sentiment(texts: Sequence[str], model: str = SENTIMENT_MODEL) -> Dict:
                 if not isinstance(raw, list) or len(raw) != len(chunk):
                     return _failure(f"응답 모양이 예상과 다르다 (입력 {len(chunk)} · 응답 "
                                     f"{len(raw) if isinstance(raw, list) else type(raw).__name__})")
-                for text, entry in zip(chunk, raw):
+                for text, entry in zip(chunk, raw, strict=False):
                     top = entry[0] if isinstance(entry, list) and entry else entry
                     label = str((top or {}).get("label", ""))
                     rows.append({
@@ -198,7 +198,7 @@ def classify(text: str, labels: Sequence[str], model: str = ZEROSHOT_MODEL,
     위 4번에서 실측으로 확인했다. 이 함수는 다국어 모델을 기본으로 쓴다.
     """
     text = str(text or "").strip()
-    candidates = [str(l).strip() for l in labels if str(l).strip()]
+    candidates = [str(label).strip() for label in labels if str(label).strip()]
     if not text:
         return _failure("분류할 문장이 없다")
     if len(candidates) < 2:
@@ -222,7 +222,7 @@ def classify(text: str, labels: Sequence[str], model: str = ZEROSHOT_MODEL,
         if not isinstance(raw, dict) or "labels" not in raw:
             return _failure(f"응답 모양이 예상과 다르다 — {str(raw)[:120]}")
 
-        pairs = list(zip(raw.get("labels", []), raw.get("scores", [])))
+        pairs = list(zip(raw.get("labels", []), raw.get("scores", []), strict=False))
         _last_attempt.update(result="ok", detail=f"{len(pairs)}라벨 분류")
         return {
             "available": True,

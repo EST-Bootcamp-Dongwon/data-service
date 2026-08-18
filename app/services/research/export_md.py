@@ -382,11 +382,9 @@ def _assemble_ind_r(pack: Dict, analysis: Dict) -> Dict:
     chain = analysis.get("value_chain", {})
     market = analysis.get("market", {})
     production = (market or {}).get("production", {})
-    index_row = analysis.get("index", {})
     flow = analysis.get("supply_demand", {})
     rivalry = analysis.get("competition", {})
     phase = analysis.get("cycle", {})
-    red = analysis.get("red_team", {})
     name = target.get("name") or charter.get("target", {}).get("code") or "산업"
 
     filled: Dict[int, Dict] = {}
@@ -760,7 +758,7 @@ def _assemble_ind_tp(pack: Dict, analysis: Dict) -> Dict:
         (f"adjusted {(proposal.get('top_pick') or {}).get('adjusted')} · "
          f"coverage {(proposal.get('top_pick') or {}).get('coverage')}%"
          if proposal.get("top_pick") else "1위를 정하지 못했다"),
-        f"대안 후보: " + " / ".join(f"{r['name']}({r.get('adjusted_display')})"
+        "대안 후보: " + " / ".join(f"{r['name']}({r.get('adjusted_display')})"
                                 for r in ranking_rows[1:4]),
         proposal.get("caution", ""),
         proposal.get("human_decision", ""),
@@ -996,7 +994,7 @@ def _chart_image_md(chart: Dict) -> List[str]:
     담지 못하는 자리는 **빈 목록**을 낸다 (`signal`·`stat` 은 SVG 가 아니고,
     못 그린 차트는 사유 문단이다). 그 자리는 아래 숫자 표가 그대로 맡는다.
     """
-    from . import export_html                # 인쇄본 쪽이 export_md 를 지연 import 한다
+    from . import export_html  # 인쇄본 쪽이 export_md 를 지연 import 한다
 
     svg = export_html.chart_svg_standalone(chart)
     if not svg:

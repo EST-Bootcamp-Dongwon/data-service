@@ -35,10 +35,9 @@ GIC v15 산업TopPick 하네스설계서 §7 의 계산 계약을 식 그대로 
 from __future__ import annotations
 
 from statistics import fmean, median
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence
 
-from ....repositories import industry_store, krx_store, snapshot_store
-from ..knowledge import financials, macro, portfolio, valuation
+from ....repositories import snapshot_store
 
 # 설계서 §7.1 기본 가중치 (합 100)
 WEIGHTS = [
@@ -186,14 +185,16 @@ def score_candidates(rows: Sequence[Dict], momentum_map: Optional[Dict] = None,
     pers = [r.get("per") for r in rows]
     moms = [momentum_map.get(r.get("code")) if momentum_map.get(r.get("code")) is not None
             else r.get("r60") for r in rows]
-    pbrs = [r.get("pbr") for r in rows]
 
     scored: List[Dict] = []
     for index, row in enumerate(rows):
         items: Dict[str, Dict] = {}
 
         def put(key: str, value: Optional[int], evidence: str, note: str = "") -> None:
-            items[key] = {
+            # ruff B023 은 루프 안에서 정의한 함수가 루프 변수를 잡는 것을 경고한다.
+            # 여기서는 오탐이다 — `put` 은 정의된 그 반복 안에서만 호출되고 밖으로
+            # 새어 나가지 않으므로, 언제나 그 반복의 `items` 를 쓴다.
+            items[key] = {  # noqa: B023
                 "key": key, "name": WEIGHT_BY_KEY[key]["name"],
                 "weight": WEIGHT_BY_KEY[key]["weight"],
                 "score": value,

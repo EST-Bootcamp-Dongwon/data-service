@@ -50,8 +50,8 @@ from typing import Dict, List, Optional, Sequence
 BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE_DIR))
 
-from app.clients import dart_data                    # noqa: E402  (경로 설정 뒤에 import)
-from app.repositories import krx_store               # noqa: E402
+from app.clients import dart_data  # noqa: E402  (경로 설정 뒤에 import)
+from app.repositories import krx_store  # noqa: E402
 
 OUTPUT_PATH = BASE_DIR / "data" / "market_snapshot.json.gz"
 US_MASTER_PATH = BASE_DIR / "data" / "us_master.json"

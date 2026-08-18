@@ -44,7 +44,7 @@ def select_peers(code: str, mode: str = "업종", max_peers: int = MAX_PEERS,
     if manual:
         rows = [snapshot_store.get(c.strip()) for c in manual if c.strip()]
         peers = [r for r in rows if r and r.get("code") != code]
-        missing = [c for c, r in zip(manual, rows) if not r]
+        missing = [c for c, r in zip(manual, rows, strict=False) if not r]
         return {
             "available": bool(peers),
             "peers": peers[:max_peers],

@@ -28,7 +28,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE_DIR))
 
-from app.clients import dart_data                # noqa: E402  (경로 설정 뒤에 import)
+from app.clients import dart_data  # noqa: E402  (경로 설정 뒤에 import)
 
 OUTPUT_PATH = BASE_DIR / "data" / "corp_code.json"
 KST = timezone(timedelta(hours=9))

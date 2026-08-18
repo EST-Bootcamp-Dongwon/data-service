@@ -32,8 +32,8 @@ import zipfile
 from typing import Dict, List, Optional
 from urllib.request import urlopen
 
-from . import dart_data
 from ..repositories import tmp_cache
+from . import dart_data
 
 DOCUMENT_URL = "https://opendart.fss.or.kr/api/document.xml"
 REQUEST_TIMEOUT = 20                        # 서버리스 상한이 60초라 여기서 오래 붙들면 안 된다
@@ -102,10 +102,10 @@ def _fetch_document(rcept_no: str) -> str:
 
     try:
         archive = zipfile.ZipFile(io.BytesIO(raw))
-    except zipfile.BadZipFile:
+    except zipfile.BadZipFile as error:
         # 키 오류·없는 접수번호면 ZIP 이 아니라 XML 오류 응답이 온다
         message = raw.decode("utf-8", "replace")[:200]
-        raise dart_data.DartError(f"공시 원문을 받지 못했습니다 — {message}")
+        raise dart_data.DartError(f"공시 원문을 받지 못했습니다 — {message}") from error
 
     body = "\n".join(archive.read(item).decode("utf-8", "replace") for item in archive.infolist())
     tmp_cache.write("dart_doc", rcept_no, {"body": body})

@@ -30,7 +30,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from app.core import secrets                       # 인증키 로딩 (공통)
+from app.core import secrets  # 인증키 로딩 (공통)
 
 KOSIS_BASE_URL = "https://kosis.kr/openapi"
 REQUEST_TIMEOUT = 25                               # KOSIS 응답 대기 시간(초)
@@ -113,7 +113,7 @@ def call(path: str, params: Dict[str, str]) -> Tuple[object, int]:
                 raw = response.read().decode("utf-8", errors="replace")
             break
         except HTTPError as error:
-            raise KosisError(f"KOSIS 가 HTTP {error.code} 를 돌려줬습니다.", status=502)
+            raise KosisError(f"KOSIS 가 HTTP {error.code} 를 돌려줬습니다.", status=502) from error
         except (URLError, TimeoutError, ConnectionError) as error:
             last_error = error
             if attempt < len(RETRY_DELAYS):
@@ -125,8 +125,10 @@ def call(path: str, params: Dict[str, str]) -> Tuple[object, int]:
 
     try:
         payload = json.loads(raw)
-    except json.JSONDecodeError:
-        raise KosisError(f"KOSIS 응답을 JSON 으로 읽지 못했습니다: {raw[:120]}", status=502)
+    except json.JSONDecodeError as error:
+        raise KosisError(
+            f"KOSIS 응답을 JSON 으로 읽지 못했습니다: {raw[:120]}", status=502
+        ) from error
 
     # KOSIS 는 오류도 200 으로 준다. 본문이 객체면 오류다.
     if isinstance(payload, dict) and "err" in payload:
