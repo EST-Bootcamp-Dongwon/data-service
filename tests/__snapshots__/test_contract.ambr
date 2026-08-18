@@ -1,0 +1,251 @@
+# serializer version: 1
+# name: test_query_parameters_are_frozen
+  dict({
+    'GET /api/chart/breadth': list([
+      'days',
+    ]),
+    'GET /api/chart/compare': list([
+      'max_points',
+      'period',
+      'tickers',
+    ]),
+    'GET /api/chart/overlay': list([
+      'ids',
+      'max_points',
+      'period',
+      'ticker',
+    ]),
+    'GET /api/chart/presets': list([
+    ]),
+    'GET /api/chart/series': list([
+      'ma',
+      'max_points',
+      'period',
+      'ticker',
+    ]),
+    'GET /api/dashboard/summary': list([
+    ]),
+    'GET /api/dashboard/ticker': list([
+    ]),
+    'GET /api/factors/radar': list([
+      'codes',
+      'window',
+    ]),
+    'GET /api/fred/indicators': list([
+    ]),
+    'GET /api/fred/search': list([
+      'limit',
+      'q',
+    ]),
+    'GET /api/fred/series/{series_id}': list([
+      'end',
+      'max_points',
+      'start',
+    ]),
+    'GET /api/fred/status': list([
+    ]),
+    'GET /api/kosis/data': list([
+      'end_period',
+      'itm_id',
+      'max_series',
+      'obj_l1',
+      'org_id',
+      'period_count',
+      'prd_se',
+      'start_period',
+      'tbl_id',
+    ]),
+    'GET /api/kosis/meta': list([
+      'org_id',
+      'tbl_id',
+    ]),
+    'GET /api/kosis/search': list([
+      'q',
+      'size',
+      'start',
+    ]),
+    'GET /api/kosis/status': list([
+    ]),
+    'GET /api/krx/dates': list([
+      'limit',
+    ]),
+    'GET /api/krx/status': list([
+    ]),
+    'GET /api/krx/stocks': list([
+      'bas_dd',
+      'market',
+      'order',
+      'page',
+      'q',
+      'size',
+      'sort',
+    ]),
+    'GET /api/krx/stocks/{code}/ohlcv': list([
+      'days',
+    ]),
+    'GET /api/portfolio/frontier': list([
+      'codes',
+      'samples',
+      'window',
+    ]),
+    'GET /api/research/glossary': list([
+      'limit',
+      'q',
+      'term',
+      'terms',
+    ]),
+    'GET /api/research/industries': list([
+      'digits',
+      'limit',
+      'min_members',
+    ]),
+    'GET /api/research/industries/resolve': list([
+      'digits',
+      'q',
+    ]),
+    'GET /api/research/plan/{workstream_id}': list([
+    ]),
+    'GET /api/research/warmup': list([
+    ]),
+    'GET /api/research/workstreams': list([
+    ]),
+    'GET /api/screening/funnel': list([
+      'window',
+    ]),
+    'GET /api/search': list([
+      'limit',
+      'market',
+      'q',
+    ]),
+    'GET /api/search/semantic': list([
+      'limit',
+      'q',
+    ]),
+    'GET /api/search/semantic/stats': list([
+    ]),
+    'GET /api/search/stats': list([
+    ]),
+    'GET /api/stock/samples': list([
+    ]),
+    'GET /api/stock/{ticker}': list([
+      'macro',
+      'months',
+    ]),
+    'GET /api/stocks': list([
+      'limit',
+      'market',
+      'q',
+    ]),
+    'GET /api/stocks/{code}/ohlcv': list([
+      'count',
+      'ma',
+    ]),
+    'GET /api/ts/decompose': list([
+      'model',
+      'period',
+      'ticker',
+      'years',
+    ]),
+    'GET /api/ts/diagnostics': list([
+      'nlags',
+      'on_returns',
+      'ticker',
+      'years',
+    ]),
+    'GET /api/ts/forecast': list([
+      'folds',
+      'horizon',
+      'ticker',
+      'years',
+    ]),
+    'GET /api/ts/series': list([
+      'ticker',
+      'years',
+    ]),
+    'GET /api/users': list([
+    ]),
+    'GET /api/users/{user_id}': list([
+    ]),
+    'GET /api/yf/history': list([
+      'max_rows',
+      'period',
+      'ticker',
+    ]),
+    'GET /api/yf/periods': list([
+    ]),
+    'GET /api/yf/quote': list([
+      'ticker',
+    ]),
+    'GET /health': list([
+    ]),
+    'POST /api/krx/sync': list([
+      'days',
+    ]),
+    'POST /api/research/export/html': list([
+    ]),
+    'POST /api/research/export/md': list([
+    ]),
+    'POST /api/research/runs': list([
+    ]),
+    'POST /api/research/runs/steps/{state_id}': list([
+    ]),
+    'POST /api/users': list([
+    ]),
+  })
+# ---
+# name: test_route_list_is_frozen
+  list([
+    'GET /api/chart/breadth',
+    'GET /api/chart/compare',
+    'GET /api/chart/overlay',
+    'GET /api/chart/presets',
+    'GET /api/chart/series',
+    'GET /api/dashboard/summary',
+    'GET /api/dashboard/ticker',
+    'GET /api/factors/radar',
+    'GET /api/fred/indicators',
+    'GET /api/fred/search',
+    'GET /api/fred/series/{series_id}',
+    'GET /api/fred/status',
+    'GET /api/kosis/data',
+    'GET /api/kosis/meta',
+    'GET /api/kosis/search',
+    'GET /api/kosis/status',
+    'GET /api/krx/dates',
+    'GET /api/krx/status',
+    'GET /api/krx/stocks',
+    'GET /api/krx/stocks/{code}/ohlcv',
+    'GET /api/portfolio/frontier',
+    'GET /api/research/glossary',
+    'GET /api/research/industries',
+    'GET /api/research/industries/resolve',
+    'GET /api/research/plan/{workstream_id}',
+    'GET /api/research/warmup',
+    'GET /api/research/workstreams',
+    'GET /api/screening/funnel',
+    'GET /api/search',
+    'GET /api/search/semantic',
+    'GET /api/search/semantic/stats',
+    'GET /api/search/stats',
+    'GET /api/stock/samples',
+    'GET /api/stock/{ticker}',
+    'GET /api/stocks',
+    'GET /api/stocks/{code}/ohlcv',
+    'GET /api/ts/decompose',
+    'GET /api/ts/diagnostics',
+    'GET /api/ts/forecast',
+    'GET /api/ts/series',
+    'GET /api/users',
+    'GET /api/users/{user_id}',
+    'GET /api/yf/history',
+    'GET /api/yf/periods',
+    'GET /api/yf/quote',
+    'GET /health',
+    'POST /api/krx/sync',
+    'POST /api/research/export/html',
+    'POST /api/research/export/md',
+    'POST /api/research/runs',
+    'POST /api/research/runs/steps/{state_id}',
+    'POST /api/users',
+  ])
+# ---
