@@ -88,6 +88,17 @@
 - `app/clients/*.py`는 **9종**이다 — dart_data · dart_report · ecos_data · fred_data ·
   fss_data · hf_data · kosis_data · krx_data · yf_data. 상위 문서의 "5종"·"7종"은 낡았다.
   개명 전(`api-test`) 시절부터 있던 코드이므로 리팩터링 전 `NOTICE.md`를 확인한다.
+- **출처 표기는 `<provider>-<tier>` 두 토막이다** (ADR-DS-0009). tier 는 `db`·`bundle`·
+  `derived`·`live`·`live-memo` 다섯이 전부고, `source.split("-", 1)` 로 항상 쪼개진다.
+  `mode`(`/api/krx/status`)만 접두사 없는 맨 tier 다.
+  ⚠️ **폴백하는 조회에서 층을 알려면 `*_tiered()` 짝을 쓴다** — `snapshot_tiered()` ·
+  `series_tiered()`. `tier()` 는 저장소 **전체** 상태라, 원본이 차 있는데 그 날짜·그 종목만
+  없어 축약본으로 내려간 경우를 `db` 라고 잘못 말한다. 하드코딩된 `"cache"` 가 세 곳에서
+  이 방식으로 틀려 있었다.
+  화면이 이 값을 **정확히 비교**하므로(`krx.html`·`stock.html`) 값을 바꾸면 화면도 같이 본다.
+  `tests/test_source_vocabulary.py`가 어휘와 화면 양쪽을 검사한다.
+  ⚠️ 이름이 `source` 라고 다 같은 축이 아니다 — `research/ledger.py`의 출처 등급(`KRX`·
+  `DART-…`)과 `preprocess`의 `source`는 **누가 생산했나**라서 이 어휘 밖이다.
 - ⚠️ **`app/core/trading_calendar.py`는 공휴일을 모른다.** `weekday() < 5`로 주말만 거른다.
   거래일 판정이 필요하면 `trading_calendar` 테이블을 쓴다 (ADR-DS-0002).
   ⚠️ **그 안내는 아직 실행 불가다** — DDL만 섰고 표를 채우는 코드도 읽는 코드도 없다.

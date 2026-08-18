@@ -268,14 +268,26 @@ def _cache_is_empty() -> bool:
     return not (row and row[0])
 
 
-def source() -> str:
-    """지금 어느 데이터를 보고 있는지 — `cache`(원본) · `bundle`(축약본) · `live`(둘 다 없음).
+# 이 저장소가 대는 자료의 제공자. `source` 필드는 `<provider>-<tier>` 두 토막이다 (ADR-DS-0009).
+PROVIDER = "krx"
+
+
+def tier() -> str:
+    """**저장소 전체**가 지금 어느 층에 서 있는지 — `db`(정본) · `bundle`(축약본) · `live`(둘 다 없음).
 
     화면 배지와 리포트가 "무엇을 근거로 말하고 있는지" 를 밝힐 때 쓴다.
+
+    ⚠️ **조회 하나의 출처로 쓰면 틀린다.** 원본이 차 있어도 그 날짜·그 종목만 없으면
+    `snapshot()`·`series()` 는 번들로 내려간다. 조회별 층은 `*_tiered()` 짝에게 물어야 한다.
     """
     if not _cache_is_empty():
-        return "cache"
+        return "db"
     return "bundle" if krx_bundle.available() else "live"
+
+
+def source_tag() -> str:
+    """저장소 전체 상태를 `source` 필드 값(`krx-db` 등)으로 만들어 돌려준다 (ADR-DS-0009)."""
+    return f"{PROVIDER}-{tier()}"
 
 
 def _rows_to_dicts(rows: Iterable[sqlite3.Row]) -> List[Dict]:
@@ -320,8 +332,13 @@ def available_dates(limit: int = 400) -> List[str]:
     return krx_bundle.available_dates(limit=limit)
 
 
-def snapshot(bas_dd: str, market: Optional[str] = None) -> List[Dict]:
-    """해당 거래일의 전 종목. `market` 을 주면 그 시장만 추린다."""
+def snapshot_tiered(bas_dd: str, market: Optional[str] = None) -> Tuple[List[Dict], str]:
+    """`snapshot()` 과 같되 **어느 층에서 나왔는지**를 함께 돌려준다 — `(행 목록, tier)`.
+
+    출처를 응답에 싣는 호출자는 반드시 이쪽을 쓴다 (ADR-DS-0009 §5).
+    `tier()` 를 따로 부르면 안 된다 — 그건 저장소 전체 상태라, 원본이 차 있는데
+    **그 날짜만** 없어 번들로 내려간 경우를 `db` 라고 잘못 말한다.
+    """
     init_db()
     sql = "SELECT * FROM daily_price WHERE bas_dd = ?"
     params: List = [bas_dd]
@@ -330,7 +347,16 @@ def snapshot(bas_dd: str, market: Optional[str] = None) -> List[Dict]:
         params.append(market)
     with connect() as conn:
         rows = _rows_to_dicts(conn.execute(sql, params).fetchall())
-    return rows or _rows_to_dicts(krx_bundle.snapshot(bas_dd, market))
+    if rows:
+        return rows, "db"
+    fallback = _rows_to_dicts(krx_bundle.snapshot(bas_dd, market))
+    # 축약본에도 없으면 "번들에서 왔다" 고 말할 근거가 없다. 저장소가 서 있는 층을 그대로 밝힌다.
+    return fallback, "bundle" if fallback else tier()
+
+
+def snapshot(bas_dd: str, market: Optional[str] = None) -> List[Dict]:
+    """해당 거래일의 전 종목. `market` 을 주면 그 시장만 추린다."""
+    return snapshot_tiered(bas_dd, market)[0]
 
 
 # 라이브 조회 결과를 담아 두는 메모리 캐시. {(거래일, 시장): (저장시각, 행 목록)}
@@ -344,7 +370,8 @@ LIVE_CACHE_TTL = 600            # 일별 데이터라 10분이면 충분하다
 def snapshot_live(bas_dd: str = "", market: Optional[str] = None) -> Tuple[List[Dict], str, str]:
     """**DB 없이** KRX 를 직접 불러 전 종목 스냅샷을 돌려준다.
 
-    `(행 목록, 실제 거래일, 출처)` 를 돌려준다. 출처는 `live` 또는 `live-cache` 다.
+    `(행 목록, 실제 거래일, tier)` 를 돌려준다. tier 는 `live`(KRX 를 방금 호출) 또는
+    `live-memo`(그 응답을 프로세스 메모리에서 재사용) 다 (ADR-DS-0009).
 
     왜 필요한가
     -----------
@@ -371,7 +398,7 @@ def snapshot_live(bas_dd: str = "", market: Optional[str] = None) -> Tuple[List[
         with _live_lock:
             hit = _live_cache.get(key)
             if hit and now - hit[0] < LIVE_CACHE_TTL:
-                return hit[1], day, "live-cache"
+                return hit[1], day, "live-memo"
 
         rows: List[Dict] = []
         for mkt in markets:
@@ -387,10 +414,13 @@ def snapshot_live(bas_dd: str = "", market: Optional[str] = None) -> Tuple[List[
     return [], (bas_dd or ""), "live"
 
 
-def series(code: str, days: int = 250, end: Optional[str] = None) -> List[Dict]:
-    """종목 하나의 일봉 시계열 (날짜 오름차순).
+def series_tiered(code: str, days: int = 250,
+                  end: Optional[str] = None) -> Tuple[List[Dict], str]:
+    """`series()` 와 같되 **어느 층에서 나왔는지**를 함께 돌려준다 — `(행 목록, tier)`.
 
-    인덱스(idx_code_date) 덕분에 69만 행 중 해당 종목만 곧바로 찾아낸다.
+    출처를 응답에 싣는 호출자는 반드시 이쪽을 쓴다 (ADR-DS-0009 §5).
+    종목 단위로 갈리므로, 저장소 전체 상태인 `tier()` 로는 알 수 없다 —
+    원본이 차 있어도 **그 종목만** 없으면 번들로 내려간다.
     """
     init_db()
     sql = "SELECT * FROM daily_price WHERE code = ?"
@@ -405,9 +435,19 @@ def series(code: str, days: int = 250, end: Optional[str] = None) -> List[Dict]:
     with connect() as conn:
         rows = conn.execute(sql, params).fetchall()
     if rows:
-        return list(reversed(_rows_to_dicts(rows)))
+        return list(reversed(_rows_to_dicts(rows))), "db"
     # 축약본도 내림차순으로 주므로 같은 방식으로 뒤집는다 (차트는 왼쪽이 과거)
-    return list(reversed(_rows_to_dicts(krx_bundle.series(code, days=days, end=end))))
+    fallback = list(reversed(_rows_to_dicts(krx_bundle.series(code, days=days, end=end))))
+    # 축약본에도 없으면 "번들에서 왔다" 고 말할 근거가 없다. 저장소가 서 있는 층을 그대로 밝힌다.
+    return fallback, "bundle" if fallback else tier()
+
+
+def series(code: str, days: int = 250, end: Optional[str] = None) -> List[Dict]:
+    """종목 하나의 일봉 시계열 (날짜 오름차순).
+
+    인덱스(idx_code_date) 덕분에 69만 행 중 해당 종목만 곧바로 찾아낸다.
+    """
+    return series_tiered(code, days=days, end=end)[0]
 
 
 def universe(bas_dd: Optional[str] = None, market: Optional[str] = None) -> List[Dict]:
@@ -480,6 +520,10 @@ def stats() -> Dict:
 
     원본이 비어 있으면 **축약본의 현황**을 대신 돌려주고 `mode` 로 어느 쪽인지 밝힌다.
     화면이 "0거래일" 만 보고 고장으로 오해하지 않게 하기 위함이다.
+
+    ⚠️ 그래서 `days`·`db_path`·`db_size_mb` 는 **`mode` 가 가리키는 층의 것**이다.
+    `days > 0` 만 보고 "원본 캐시가 있다" 고 재계산하면 번들 숫자에 캐시 라벨이 붙는다
+    (ADR-DS-0009 §4 — `mode` 는 이 함수가 정본이고 소비자는 그대로 쓴다).
     """
     init_db()
     with connect() as conn:
@@ -496,7 +540,7 @@ def stats() -> Dict:
             "first_date": row["first"], "last_date": row["last"],
             "db_path": DB_PATH.name,
             "db_size_mb": round(size / 1024 / 1024, 1),
-            "mode": "cache",
+            "mode": "db",
             "notes": [],
         }
 

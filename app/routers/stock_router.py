@@ -65,7 +65,9 @@ class StockResponse(BaseModel):
     name: str = Field(..., description="종목명 (국내는 한글)", examples=["삼성전자"])
     name_en: str = Field("", description="영문 종목명 (한글명과 다를 때만)")
     currency: str = Field(..., description="통화 코드", examples=["KRW"])
-    source: str = Field(..., description="데이터 출처 — `yfinance` · `krx-cache`", examples=["yfinance"])
+    source: str = Field(..., description=(
+        "데이터 출처 `<provider>-<tier>` (ADR-DS-0009) — `yahoo-live` · "
+        "`krx-db`·`krx-bundle`(야후 조회 실패 시 국내 대체 경로)"), examples=["yahoo-live"])
     market_state: str = Field("", description="장 상태 — REGULAR(장중) · CLOSED(장마감)")
     months: int = Field(..., description="조회 개월 수", examples=[6])
 

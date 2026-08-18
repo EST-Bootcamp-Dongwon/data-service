@@ -171,6 +171,7 @@
       // 라이브 모드에서는 목록이 "캘린더상 거래일"이라 데이터가 아직 없는 날이 섞인다.
       // (KRX 는 장 마감 후에야 당일치를 올린다 — 오늘 날짜를 그대로 요청하면 404 다.)
       // 그래서 첫 조회는 날짜를 비워 보내고, 서버가 찾아 준 날짜로 선택을 맞춘다.
+      // mode 는 `db` · `bundle` · `live` 세 값이다 (ADR-DS-0009).
       state.bas_dd = status.mode === 'live' ? '' : dates[0];
 
       await load();
@@ -182,15 +183,22 @@
   function renderBadges(status) {
     const c = status.cache;
     const keyOk = status.key_loaded && !status.auth_blocked;
-    // 라이브 모드 = 시세 캐시(DB)가 없어 KRX 를 요청할 때마다 직접 부르는 상태.
-    // 배포 환경(서버리스)에는 96MB DB 를 올릴 수 없어 늘 이 모드다.
+    // 라이브 모드 = 저장소가 비어 KRX 를 요청할 때마다 직접 부르는 상태.
+    // 배포 환경(서버리스)에는 123MB DB 를 올릴 수 없어 축약본(번들)이나 라이브로 돈다.
     // "0거래일 · 0행" 만 보여 주면 고장난 것처럼 보이므로 무슨 상태인지 설명해 준다.
+    //
+    // ⚠️ **번들을 💾 캐시라고 부르면 안 된다.** `c.days`·`c.db_size_mb` 는 mode 가 가리키는
+    // 층의 숫자라(ADR-DS-0009 §4), 라벨과 층이 어긋나면 화면이 번들 숫자에 캐시 이름을 단다.
     const live = status.mode === 'live';
 
+    const spanText = `${App.isoDate(c.first_date)} ~ ${App.isoDate(c.last_date)}`;
+    const sizeText = `${c.days}거래일 · ${App.num(c.rows)}행 · ${c.db_size_mb}MB`;
     const cacheBadge = live
       ? `<span class="badge">⚡ 라이브 조회<em>KRX 를 직접 호출합니다 · 첫 조회 2~3초</em></span>`
-      : `<span class="badge">💾 캐시 ${App.isoDate(c.first_date)} ~ ${App.isoDate(c.last_date)}
-           <em>${c.days}거래일 · ${App.num(c.rows)}행 · ${c.db_size_mb}MB</em></span>`;
+      : status.mode === 'bundle'
+        ? `<span class="badge">📦 배포 축약본 ${spanText}
+             <em>${sizeText} · 원본 캐시가 없어 읽기 전용 축약본을 봅니다</em></span>`
+        : `<span class="badge">💾 캐시 ${spanText}<em>${sizeText}</em></span>`;
 
     const scopeBadge = live
       ? `<span class="badge">🏷 조회 범위<em>스냅샷 O · 종목별 캔들차트 X (여러 날치가 필요합니다)</em></span>`
@@ -240,7 +248,14 @@
       $('date').value = data.bas_dd;
     }
 
-    const via = data.source === 'cache' ? '' : ' · KRX 직접 조회';
+    // source 는 `krx-db` · `krx-bundle` · `krx-live` · `krx-live-memo` (ADR-DS-0009)
+    const VIA = {
+      'krx-db': '',
+      'krx-bundle': ' · 배포 축약본',
+      'krx-live': ' · KRX 직접 조회',
+      'krx-live-memo': ' · KRX 직접 조회(메모리 재사용)',
+    };
+    const via = VIA[data.source] ?? ` · ${data.source}`;
     $('status').textContent = `${data.date} 기준 · ${App.num(data.matched)}종목${via}`;
     state.totalPages = Math.max(1, Math.ceil(data.matched / data.size));
 

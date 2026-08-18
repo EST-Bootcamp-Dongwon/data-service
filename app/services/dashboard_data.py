@@ -210,13 +210,18 @@ def _market_temperature() -> dict:
         "date": None, "source": None, "grade": None, "grade_text": None,
     }
     try:
+        # `snapshot()` 은 그 날짜가 원본에 없으면 말없이 축약본으로 내려간다.
+        # 층을 함께 돌려주는 짝을 써야 출처가 실제와 맞는다 (ADR-DS-0009 §5).
         date = krx_store.latest_date()
-        items = krx_store.snapshot(date) if date else []
-        source = "cache"
+        tier = krx_store.tier()
+        items = []
+        if date:
+            items, tier = krx_store.snapshot_tiered(date)
 
-        # 캐시가 비어 있으면(배포 환경) KRX 를 그 자리에서 부른다
+        # 저장소가 비어 있으면(배포 환경) KRX 를 그 자리에서 부른다
         if not items:
-            items, date, source = krx_store.snapshot_live()
+            items, date, tier = krx_store.snapshot_live()
+        source = f"{krx_store.PROVIDER}-{tier}"
 
         if not items:
             card["error"] = "시세 스냅샷이 비어 있습니다."
@@ -320,7 +325,7 @@ def _data_status() -> List[dict]:
                 f"{stats.get('days')}거래일 · {stats.get('rows'):,}행"
                 if stats.get("days") else "")
 
-        if mode == "cache":
+        if mode == "db":
             grade, grade_text = "good", "원본 캐시"
             detail = f"{span} · {stats.get('db_size_mb')}MB"
         elif mode == "bundle":

@@ -59,7 +59,9 @@ class TemperatureCard(BaseModel):
     flat: int = Field(0, description="보합 종목 수")
     total: int = Field(0, description="집계한 종목 수")
     date: Optional[str] = Field(None, description="기준 거래일 (YYYYMMDD)", examples=["20260731"])
-    source: Optional[str] = Field(None, description="출처 — `cache` · `live` · `live-cache`")
+    source: Optional[str] = Field(None, description=(
+        "출처 `<provider>-<tier>` (ADR-DS-0009) — `krx-db` · `krx-bundle` · "
+        "`krx-live` · `krx-live-memo`"))
     grade: Optional[str] = Field(None, description="상태등급", examples=["warm"])
     grade_text: Optional[str] = Field(None, description="등급 이름", examples=["강세"])
 

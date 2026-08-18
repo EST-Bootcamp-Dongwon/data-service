@@ -88,8 +88,10 @@ class SnapshotResponse(BaseModel):
     bas_dd: str = Field(..., description="기준일자 (YYYYMMDD)", examples=["20260730"])
     date: str = Field(..., description="기준일자 (YYYY-MM-DD)", examples=["2026-07-30"])
     source: str = Field(..., description=(
-        "데이터 출처 — `cache`(DB) · `live`(KRX 를 방금 호출) · `live-cache`(라이브 결과 메모리 재사용)"),
-                        examples=["cache"])
+        "데이터 출처 `<provider>-<tier>` (ADR-DS-0009) — `krx-db`(정본 저장소) · "
+        "`krx-bundle`(배포용 축약본) · `krx-live`(KRX 를 방금 호출) · "
+        "`krx-live-memo`(라이브 결과를 메모리에서 재사용)"),
+                        examples=["krx-db"])
     total: int = Field(..., description="해당 거래일 전체 종목 수", examples=[2764])
     matched: int = Field(..., description="검색·필터를 적용한 뒤 종목 수", examples=[46])
     count: int = Field(..., description="이번 페이지에 담긴 종목 수", examples=[50])
@@ -107,8 +109,11 @@ class CacheStats(BaseModel):
     codes: int = Field(..., description="등장한 종목 수", examples=[2851])
     first_date: Optional[str] = Field(None, description="가장 오래된 거래일", examples=["20250818"])
     last_date: Optional[str] = Field(None, description="가장 최근 거래일", examples=["20260730"])
-    db_path: str = Field(..., description="DB 파일명", examples=["krx_cache.db"])
-    db_size_mb: float = Field(..., description="DB 파일 크기 (MB)", examples=[101.4])
+    db_path: str = Field(..., description=(
+        "DB 파일명. **`mode` 가 가리키는 층의 것**이다 — 원본이 비면 축약본 파일명이 온다"),
+                         examples=["krx_cache.db"])
+    db_size_mb: float = Field(..., description="DB 파일 크기 (MB). `db_path` 와 같은 층", examples=[101.4])
+    # `mode` 는 여기 두지 않는다 — 통로는 `StatusResponse.mode` 하나다 (ADR-DS-0009 §4)
 
 
 class MarketApi(BaseModel):
@@ -125,10 +130,12 @@ class StatusResponse(BaseModel):
     auth_blocked: bool = Field(..., description="인증 실패로 호출을 차단 중인지", examples=[False])
     last_result: Optional[str] = Field(None, description="마지막 KRX 호출 결과", examples=["ok"])
     last_detail: Optional[str] = Field(None, description="실패했다면 그 이유")
-    cache: CacheStats = Field(..., description="디스크 캐시 현황")
-    mode: str = Field("cache", description=(
-        "조회 방식 — `cache`(DB 에서 읽음) 또는 "
-        "`live`(캐시가 비어 KRX 를 요청할 때마다 직접 호출)"), examples=["cache"])
+    cache: CacheStats = Field(..., description="저장소 현황. 숫자는 **`mode` 가 가리키는 층**의 것이다")
+    mode: str = Field("db", description=(
+        "저장소가 서 있는 층 (ADR-DS-0009) — `db`(정본 저장소에서 읽음) · "
+        "`bundle`(원본이 비어 배포용 축약본에서 읽음) · "
+        "`live`(둘 다 없어 요청할 때마다 KRX 를 직접 호출). "
+        "**`cache` 의 숫자는 이 층의 것이다.**"), examples=["db"])
 
 
 class SyncResponse(BaseModel):
@@ -155,9 +162,15 @@ def get_status():
     """
     status = api.get_status()
     status["cache"] = store.stats()
-    # 캐시가 비어 있으면 KRX 를 그 자리에서 부르는 라이브 모드로 동작한다.
-    # 화면 배지가 "0거래일"만 보여 주면 고장난 것처럼 보이므로 모드를 함께 알려 준다.
-    status["mode"] = "cache" if status["cache"]["days"] else "live"
+    # 층 판정은 `store.stats()` 가 정본이다. 여기서 다시 계산하지 않는다 (ADR-DS-0009 §4).
+    #
+    # 예전에는 `days > 0` 으로 재계산했는데, 원본이 비면 `stats()` 가 **축약본의** days·
+    # db_path·db_size_mb 를 채워 주므로 번들 상태가 늘 `cache` 로 접혔다. 그 결과 화면의
+    # 💾 캐시 배지에 번들 숫자가 캐시 라벨을 달고 찍혔다.
+    #
+    # `CacheStats` 에 `mode` 선언이 없어 `cache.mode` 는 응답에서 떨어진다. 그래서
+    # 여기서 위로 올려 주어야 한다 — 통로는 `StatusResponse.mode` 하나다.
+    status["mode"] = status["cache"].get("mode", "live")
     return status
 
 
@@ -214,17 +227,23 @@ def get_krx_stocks(
     if bas_dd and not api.DATE_PATTERN.fullmatch(bas_dd):
         raise HTTPException(status_code=422, detail="bas_dd 는 YYYYMMDD 형식이어야 합니다.")
 
-    # 1순위는 캐시다. 있으면 수십 밀리초로 끝난다.
+    # 1순위는 저장소다. 있으면 수십 밀리초로 끝난다.
+    # ⚠️ `snapshot()` 은 그 날짜가 원본에 없으면 **말없이 축약본으로 내려간다.** 그래서
+    # 층을 함께 돌려주는 `snapshot_tiered()` 를 쓴다 — `tier()` 를 따로 부르면 저장소
+    # 전체 상태라, 원본이 차 있는데 그 날짜만 없는 경우를 `db` 라고 잘못 말한다.
     cached_date = bas_dd or store.latest_date()
-    items: List[Dict] = store.snapshot(cached_date, market) if cached_date else []
-    source = "cache"
+    items: List[Dict] = []
+    tier = store.tier()
+    if cached_date:
+        items, tier = store.snapshot_tiered(cached_date, market)
 
-    # 캐시가 비었으면 KRX 를 그 자리에서 부른다.
-    # 배포 환경(서버리스)에는 96MB DB 를 올릴 수 없어 캐시가 항상 비어 있는데,
-    # 일별매매정보는 하루치 전 종목을 한 번에 주므로 DB 없이도 화면을 채울 수 있다.
+    # 저장소(원본·축약본) 어디에도 없으면 KRX 를 그 자리에서 부른다.
+    # 배포 환경(서버리스)에는 123MB 원본을 올릴 수 없어 축약본이 대신 받는데, 그 축약본마저
+    # 없거나 구간 밖이면 여기로 온다. 일별매매정보는 하루치 전 종목을 한 번에 주므로
+    # DB 없이도 화면을 채울 수 있다.
     if not items:
         try:
-            items, cached_date, source = store.snapshot_live(bas_dd, market)
+            items, cached_date, tier = store.snapshot_live(bas_dd, market)
         except api.KrxError as error:
             # 인증 문제와 그 밖의 장애를 구분해서 알려 준다
             raise HTTPException(
@@ -251,7 +270,7 @@ def get_krx_stocks(
     return {
         "bas_dd": bas_dd,
         "date": to_iso(bas_dd),
-        "source": source,
+        "source": f"{store.PROVIDER}-{tier}",
         "total": len(items),
         "matched": matched,
         "count": len(rows),

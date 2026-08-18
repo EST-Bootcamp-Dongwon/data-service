@@ -344,10 +344,15 @@
       <span class="chip">${esc(d.ticker)}</span>
       ${d.market_detail ? `<span class="chip">${esc(d.market_detail)}</span>` : ''}`;
 
-    // 출처를 밝혀 둔다 — 야후가 막혔을 때 KRX 캐시로 그린 그림인지 구분할 수 있어야 한다
-    const source = d.source === 'krx-cache'
-      ? 'KRX 캐시(data/krx_cache.db) — 야후 파이낸스 조회에 실패해 저장해 둔 시세로 그렸습니다'
-      : '야후 파이낸스 (yfinance)';
+    // 출처를 밝혀 둔다 — 야후가 막혔을 때 KRX 저장소로 그린 그림인지 구분할 수 있어야 한다.
+    // 값은 `<provider>-<tier>` 두 토막이다 (ADR-DS-0009). 파일 경로는 구현 세부라 밝히지 않는다 —
+    // 저장계층이 바뀌면 존재하지도 않는 경로를 사용자에게 보여 주게 된다.
+    const SOURCE_TEXT = {
+      'krx-db': 'KRX 저장소 — 야후 파이낸스 조회에 실패해 저장해 둔 시세로 그렸습니다',
+      'krx-bundle': 'KRX 배포용 축약본 — 야후 파이낸스 조회에 실패해 대신 그렸습니다. 구간이 짧을 수 있습니다',
+      'yahoo-live': '야후 파이낸스',
+    };
+    const source = SOURCE_TEXT[d.source] || d.source;
     const en = d.name_en ? ` · ${esc(d.name_en)}` : '';
     $('quoteSub').textContent = `출처: ${source}${en} · ${d.months}개월 · 입력 "${d.input}"`;
 

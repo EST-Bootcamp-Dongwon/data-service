@@ -91,7 +91,8 @@ def load_series(ticker: str, years: int = 2, use_cache: bool = True) -> Dict:
       `rows`      전처리를 마친 시계열 (`filled` 표시 포함)
       `quality`   명세서 §3.2 품질 리포트 (`verdict` · `calendar_source` 포함)
       `modelable` 시계열 모델링을 해도 되는지 — `False` 면 뒤 단계는 건너뛴다
-      `source`    `krx-cache` · `krx-bundle` · `yfinance`
+      `source`    `<provider>-<tier>` 두 토막 (ADR-DS-0009) —
+                  `krx-db` · `krx-bundle` · `yahoo-live`
     """
     years = years if years in YEAR_CHOICES else 2
     resolved = stock_service.resolve(ticker)
@@ -116,8 +117,9 @@ def load_series(ticker: str, years: int = 2, use_cache: bool = True) -> Dict:
 def _load_domestic(resolved: Dict, years: int) -> Dict:
     """국내 — KRX 시세 + **실제 개장일 캘린더**."""
     days = years * TRADING_DAYS_PER_YEAR
-    raw = krx_store.series(resolved["code"], days=days)
-    source = f"krx-{krx_store.source()}"
+    # 종목마다 층이 갈리므로(원본이 차 있어도 그 종목만 없으면 축약본) 조회와 함께 받는다
+    raw, tier = krx_store.series_tiered(resolved["code"], days=days)
+    source = f"{krx_store.PROVIDER}-{tier}"
 
     if not raw:
         # KRX 에 없으면(신규 상장·축약본 구간 밖) 야후로 물러난다.
@@ -195,7 +197,7 @@ def _load_overseas(resolved: Dict, years: int) -> Dict:
 
     name = resolved.get("krx_name") or _overseas_name(resolved["symbol"])
     return _envelope(result, resolved, name=name,
-                     source="yfinance", currency=currency, years=years,
+                     source="yahoo-live", currency=currency, years=years,
                      notes=["해외 종목이라 거래소 캘린더 없이 근사(주말 + 연휴 5일 이하)로 "
                             "결측을 셌습니다. KRX 캘린더를 쓰면 휴장일 판정이 틀립니다."])
 

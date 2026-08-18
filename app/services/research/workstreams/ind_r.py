@@ -397,7 +397,7 @@ def industry_index(target: Dict, days: int = INDEX_DAYS, top: int = 20) -> Dict:
         "members_total": len(members),
         "coverage_pct": round(picked_cap / total_cap * 100, 1) if total_cap else None,
         "observations": length,
-        "source": krx_store.source(),
+        "source": krx_store.source_tag(),
         "performance": performance,
         "momentum": {
             "d20": round((index_values[-1] / index_values[-21] - 1) * 100, 2)

@@ -421,14 +421,15 @@ def breadth(days: int = 120) -> Dict:
          "value": b["value"], "total": b["up"] + b["down"] + b["flat"]}
         for d, b in sorted(buckets.items())
     ]
-    precomputed = krx_bundle.breadth_series(days)
+    derived_rows = krx_bundle.breadth_series(days)      # 사전집계 — tier `derived`
 
     # 더 많은 거래일을 덮는 쪽을 쓴다. 배포본에서는 축약본 DB(150일)보다
     # 사전집계(282일)가 길고, 로컬에서는 원본이 길거나 같다.
-    series_rows = counted if len(counted) >= len(precomputed) else precomputed
+    series_rows = counted if len(counted) >= len(derived_rows) else derived_rows
     # 직접 셌더라도 **무엇을 세었는지**를 그대로 밝힌다.
-    # 축약본에서 센 것을 `cache` 라고 부르면 화면이 원본을 본 것으로 오해한다.
-    origin = krx_store.source() if series_rows is counted else "precomputed"
+    # 축약본에서 센 것을 `db` 라고 부르면 화면이 원본을 본 것으로 오해한다.
+    # tier 어휘는 ADR-DS-0009 — 사전집계는 `derived` 다.
+    origin = krx_store.tier() if series_rows is counted else "derived"
 
     if not series_rows:
         return {
@@ -473,12 +474,12 @@ def breadth(days: int = 120) -> Dict:
         },
         "note": "상승 종목 비율은 지수와 다르게 움직일 수 있습니다. "
                 "지수는 시가총액 가중이라 대형주에 끌리지만, 여기서는 종목마다 한 표씩 셉니다."
-                + {"cache": "",
+                + {"db": "",
                    "bundle": " · 배포용 축약본(최근 150거래일)에서 셌습니다.",
-                   "precomputed": " · 사전집계(`krx_derived.json`)를 읽었습니다 — 배포본에는 원본 캐시가 없습니다.",
+                   "derived": " · 사전집계(`krx_derived.json`)를 읽었습니다 — 배포본에는 원본 캐시가 없습니다.",
                    "live": ""}.get(origin, ""),
         "fetched_at": _now_kst(),
-        "source": origin,
+        "source": f"{krx_store.PROVIDER}-{origin}",
     }
     tmp_cache.write("market", cache_key, payload)
     return payload

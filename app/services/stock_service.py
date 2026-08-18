@@ -264,22 +264,26 @@ def _moving_average(values: Sequence[Optional[float]], window: int) -> List[Opti
     return out
 
 
-def _from_krx_cache(resolved: dict, months: int) -> Optional[dict]:
-    """야후가 실패했을 때 쓰는 국내 종목 대체 경로 (`data/krx_cache.db`).
+def _from_krx_store(resolved: dict, months: int) -> Optional[dict]:
+    """야후가 실패했을 때 쓰는 국내 종목 대체 경로 (KRX 저장소).
 
-    캐시에 없으면 `None` 을 돌려주고, 호출한 쪽이 원래의 야후 오류를 그대로 알린다.
+    저장소에 없으면 `None` 을 돌려주고, 호출한 쪽이 원래의 야후 오류를 그대로 알린다.
+
+    ⚠️ **어느 층에서 왔는지는 조회해 봐야 안다.** 원본이 차 있어도 그 종목만 없으면
+    축약본으로 내려간다. 그래서 `series_tiered()` 로 층을 받아 그대로 밝힌다
+    (예전에는 `krx-cache` 하드코딩이라 번들을 보고도 캐시라고 말했다 — ADR-DS-0009).
     """
     if resolved["market"] != "KR" or not CODE_PATTERN.fullmatch(resolved["code"]):
         return None
     try:
-        rows = store.series(resolved["code"], days=months * 22)   # 한 달 ≒ 22거래일
+        rows, tier = store.series_tiered(resolved["code"], days=months * 22)  # 한 달 ≒ 22거래일
     except Exception:
         return None
     if not rows:
         return None
 
     return {
-        "source": "krx-cache",
+        "source": f"{store.PROVIDER}-{tier}",
         "name": rows[-1].get("name") or resolved["code"],
         "currency": "KRW",
         "exchange": rows[-1].get("market") or "",
@@ -303,7 +307,7 @@ def _from_yahoo(resolved: dict, months: int) -> dict:
         pass
 
     return {
-        "source": "yfinance",
+        "source": "yahoo-live",
         "name": info.get("name") or resolved["symbol"],
         "currency": info.get("currency") or ("KRW" if resolved["market"] == "KR" else "USD"),
         "exchange": info.get("exchange") or "",
@@ -332,7 +336,7 @@ def fetch_stock(ticker: str, months: int = DEFAULT_MONTHS) -> dict:
         data = _from_yahoo(resolved, months)
     except yahoo.YahooError as error:
         # 국내 종목이면 이미 받아 둔 KRX 시세로 되돌아간다 (야후 장애·해외망 차단 대비)
-        fallback = _from_krx_cache(resolved, months)
+        fallback = _from_krx_store(resolved, months)
         if fallback is None:
             if error.status == 404:
                 raise StockError(
