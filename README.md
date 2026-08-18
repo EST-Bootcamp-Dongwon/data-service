@@ -1,5 +1,13 @@
 # api-test — FastAPI + KRX OpenAPI 실습
 
+> ⚠️ **이 README 는 낡았다.** 저장소는 2026-08-16 에 `api-test` → **`data-service`** 로
+> 개명·승격했다. 아래 본문은 개명 전 개인 개발기이며 교체 예정이다(작업 ⑤).
+>
+> **이 모듈의 경계 — 데이터를 가져오는 것까지.** 리포트를 만드는 것은 `research-service` 다
+> (ADR-DS-0007). 다만 경계만 그었을 뿐 `app/services/research/` 는 아직 이 레포에 있다.
+>
+> 규칙 정본은 [`AGENTS.md`](AGENTS.md), 결정 이력은 [`docs/decisions/`](docs/decisions/) 에 있다.
+
 강사님 배포 자료(`lecture/`)의 **KRX 일별 시세 조회 예제**를, 내 방식대로 다시 설계해 합친 저장소다.
 사용자 CRUD API 실습에서 시작해 **한국거래소 실제 시세**를 다루는 백엔드로 확장했다.
 

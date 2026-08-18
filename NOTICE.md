@@ -7,7 +7,7 @@
 
 | 원본 | 이식 대상 | 라이선스 |
 |---|---|---|
-| ④ `projects/data-service` | `clients/*` · `core/trading_calendar.py` · `core/parallel.py` · `repositories/*` | **MIT** (원문 확인 필요) |
+| ④ `api-test` — **이 저장소의 개명 전 이름** | `clients/*` · `core/trading_calendar.py` · `core/parallel.py` · `repositories/*` | **MIT** (LICENSE 원문 확인 완료, 2026-08-17) |
 | ② `Research-Prompt-Engineering` | `gic_v14/opendart/*` · `normalize/facts.py` | 명시 없음 → 원저작자 표시 유지 |
 | ③ `projects/stock-coin-trade` | `market/quotes.py` · `sessions.py` | 강사님(edumgt) 원본 fork |
 
