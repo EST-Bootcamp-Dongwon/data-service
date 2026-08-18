@@ -235,7 +235,10 @@
     }
 
     const s = data.stats || {};
-    $('candleTitle').textContent = `${data.label} · ${data.period_label}`;
+    // 잘렸으면 제목에 밝힌다. '전체' 를 골랐는데 최근 3,000봉만 왔다는 걸 모르면
+    // 옆의 구간 수익률을 상장 이후 수익률로 읽게 된다.
+    $('candleTitle').textContent = `${data.label} · ${data.period_label}`
+      + (data.truncated ? ` · 최근 ${data.count.toLocaleString()}봉만 표시 (전체 ${data.total_count.toLocaleString()})` : '');
     $('candleStats').innerHTML = [
       tile('종가', App.num(s.last, 2)),
       tile('구간 수익률', `${App.signed(s.change_rate, 2)}%`, App.signClass(s.change_rate)),

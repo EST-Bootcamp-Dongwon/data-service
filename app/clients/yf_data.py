@@ -197,7 +197,7 @@ def _fetch_quote_uncached(symbol: str) -> dict:
     try:
         info = yf.Ticker(symbol).info or {}
     except Exception as error:  # 네트워크 장애 · 요청 한도 · 야후 응답 형식 변경 등
-        raise _wrap_error(error, "야후 파이낸스 조회에 실패했습니다")
+        raise _wrap_error(error, "야후 파이낸스 조회에 실패했습니다") from error
 
     # 가격 5종을 뽑는다. 현재가는 장중/장마감에 따라 키가 달라서 두 곳을 함께 본다.
     prices = {
@@ -256,15 +256,66 @@ def _fetch_quote_uncached(symbol: str) -> dict:
 # ==================================================
 # 2. 기간별 시세 (일봉)
 # ==================================================
-def fetch_history(ticker: str, period: str = "3mo") -> dict:
-    """기간별 일봉을 돌려준다. 캔들 차트와 거래량 차트에 바로 쓸 수 있는 형태다."""
+# 한 번에 내려보내는 봉 상한 (ADR-DS-0004).
+#
+# `period="max"` 는 상장 이후 **전 구간**을 준다 — `^KS11` 은 1997년부터라 7,000행이 넘고
+# `^DJI` 는 1992년부터다. 화면은 그렇게 촘촘한 봉을 그리지 못하고, Vercel 은 요청·응답
+# 본문을 4.5MB 로 제한하며, 그 전에 `maxDuration: 60` 을 먼저 친다.
+#
+# 3,000 으로 잡은 이유 — **10년(약 2,470거래일)은 온전히 통과하고 `max` 만 잘린다.**
+# 상한이 목록에 있는 기간을 잘라 버리면 기간 버튼이 거짓말을 하게 된다.
+MAX_HISTORY_ROWS = 3000
+
+
+def _limit_rows(payload: dict, max_rows: int) -> dict:
+    """봉이 너무 많으면 **최근 것만** 남기고 그 사실을 밝힌다.
+
+    `fred_data._limit_points` 와 같은 규칙이다. 앞을 자르는 이유는 시계열에서
+    최근이 더 쓸모 있기 때문이고, 구간 수익률(`change_rate`)은 **남긴 구간 기준으로
+    다시 계산한다** — 화면이 그리는 구간과 옆에 적히는 숫자가 어긋나면 그게 더 나쁘다.
+
+    ⚠️ `payload` 는 캐시에 들어 있는 원본이다. 제자리에서 고치면 캐시가 오염돼
+    다음 호출이 이미 잘린 데이터를 받는다. 반드시 복사해서 돌려준다.
+    """
+    rows = payload.get("rows") or []
+    total = len(rows)
+    if max_rows <= 0 or total <= max_rows:
+        # 자르지 않았다는 사실도 명시한다. 필드가 있다 없다 하면 화면이 분기해야 한다.
+        return {**payload, "truncated": False, "total_count": total}
+
+    kept = rows[-max_rows:]
+    first, last = kept[0]["close"], kept[-1]["close"]
+
+    return {
+        **payload,
+        "rows": kept,
+        "count": len(kept),
+        "change_rate": (last - first) / first * 100 if first else None,
+        "truncated": True,
+        "total_count": total,
+    }
+
+
+def fetch_history(ticker: str, period: str = "3mo",
+                  max_rows: int = MAX_HISTORY_ROWS) -> dict:
+    """기간별 일봉을 돌려준다. 캔들 차트와 거래량 차트에 바로 쓸 수 있는 형태다.
+
+    `max_rows` 를 넘으면 **최근 구간만** 남기고 `truncated` 로 알린다. 0 이하를 주면
+    자르지 않는다 — 이동평균처럼 **자르기 전 전체가 있어야 왼쪽 끝이 채워지는** 계산을
+    하는 쪽(`services/market_chart.series`)이 그렇게 부른다.
+
+    캐시에는 자르기 전 전체가 들어가므로, 같은 구간을 다른 상한으로 다시 물어도
+    야후를 한 번 더 부르지 않는다.
+    """
     symbol = normalize_ticker(ticker)
     if period not in PERIODS:
         raise YahooError(
             f"period 는 {', '.join(PERIODS)} 중 하나여야 합니다. (받은 값: {period})",
             status=422,
         )
-    return _cached(("history", symbol, period), lambda: _fetch_history_uncached(symbol, period))
+    full = _cached(("history", symbol, period),
+                   lambda: _fetch_history_uncached(symbol, period))
+    return _limit_rows(full, max_rows)
 
 
 def _fetch_history_uncached(symbol: str, period: str) -> dict:
@@ -274,7 +325,7 @@ def _fetch_history_uncached(symbol: str, period: str) -> dict:
     try:
         frame = yf.Ticker(symbol).history(period=period, interval=interval)
     except Exception as error:
-        raise _wrap_error(error, "야후 파이낸스 시세 조회에 실패했습니다")
+        raise _wrap_error(error, "야후 파이낸스 시세 조회에 실패했습니다") from error
 
     if frame is None or frame.empty:
         raise YahooError(

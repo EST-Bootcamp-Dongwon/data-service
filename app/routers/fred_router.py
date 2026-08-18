@@ -51,6 +51,13 @@ class SeriesResponse(BaseModel):
     max: Optional[float] = Field(None, description="구간 최댓값")
     fetched_at: str = Field(..., description="조회 시각(KST)")
     elapsed_ms: int = Field(..., description="FRED 응답에 걸린 시간(ms)")
+    # 잘렸는지를 숨기지 않는다. 화면이 "전 구간을 보고 있다"고 오해하면 판단이 틀어진다.
+    truncated: bool = Field(
+        False, description="`max_points` 를 넘어 최근 구간만 내려보냈는지", examples=[False]
+    )
+    total_count: int = Field(
+        0, description="자르기 전 전체 관측치 수. `truncated` 가 참일 때 의미가 있다", examples=[16482]
+    )
 
 
 class SearchRow(BaseModel):
@@ -86,7 +93,7 @@ def _guard(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except api.FredError as error:
-        raise HTTPException(status_code=error.status, detail=str(error))
+        raise HTTPException(status_code=error.status, detail=str(error)) from error
 
 
 # ==================================================
@@ -137,9 +144,17 @@ def series(
     series_id: str = Path(..., description="FRED 시리즈 ID", examples=["DGS10"]),
     start: str = Query("", description="조회 시작일 `YYYY-MM-DD`. 비우면 전 구간", examples=["2026-01-01"]),
     end: str = Query("", description="조회 종료일 `YYYY-MM-DD`", examples=["2026-07-31"]),
+    max_points: int = Query(
+        api.MAX_SERIES_POINTS, ge=10, le=20000,
+        description="내려받을 관측치 상한. 넘으면 **최근 구간만** 오고 `truncated` 가 참이 된다",
+    ),
 ):
     """지표 하나의 시계열을 날짜 오름차순으로 돌려준다.
 
     결측치(FRED 가 `"."` 로 주는 미발표·휴장 구간)는 빼고 내려주므로 차트에 구멍이 나지 않는다.
+
+    **기간을 비우면 FRED 는 전 구간을 준다** — DGS10 은 1962년부터, DFF 는 1954년부터라
+    2만 행이 넘는다. 그래서 `max_points`(기본 2,000)로 상한을 두고 최근 것부터 남긴다.
+    잘렸는지는 `truncated`, 원래 몇 개였는지는 `total_count` 로 알 수 있다.
     """
-    return _guard(api.fetch_series, series_id, start, end)
+    return _guard(api.fetch_series, series_id, start, end, max_points)

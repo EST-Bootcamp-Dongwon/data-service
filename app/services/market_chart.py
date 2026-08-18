@@ -29,7 +29,6 @@
 
 from __future__ import annotations
 
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Sequence
 
@@ -82,6 +81,16 @@ MAX_OVERLAYS = 4
 # 비교 화면에 올릴 수 있는 종목 수 (같은 이유)
 MAX_COMPARE = 6
 
+# 한 계열이 내려보내는 점 상한 (ADR-DS-0004).
+#
+# 계열 **수**는 위 둘로 막았지만 계열 **길이**는 열려 있었다. `period=max` 를 고르면
+# 코스피는 7,000점이 넘고, 비교 화면은 그것이 6배가 된다. Vercel 은 응답 본문을
+# 4.5MB 로 제한하고 그 전에 `maxDuration: 60` 을 먼저 친다.
+#
+# `yf_data.MAX_HISTORY_ROWS` 와 같은 값으로 맞춘다 — 두 경로가 같은 야후 일봉을 보는데
+# 상한이 다르면 `/api/yf/history` 와 `/api/chart/series` 의 봉 수가 어긋난다.
+MAX_POINTS = 3000
+
 
 def _now_kst() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
@@ -114,22 +123,29 @@ def _moving_average(values: Sequence[float], window: int) -> List[Optional[float
     return [None] * (window - 1) + [round(float(v), 4) for v in averages]
 
 
-def series(ticker: str, period: str = "1y", with_ma: bool = True) -> Dict:
+def series(ticker: str, period: str = "1y", with_ma: bool = True,
+           max_points: int = MAX_POINTS) -> Dict:
     """캔들 차트 한 장 분량 — OHLCV + 이동평균 + 구간 통계.
 
     `/tmp` 캐시를 쓴다. 같은 지수를 여러 사람이 볼 때 야후를 그만큼 두드리지 않기 위함이다.
     캐시가 없어도 결과는 같다 (속도만 담당한다 — 명세서 §1.3).
+
+    `max_points` 를 넘으면 **최근 구간만** 남기고 `truncated` 로 알린다 (ADR-DS-0004).
+    캐시에는 자르기 전 전체를 담으므로 상한을 바꿔 다시 물어도 야후를 다시 부르지 않는다.
     """
-    from app.clients import yf_data              # yfinance 미설치 환경을 위해 늦게 부른다
+    from app.clients import yf_data  # yfinance 미설치 환경을 위해 늦게 부른다
 
     symbol = yf_data.normalize_ticker(ticker)
     cache_key = f"series_{symbol}_{period}_{int(with_ma)}"
     hit = tmp_cache.read("market", cache_key, tmp_cache.TTL_MARKET)
     if hit:
         hit["source"] = "tmp-cache"
-        return hit
+        return _limit_series(hit, max_points)
 
-    history = yf_data.fetch_history(symbol, period)
+    # 상한을 **여기서** 걸지 않고 전 구간을 받는다 (`max_rows=0`).
+    # 이동평균을 먼저 계산해 두어야 잘라 낸 구간의 왼쪽 끝이 채워진다 — 자른 뒤에 계산하면
+    # 120일선의 앞 119일이 통째로 null 이 되어 화면이 잘못 그려진다 (`_limit_series` 참고).
+    history = yf_data.fetch_history(symbol, period, max_rows=0)
     rows = history["rows"]
     closes = [r["close"] for r in rows]
 
@@ -155,8 +171,45 @@ def series(ticker: str, period: str = "1y", with_ma: bool = True) -> Dict:
         "fetched_at": _now_kst(),
         "source": "live",
     }
-    tmp_cache.write("market", cache_key, payload)
-    return payload
+    tmp_cache.write("market", cache_key, payload)     # 캐시에는 자르기 전 전체를 담는다
+    return _limit_series(payload, max_points)
+
+
+def _limit_series(payload: Dict, max_points: int) -> Dict:
+    """계열 배열을 **최근** `max_points` 개로 자르고 잘린 사실을 밝힌다 (ADR-DS-0004).
+
+    두 가지를 다르게 다룬다.
+
+    - **이동평균은 자르기 전 전체에서 계산한 값을 그대로 잘라 온다.** 시계열을 잘라
+      놓고 계산하면 구간 첫날부터 119일치가 null 이라 120일선의 왼쪽이 비어 보인다.
+      "시계열을 페이지로 자르면 안 되는" 이유가 바로 이것이라 순서를 지킨다.
+    - **구간 통계는 남긴 구간 기준으로 다시 낸다.** 화면이 그리는 구간과 옆에 적히는
+      수익률·MDD 가 어긋나면 그게 더 나쁘다.
+
+    ⚠️ `payload` 는 `/tmp` 캐시에 담긴 전체본이다. 제자리에서 고치면 다음 요청이
+    이미 잘린 것을 받는다. 반드시 복사해서 돌려준다.
+    """
+    total = len(payload.get("dates") or [])
+    if max_points <= 0 or total <= max_points:
+        # 자르지 않았다는 사실도 명시한다. 필드가 있다 없다 하면 화면이 분기해야 한다.
+        return {**payload, "truncated": False, "total_count": total}
+
+    closes = payload["closes"][-max_points:]
+    return {
+        **payload,
+        "dates": payload["dates"][-max_points:],
+        "candles": payload["candles"][-max_points:],
+        "closes": closes,
+        "volumes": payload["volumes"][-max_points:],
+        "count": len(closes),
+        "stats": _series_stats(closes),
+        "moving_averages": [
+            {**ma, "values": ma["values"][-max_points:]}
+            for ma in (payload.get("moving_averages") or [])
+        ],
+        "truncated": True,
+        "total_count": total,
+    }
 
 
 def _series_stats(closes: Sequence[float]) -> Dict:
@@ -195,7 +248,8 @@ def _series_stats(closes: Sequence[float]) -> Dict:
 # 2. 거시지표 겹쳐 보기
 # ==================================================
 def overlay(ticker: str, period: str = "1y",
-            overlay_ids: Sequence[str] = ()) -> Dict:
+            overlay_ids: Sequence[str] = (),
+            max_points: int = MAX_POINTS) -> Dict:
     """주가 위에 거시지표를 겹쳐 그릴 값을 만든다.
 
     **두 축을 쓰지 않는다** (U3 결정). 주가는 원, 금리는 % 라 단위가 달라서
@@ -206,8 +260,11 @@ def overlay(ticker: str, period: str = "1y",
     거시지표는 주가와 달력이 다르다(월별 발표·미국 공휴일). 그래서 각 클라이언트의
     `align_to_dates` 로 **주가 날짜에 맞춰 계단식 보간**한다 — 그 시점에 시장이
     알고 있던 값이 직전 발표치이므로 앞의 값을 끌어오는 방향이 맞다.
+
+    상한은 주가에만 걸면 된다. 거시지표는 **주가 날짜에 맞춰** 채우므로 주가가 잘리면
+    같이 짧아진다 (FRED 조회도 잘린 구간의 시작·끝으로만 부른다).
     """
-    base = series(ticker, period, with_ma=False)
+    base = series(ticker, period, with_ma=False, max_points=max_points)
     dates = base["dates"]
     wanted = [i for i in overlay_ids if i in OVERLAY_BY_ID][:MAX_OVERLAYS]
 
@@ -231,7 +288,10 @@ def overlay(ticker: str, period: str = "1y",
         kind, _, key = overlay_id.partition(":")
         try:
             if kind == "fred":
-                fetched = fred_data.fetch_series(key, dates[0], dates[-1])
+                # 상한을 끈다(`max_points=0`). 조회 구간이 이미 주가 구간으로 묶여 있어
+                # 길어야 주가 점 수 남짓이고, 기본 상한(2,000)에 걸리면 **오래된 쪽이 잘려**
+                # 구간 앞부분이 통째로 빈 선이 된다 — 자른 티도 안 나는 조용한 결손이다.
+                fetched = fred_data.fetch_series(key, dates[0], dates[-1], max_points=0)
                 aligned = fred_data.align_to_dates(fetched, dates)
             else:
                 # ECOS 는 연 단위로 받는다. 구간 길이에서 햇수를 거꾸로 구한다.
@@ -270,9 +330,26 @@ def overlay(ticker: str, period: str = "1y",
         "lines": lines,
         "errors": errors,
         "note": "단위가 서로 달라 구간 첫날을 100 으로 맞춰 그립니다. "
-                "상관계수는 수준이 아니라 **일간 변화율** 기준입니다 (허위 상관 방지).",
+                "상관계수는 수준이 아니라 **일간 변화율** 기준입니다 (허위 상관 방지)."
+                + _truncation_note(base),
+        "truncated": base.get("truncated", False),
+        "total_count": base.get("total_count", len(dates)),
         "fetched_at": _now_kst(),
     }
+
+
+def _truncation_note(payload: Dict) -> str:
+    """잘렸을 때만 사람이 읽을 문장을 돌려준다. 안 잘렸으면 빈 문자열.
+
+    `truncated` 플래그만으로는 화면이 분기 코드를 새로 써야 한다. `/market` 화면은
+    `note` 를 그대로 찍고 있으므로 여기에 실어 보내면 고지가 바로 눈에 보인다.
+    """
+    if not payload.get("truncated"):
+        return ""
+    kept = len(payload.get("dates") or [])
+    total = payload.get("total_count", kept)
+    return (f" · 구간이 길어 **최근 {kept:,}개 지점**만 그립니다 "
+            f"(전체 {total:,}개). 더 보려면 기간을 나눠서 조회하세요.")
 
 
 def _why_no_correlation(values: Sequence[Optional[float]]) -> str:
@@ -368,13 +445,13 @@ def breadth(days: int = 120) -> Dict:
     values = [r["value"] for r in series_rows]
 
     # 상승 비율 — 등락한 종목 중 오른 비율 (보합은 분모에서 뺀다)
-    ratios = [round(u / (u + d) * 100, 2) if (u + d) else 50.0 for u, d in zip(up, down)]
+    ratios = [round(u / (u + d) * 100, 2) if (u + d) else 50.0 for u, d in zip(up, down, strict=False)]
 
     # 누적 등락선(A/D Line) — (상승−하락)을 계속 더한 값.
     # 지수와 방향이 갈리면 시장의 힘이 소수 종목에 쏠렸다는 뜻이다.
     advance_decline: List[int] = []
     running = 0
-    for u, d in zip(up, down):
+    for u, d in zip(up, down, strict=False):
         running += u - d
         advance_decline.append(running)
 
@@ -410,7 +487,8 @@ def breadth(days: int = 120) -> Dict:
 # ==================================================
 # 4. 종목 비교 (100 기준 지수화)
 # ==================================================
-def compare(tickers: Sequence[str], period: str = "1y") -> Dict:
+def compare(tickers: Sequence[str], period: str = "1y",
+            max_points: int = MAX_POINTS) -> Dict:
     """여러 종목을 **구간 첫날 = 100** 으로 맞춰 한 차트에 올린다.
 
     절대가격으로 비교하면 뜻이 없다 — 7만원짜리와 300달러짜리를 나란히 그리면
@@ -428,7 +506,7 @@ def compare(tickers: Sequence[str], period: str = "1y") -> Dict:
     errors: List[Dict] = []
     for ticker in wanted:
         try:
-            fetched.append(series(ticker, period, with_ma=False))
+            fetched.append(series(ticker, period, with_ma=False, max_points=max_points))
         except Exception as error:
             errors.append({"ticker": ticker, "error": str(error)})
 
@@ -457,7 +535,11 @@ def compare(tickers: Sequence[str], period: str = "1y") -> Dict:
         "dates": dates,
         "lines": lines,
         "errors": errors,
-        "note": "구간 첫날을 100 으로 맞춰 그립니다. 선의 높이는 가격이 아니라 **누적 상승률**입니다.",
+        "note": "구간 첫날을 100 으로 맞춰 그립니다. 선의 높이는 가격이 아니라 **누적 상승률**입니다."
+                + _truncation_note(axis),
+        # 종목마다 상장일이 달라 하나만 잘릴 수 있다. **하나라도 잘리면** 잘린 것으로 알린다.
+        "truncated": any(f.get("truncated") for f in fetched),
+        "total_count": max((f.get("total_count", 0) for f in fetched), default=len(dates)),
         "fetched_at": _now_kst(),
     }
 

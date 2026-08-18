@@ -214,16 +214,70 @@ def _call(path: str, params: Dict[str, str]) -> dict:
 # ==================================================
 # 1. 시계열 조회
 # ==================================================
-def fetch_series(series_id: str, start: str = "", end: str = "") -> dict:
+# 한 번에 내려보내는 관측치 상한 (ADR-DS-0004).
+#
+# 비우고 부르면 FRED 는 전 구간을 준다 — DGS10 은 1962년부터라 16,000행이 넘고
+# DFF 는 1954년부터라 26,000행이 넘는다. 화면은 그렇게 촘촘한 점을 그리지 못하고,
+# Vercel 은 요청·응답 본문을 4.5MB 로 제한하며, 그 전에 maxDuration 을 먼저 친다.
+MAX_SERIES_POINTS = 2000
+
+
+def _limit_points(payload: dict, max_points: int) -> dict:
+    """관측치가 너무 많으면 **최근 것만** 남기고 그 사실을 밝힌다.
+
+    앞을 자르는 이유는 시계열에서 최근이 더 쓸모 있기 때문이다.
+    자른 뒤에는 통계(first·change·min·max)를 **자른 구간 기준으로 다시 계산한다** —
+    화면이 그리는 구간과 옆에 적히는 숫자가 어긋나면 그게 더 나쁘다.
+
+    ⚠️ `payload` 는 캐시에 들어 있는 원본이다. 제자리에서 고치면 캐시가 오염돼
+    다음 호출이 이미 잘린 데이터를 받는다. 반드시 복사해서 돌려준다.
+    """
+    total = len(payload.get("values") or [])
+    if max_points <= 0 or total <= max_points:
+        # 자르지 않았다는 사실도 명시한다. 필드가 있다 없다 하면 화면이 분기해야 한다.
+        return {**payload, "truncated": False, "total_count": total}
+
+    dates = payload["dates"][-max_points:]
+    values = payload["values"][-max_points:]
+    first, last = values[0], values[-1]
+
+    return {
+        **payload,
+        "dates": dates,
+        "values": values,
+        "count": len(values),
+        "first": first,
+        "latest": last,
+        "latest_date": dates[-1],
+        "change": last - first,
+        "change_rate": (last - first) / first * 100 if first else None,
+        "min": min(values),
+        "max": max(values),
+        "truncated": True,
+        "total_count": total,
+    }
+
+
+def fetch_series(
+    series_id: str,
+    start: str = "",
+    end: str = "",
+    max_points: int = MAX_SERIES_POINTS,
+) -> dict:
     """지표 하나의 시계열을 날짜 오름차순으로 돌려준다.
 
     `start`·`end` 는 `YYYY-MM-DD`. 비우면 FRED 가 전 구간을 준다.
     지표 이름·단위·발표주기는 `series` 엔드포인트에서 따로 받아 함께 실어 준다.
+
+    `max_points` 를 넘으면 **최근 구간만** 남기고 `truncated` 로 알린다.
+    캐시에는 자르기 전 전체가 들어가므로, 같은 지표를 다른 상한으로 다시 물어도
+    FRED 를 한 번 더 부르지 않는다.
     """
     sid = (series_id or "").strip().upper()
     if not sid:
         raise FredError("지표 ID를 입력해 주세요. (예: DGS10)", status=422)
-    return _cached(("series", sid, start, end), lambda: _fetch_series_uncached(sid, start, end))
+    full = _cached(("series", sid, start, end), lambda: _fetch_series_uncached(sid, start, end))
+    return _limit_points(full, max_points)
 
 
 def _fetch_series_uncached(sid: str, start: str, end: str) -> dict:
@@ -357,12 +411,12 @@ def correlation(xs: Sequence[Optional[float]], ys: Sequence[Optional[float]]) ->
     값이 비었거나 변화가 전혀 없으면(분모 0) `None` 을 돌려준다.
     """
     # 두 배열 모두 값이 있는 구간만 남겨 변화율을 만든다
-    pairs = [(x, y) for x, y in zip(xs, ys) if x is not None and y is not None]
+    pairs = [(x, y) for x, y in zip(xs, ys, strict=False) if x is not None and y is not None]
     if len(pairs) < 3:
         return None
 
     dx, dy = [], []
-    for (x0, y0), (x1, y1) in zip(pairs, pairs[1:]):
+    for (x0, y0), (x1, y1) in zip(pairs, pairs[1:], strict=False):
         if not x0 or not y0:          # 0 으로 나눌 수 없다
             continue
         dx.append((x1 - x0) / x0)
@@ -373,7 +427,7 @@ def correlation(xs: Sequence[Optional[float]], ys: Sequence[Optional[float]]) ->
         return None
 
     mean_x, mean_y = sum(dx) / n, sum(dy) / n
-    cov = sum((a - mean_x) * (b - mean_y) for a, b in zip(dx, dy))
+    cov = sum((a - mean_x) * (b - mean_y) for a, b in zip(dx, dy, strict=False))
     var_x = sum((a - mean_x) ** 2 for a in dx)
     var_y = sum((b - mean_y) ** 2 for b in dy)
     if var_x <= 0 or var_y <= 0:

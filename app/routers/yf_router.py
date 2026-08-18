@@ -20,7 +20,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.clients import yf_data as api           # 외부 연동 (야후 파이낸스 호출)
+from app.clients import yf_data as api  # 외부 연동 (야후 파이낸스 호출)
 
 router = APIRouter(prefix="/api/yf", tags=["야후 파이낸스 시세"])
 
@@ -89,6 +89,13 @@ class HistoryResponse(BaseModel):
     change_rate: Optional[float] = Field(None, description="구간 수익률(%) — 첫 종가 대비 마지막 종가")
     fetched_at: str = Field(..., description="조회 시각(KST)")
     elapsed_ms: int = Field(..., description="야후 응답에 걸린 시간(ms)")
+    # 잘렸는지를 숨기지 않는다. 화면이 "전 구간을 보고 있다"고 오해하면 판단이 틀어진다.
+    truncated: bool = Field(
+        False, description="`max_rows` 를 넘어 최근 구간만 내려보냈는지", examples=[False]
+    )
+    total_count: int = Field(
+        0, description="자르기 전 전체 봉 수. `truncated` 가 참일 때 의미가 있다", examples=[7412]
+    )
 
 
 class PeriodItem(BaseModel):
@@ -107,7 +114,7 @@ def _guard(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except api.YahooError as error:
-        raise HTTPException(status_code=error.status, detail=str(error))
+        raise HTTPException(status_code=error.status, detail=str(error)) from error
 
 
 # ==================================================
@@ -154,6 +161,16 @@ def quote(
 def history(
     ticker: str = Query("005930.KS", description="야후 티커", examples=["005930.KS"]),
     period: str = Query("3mo", description=f"조회 구간 — {' · '.join(api.PERIODS)}", examples=["3mo"]),
+    max_rows: int = Query(
+        api.MAX_HISTORY_ROWS, ge=10, le=20000,
+        description="내려받을 봉 상한. 넘으면 **최근 구간만** 오고 `truncated` 가 참이 된다",
+    ),
 ):
-    """기간별 일봉을 조회한다. 캔들 차트와 거래량 막대에 바로 쓸 수 있는 형태로 돌려준다."""
-    return _guard(api.fetch_history, ticker, period)
+    """기간별 일봉을 조회한다. 캔들 차트와 거래량 막대에 바로 쓸 수 있는 형태로 돌려준다.
+
+    **`period=max` 는 상장 이후 전 구간을 준다** — 코스피(`^KS11`)는 1997년부터라
+    7,000봉이 넘는다. 그래서 `max_rows`(기본 3,000)로 상한을 두고 최근 것부터 남긴다.
+    10년치(약 2,470거래일)는 기본값 안에 온전히 들어온다.
+    잘렸는지는 `truncated`, 원래 몇 개였는지는 `total_count` 로 알 수 있다.
+    """
+    return _guard(api.fetch_history, ticker, period, max_rows)

@@ -56,6 +56,7 @@ class PresetsResponse(BaseModel):
     periods: List[PeriodItem] = Field(..., description="고를 수 있는 기간")
     max_overlays: int = Field(..., description="한 번에 겹칠 수 있는 지표 수")
     max_compare: int = Field(..., description="한 번에 비교할 수 있는 종목 수")
+    max_points: int = Field(..., description="한 계열이 내려보내는 점 상한 (넘으면 최근 구간만)")
 
 
 class SeriesStats(BaseModel):
@@ -91,6 +92,11 @@ class SeriesResponse(BaseModel):
     moving_averages: List[MovingAverage]
     fetched_at: str
     source: str = Field(..., description="`live` · `tmp-cache`")
+    # 잘렸는지를 숨기지 않는다. 화면이 "전 구간을 보고 있다"고 오해하면 판단이 틀어진다.
+    truncated: bool = Field(
+        False, description="`max_points` 를 넘어 최근 구간만 내려보냈는지", examples=[False])
+    total_count: int = Field(
+        0, description="자르기 전 전체 점 수. `truncated` 가 참일 때 의미가 있다", examples=[7412])
 
 
 class OverlayLine(BaseModel):
@@ -121,7 +127,11 @@ class OverlayResponse(BaseModel):
     dates: List[str]
     lines: List[OverlayLine]
     errors: List[OverlayError] = Field(..., description="실패한 지표 (나머지는 그대로 그린다)")
-    note: str
+    note: str = Field(..., description="표시 규칙 안내. 잘렸다면 그 사실도 이 문장에 들어간다")
+    truncated: bool = Field(
+        False, description="`max_points` 를 넘어 최근 구간만 내려보냈는지", examples=[False])
+    total_count: int = Field(
+        0, description="자르기 전 전체 점 수", examples=[7412])
     fetched_at: str
 
 
@@ -171,6 +181,10 @@ class CompareResponse(BaseModel):
     lines: List[CompareLine]
     errors: List[CompareError]
     note: str = ""
+    truncated: bool = Field(
+        False, description="한 종목이라도 `max_points` 를 넘어 잘렸는지", examples=[False])
+    total_count: int = Field(
+        0, description="자르기 전 점 수 (가장 긴 종목 기준)", examples=[7412])
     fetched_at: str
 
 
@@ -190,6 +204,7 @@ def presets():
         "periods": [{"key": k, "label": v} for k, v in yf_data.PERIODS.items()],
         "max_overlays": service.MAX_OVERLAYS,
         "max_compare": service.MAX_COMPARE,
+        "max_points": service.MAX_POINTS,
     }
 
 
@@ -199,6 +214,9 @@ def series(
                         examples=["^KS11"]),
     period: str = Query("1y", description="조회 기간", examples=["1y"]),
     ma: bool = Query(True, description="이동평균(20·60·120일)을 함께 계산할지"),
+    max_points: int = Query(
+        service.MAX_POINTS, ge=10, le=20000,
+        description="내려받을 점 상한. 넘으면 **최근 구간만** 오고 `truncated` 가 참이 된다"),
 ):
     """지수·종목 하나의 캔들 차트에 필요한 값을 돌려준다.
 
@@ -208,9 +226,13 @@ def series(
 
     이동평균은 구간이 짧으면 아예 빼고 보낸다. 120일선을 60점짜리 차트에 얹으면
     계열 전체가 null 이라 범례만 남는다.
+
+    **`period=max` 는 상장 이후 전 구간이라** 코스피는 7,000봉이 넘는다.
+    `max_points`(기본 3,000)를 넘으면 최근 구간만 오고 `truncated` 가 참이 된다.
+    이동평균은 **자르기 전 전체에서 계산한 값**이라 왼쪽 끝이 비지 않는다.
     """
     try:
-        return service.series(ticker, period, with_ma=ma)
+        return service.series(ticker, period, with_ma=ma, max_points=max_points)
     except yf_data.YahooError as error:
         raise HTTPException(status_code=error.status, detail=str(error)) from error
 
@@ -221,6 +243,9 @@ def overlay(
     period: str = Query("1y", description="조회 기간"),
     ids: str = Query("", description="겹칠 지표 id 를 쉼표로 (`/presets` 의 `overlays` 참고)",
                      examples=["ecos:base_rate,fred:DGS10"]),
+    max_points: int = Query(
+        service.MAX_POINTS, ge=10, le=20000,
+        description="내려받을 점 상한. 주가에 걸면 거시지표도 그 날짜에 맞춰 짧아진다"),
 ):
     """주가 위에 금리·환율·물가를 겹쳐 그릴 값을 돌려준다.
 
@@ -232,10 +257,13 @@ def overlay(
     이유만으로 상관이 높게 나온다(허위 상관).
 
     지표 하나가 실패해도 나머지는 그린다 — 실패한 것만 `errors` 에 담아 200 으로 돌려준다.
+
+    구간이 `max_points` 보다 길면 최근 구간만 오고, 그 사실이 `truncated` 와 `note`
+    양쪽에 담긴다.
     """
     wanted = [i.strip() for i in (ids or "").split(",") if i.strip()]
     try:
-        return service.overlay(ticker, period, wanted)
+        return service.overlay(ticker, period, wanted, max_points=max_points)
     except yf_data.YahooError as error:
         raise HTTPException(status_code=error.status, detail=str(error)) from error
 
@@ -262,6 +290,9 @@ def breadth(
 def compare(
     tickers: str = Query(..., description="비교할 티커를 쉼표로", examples=["005930.KS,000660.KS,AAPL"]),
     period: str = Query("1y", description="조회 기간"),
+    max_points: int = Query(
+        service.MAX_POINTS, ge=10, le=20000,
+        description="**종목 하나당** 점 상한. 비교는 계열 수만큼 응답이 커진다"),
 ):
     """여러 종목을 **구간 첫날 = 100** 으로 맞춰 한 차트에 올린다.
 
@@ -273,4 +304,4 @@ def compare(
     wanted = [t.strip() for t in (tickers or "").split(",") if t.strip()]
     if not wanted:
         raise HTTPException(status_code=422, detail="비교할 티커를 하나 이상 넣어 주세요.")
-    return service.compare(wanted, period)
+    return service.compare(wanted, period, max_points=max_points)
