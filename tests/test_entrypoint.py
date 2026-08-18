@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 from pathlib import Path
 
 import pytest
@@ -74,54 +75,97 @@ def test_root_main_is_a_shim_of_app_main():
     )
 
 
-def test_vercel_entrypoint_matches_pyproject():
-    """`pyproject.toml` 의 `[tool.vercel] entrypoint` 가 실제 파일을 가리킨다.
-
-    README·Dockerfile·Vercel 세 곳이 어긋나면 배포가 실패한다(AGENTS.md).
-    문서가 아니라 파일 존재로 확인한다.
-    """
+def _vercel_entrypoint() -> str | None:
+    """`pyproject.toml` 의 `[tool.vercel] entrypoint` 값. 없으면 None."""
     import tomllib
 
     pyproject = PROJECT_ROOT / "pyproject.toml"
     if not pyproject.exists():
-        pytest.skip("pyproject.toml 이 아직 없다")
-
+        return None
     config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    entrypoint = config.get("tool", {}).get("vercel", {}).get("entrypoint")
+    return config.get("tool", {}).get("vercel", {}).get("entrypoint")
+
+
+def _entrypoint_file(module: str) -> Path:
+    """`app.main` → `<루트>/app/main.py`. 패키지면 `__init__.py` 로 떨어진다."""
+    base = PROJECT_ROOT / Path(*module.split("."))
+    return base / "__init__.py" if base.is_dir() else base.with_suffix(".py")
+
+
+def test_vercel_entrypoint_is_module_object_form():
+    """`[tool.vercel] entrypoint` 는 **`module:object`** 다. 파일 경로가 아니다.
+
+    ⚠️ **이 테스트는 실제 사고를 겪고 다시 쓴 것이다** (2026-08-18).
+    예전 판은 `(PROJECT_ROOT / entrypoint).exists()` 로 "파일이 있는가"만 봤다.
+    그래서 `"app/main.py"` 라고 적어도 초록불이었고, Vercel 은 그 값을 거부했다.
+
+        Error: "tool.vercel.entrypoint" in "pyproject.toml" is "app/main.py" but no
+        matching module file was found. Use "module:object" format (e.g. "main:app")
+
+    빌드가 시작 0.1초 만에 죽으므로 배포 목록에는 **2초짜리 Error** 로만 남고,
+    프로덕션 URL 은 마지막 성공본을 계속 서빙한다. 화면을 열어 보는 것으로는 못 잡는다.
+    그래서 형식 자체를 여기서 검사한다.
+
+    근거: https://vercel.com/docs/functions/runtimes/python#python-entrypoints
+    """
+    entrypoint = _vercel_entrypoint()
     if entrypoint is None:
         pytest.skip("[tool.vercel] entrypoint 가 아직 없다")
 
-    target = PROJECT_ROOT / entrypoint
-    assert target.exists(), f"entrypoint 가 가리키는 {entrypoint} 파일이 없다"
+    assert re.fullmatch(r"[A-Za-z_][\w.]*:[A-Za-z_]\w*", entrypoint), (
+        f"entrypoint '{entrypoint}' 가 module:object 형식이 아니다. "
+        "'app/main.py' 같은 파일 경로를 적으면 Vercel 빌드가 즉시 실패한다 "
+        "(정답은 'app.main:app')."
+    )
 
 
-def test_vercel_json_functions_key_matches_entrypoint():
-    """`vercel.json` 의 함수 키가 실제 엔트리포인트 파일과 같아야 한다.
+def test_vercel_entrypoint_resolves_to_a_real_object():
+    """entrypoint 가 가리키는 모듈 파일이 있고, 그 안에 그 이름의 객체가 실제로 있다.
 
-    **이걸 놓치면 배포가 실패한다.** Vercel 은 `functions` 패턴이 아무 함수와도
-    매칭되지 않으면 빌드를 멈춘다. 엔트리포인트를 `app/main.py` 로 옮기면서
-    `vercel.json` 의 키를 `"main.py"` 로 두면 정확히 그 상태가 된다.
+    형식만 맞고 대상이 없으면 Vercel 이 같은 자리에서 죽는다("no matching module file").
+    """
+    entrypoint = _vercel_entrypoint()
+    if entrypoint is None:
+        pytest.skip("[tool.vercel] entrypoint 가 아직 없다")
 
-    로컬에서는 아무 증상이 없고 push 한 뒤에야 드러나므로 여기서 잡는다.
+    module_path, _, attr = entrypoint.partition(":")
+
+    target = _entrypoint_file(module_path)
+    assert target.exists(), f"entrypoint 의 모듈 '{module_path}' 에 해당하는 {target} 가 없다"
+
+    module = importlib.import_module(module_path)
+    assert hasattr(module, attr), (
+        f"{module_path} 에 '{attr}' 가 없다. Vercel 은 이 이름의 ASGI 앱을 찾는다."
+    )
+
+
+def test_vercel_json_functions_key_is_the_resolved_entrypoint_file():
+    """`vercel.json` 의 함수 키는 **해석된 엔트리포인트 파일 경로**여야 한다.
+
+    두 파일이 서로 다른 표기를 쓴다는 점이 함정이다 —
+    `pyproject.toml` 은 `app.main:app`(모듈), `vercel.json` 은 `app/main.py`(파일)다.
+    Vercel 문서가 `functions` 를 "keyed by your resolved entrypoint file" 로 규정한다.
+
+    키가 아무 함수와도 매칭되지 않으면 빌드가 멈춘다. 로컬에서는 아무 증상이 없고
+    push 한 뒤에야 드러나므로 여기서 잡는다.
+
+    근거: https://vercel.com/docs/frameworks/backend/fastapi
     """
     import json
-    import tomllib
 
     vercel_json = PROJECT_ROOT / "vercel.json"
-    pyproject = PROJECT_ROOT / "pyproject.toml"
-    if not (vercel_json.exists() and pyproject.exists()):
-        pytest.skip("vercel.json 또는 pyproject.toml 이 없다")
+    entrypoint = _vercel_entrypoint()
+    if not vercel_json.exists() or entrypoint is None:
+        pytest.skip("vercel.json 또는 entrypoint 설정이 없다")
 
     functions = json.loads(vercel_json.read_text(encoding="utf-8")).get("functions", {})
     if not functions:
         pytest.skip("vercel.json 에 functions 설정이 없다")
 
-    config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    entrypoint = config.get("tool", {}).get("vercel", {}).get("entrypoint")
-    if entrypoint is None:
-        pytest.skip("[tool.vercel] entrypoint 가 없다")
+    module_path, _, _ = entrypoint.partition(":")
+    expected = _entrypoint_file(module_path).relative_to(PROJECT_ROOT).as_posix()
 
-    assert entrypoint in functions, (
-        f"vercel.json 의 함수 키 {list(functions)} 가 엔트리포인트 '{entrypoint}' 와 다르다. "
-        "매칭되는 함수가 없으면 Vercel 빌드가 실패한다."
+    assert expected in functions, (
+        f"vercel.json 의 함수 키 {list(functions)} 가 해석된 엔트리포인트 파일 "
+        f"'{expected}' 와 다르다. 매칭되는 함수가 없으면 Vercel 빌드가 실패한다."
     )

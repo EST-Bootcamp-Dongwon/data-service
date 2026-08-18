@@ -40,8 +40,16 @@ dev = [
 
 # Vercel 엔트리포인트. README·Dockerfile·여기가 어긋나면 배포가 실패한다.
 # 정본은 app.main:app 이고, 루트 main.py 는 그것을 다시 내보내는 shim 이다.
+#
+# ⚠️ **값의 형식은 `module:object` 다. 파일 경로가 아니다.**
+#    2026-08-18 에 여기 `"app/main.py"` 를 적어 배포가 이틀 동안 죽었다. 빌드 로그 원문:
+#      Error: "tool.vercel.entrypoint" in "pyproject.toml" is "app/main.py" but no matching
+#      module file was found. Use "module:object" format (e.g. "main:app") ...
+#    증상이 고약하다 — `vercel build` 시작 0.1초 만에 죽어서 **빌드 시간이 2초**로 찍히고,
+#    프로덕션 URL 은 마지막 성공본을 계속 서빙한다. 화면만 보면 멀쩡해 보인다.
+#    (https://vercel.com/docs/functions/runtimes/python#python-entrypoints)
 [tool.vercel]
-entrypoint = "app/main.py"
+entrypoint = "app.main:app"
 
 [tool.ruff]
 line-length = 100
