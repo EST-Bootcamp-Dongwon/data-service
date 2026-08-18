@@ -64,9 +64,21 @@
 - **경로 기준점은 `app/core/paths.py`.** 새 코드는 `Path(__file__).parent` 로 루트를 직접
   계산하지 않는다 — 파일을 옮기는 순간 조용히 다른 곳을 가리키고, 정적 마운트는
   OpenAPI에 잡히지 않아 **서버는 정상 기동하고 화면만 404**가 된다.
+- **환경 기준점은 `app/core/settings.py`** (ADR-DS-0003). `paths.py`가 경로의 기준점인 것과
+  같은 자리다. 새 코드는 `os.getenv`를 직접 부르지 않고 `env()`·`app_env()`를 거친다.
+  ⚠️ **인증키는 여기가 아니라 `app/core/secrets.py`다** — 그쪽은 환경변수→`.env`→`.key`로
+  파일 폴백이 있고, 없으면 그 API만 503이 된다. 이쪽은 환경변수만 보고, 없으면 기본값이거나
+  즉시 실패다. `DATABASE_URL`은 비밀번호를 품지만 **접속 전략의 일부라 `settings.py` 소관**이고
+  로그·화면에는 `safe_url()`로 가려서 싣는다.
+  기존 세 곳(`secrets.py`·`krx_store.py`·`research/stages.py`)은 **먼저 있던 것이라 그대로 둔다** —
+  `tests/test_settings.py`가 그 목록을 얼려 두어 **새로 늘어나는 것만** 잡는다.
 - **DB 접속은 `APP_ENV`로 분기한다** (ADR-DS-0003).
   `vercel`: 6543 + `NullPool` + `statement_cache_size=0` + `prepared_statement_cache_size=0`
   `local` : 5432 직결 + 정상 풀. **셋 중 하나만 빠져도 prepared statement 충돌이 산발적으로 난다.**
+  캐시가 두 겹이라 하나만 끄면 **빈도만 줄고 사라지지 않는다** — 그게 "산발적"의 정체다.
+  ⚠️ **`APP_ENV` 미설정이 기본 사고 지점이다.** 정적 기본값을 `local`로 두면 배포본이 조용히
+  로컬 전략으로 뜬다. 그래서 `VERCEL`·`VERCEL_ENV`를 먼저 감지하고 그 다음에 `local`로 떨어진다.
+  ⚠️ **아직 표명일 뿐 엔진이 없다.** 값이 실제로 맞는지는 접속 코드를 쓸 때 처음 검증된다.
 - **OHLC는 `integer`.** 국내 주가는 원 단위 정수라 `numeric`이 필요 없다(25% 절약).
 - `ohlcv`는 **연 단위 RANGE 파티셔닝**. 인덱스는 PK 하나로 시작한다.
 - **응답에 상한을 건다** — Vercel 요청·응답 본문 4.5MB 한도 (ADR-DS-0004).
