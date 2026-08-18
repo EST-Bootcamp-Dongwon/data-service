@@ -1,0 +1,84 @@
+[project]
+name = "data-service"
+version = "0.1.0"
+description = "국내 시장 데이터의 수집·정규화·조회 API + 결정론적 리서치 리포트 하네스"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+# 앱 런타임이 실제로 import 하는 것만 적는다.
+# 실측 근거: `grep -rhoE '^\s*(import|from)\s+\w+' app/ main.py` → fastapi · numpy · pydantic · yfinance.
+# 나머지 requirements.txt 항목(pandas·peewee·curl_cffi·protobuf…)은 전부 전이 의존이라 여기 적지 않는다.
+# uv 가 uv.lock 에 고정하고 `uv export` 가 requirements.txt 로 펼친다.
+dependencies = [
+  "fastapi==0.141.1",
+  "uvicorn[standard]==0.52.0",
+  "numpy==2.5.1",
+  "pydantic==2.13.4",
+  # ★ 선택 의존성이 아니다. app/main.py:46-52 가 import 실패를 흡수하도록 짜여 있어
+  #   "없어도 서버는 뜬다" — 대신 yf·stock·chart 라우터 3종(엔드포인트 10개)과
+  #   화면 3개가 조용히 빠진다. 즉 이걸 빼면 **공개 계약이 51개에서 41개로 줄어든다.**
+  #   tests/test_contract.py 의 스냅샷이 그 축소를 잡는다.
+  "yfinance==1.5.2",
+]
+
+[project.optional-dependencies]
+# data/ 산출물을 만드는 오프라인 스크립트 전용. **앱 코드는 하나도 쓰지 않는다.**
+# matplotlib 은 scripts/yf.py 에서만 쓰이는데(app/ 안에서는 주석에만 등장) 40MB+ 를
+# 차지한다. 배포 번들에서 빼기 위해 런타임 의존성과 갈라 둔다.
+scripts = [
+  "matplotlib==3.11.1",
+  "beautifulsoup4==4.15.0",
+]
+
+dev = [
+  "pytest>=8.3",
+  "httpx>=0.28",     # fastapi.testclient 가 요구한다
+  "syrupy>=4.8",     # 계약 스냅샷 — 리팩터링 전에 현재 동작을 얼린다
+  "ruff>=0.14",
+  "invoke>=2.2",
+]
+
+# Vercel 엔트리포인트. README·Dockerfile·여기가 어긋나면 배포가 실패한다.
+# 정본은 app.main:app 이고, 루트 main.py 는 그것을 다시 내보내는 shim 이다.
+[tool.vercel]
+entrypoint = "app/main.py"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# 강의 원본 서브모듈과 실습 아카이브는 읽기 전용이라 검사 대상이 아니다.
+extend-exclude = ["lecture", "실습", ".venv", "node_modules"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = [
+  "E501",  # 줄 길이는 formatter 가 맞춘다
+  "B008",  # FastAPI 의 Depends()/Query() 기본값 관용구
+]
+
+# `UP`(pyupgrade)을 일부러 빼 뒀다.
+#
+# 켜면 2,088건 중 1,975건이 UP006/UP045/UP035 로 잡힌다 — `List[str]` → `list[str]`,
+# `Optional[X]` → `X | None` 같은 **순수 표기 현대화**다. 동작은 하나도 안 바뀐다.
+#
+# 지금 켜지 않는 이유는 두 가지다.
+#   1. 저장 계층 교체·페이지네이션 추가와 같은 커밋에 2천 줄짜리 표기 변경이 섞이면
+#      git diff 에서 진짜 변경이 묻힌다.
+#   2. 강의 코드가 `List[str]` 표기를 쓴다. 바꿀지는 교육 자료와의 정합성 문제라
+#      기술적 판단만으로 정할 일이 아니다.
+#
+# 켜기로 정하면 `ruff check --select UP --fix` 한 번으로 끝나고,
+# tests/ 의 계약 스냅샷이 회귀를 잡아 준다. **그때 단독 커밋으로 한다.**
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# tests/ 에는 js 하네스 4개가 함께 있다. 파이썬 테스트만 수집한다.
+python_files = ["test_*.py"]
+addopts = "-q"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
