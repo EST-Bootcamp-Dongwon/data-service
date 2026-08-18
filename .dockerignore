@@ -1,0 +1,42 @@
+# Docker 빌드 컨텍스트에서 뺄 것.
+# 컨텍스트가 크면 빌드가 느려지고 이미지에 쓸데없는 것이 섞인다.
+
+# ★ 인증키 — 반드시 제외한다. 키는 파일이 아니라 환경변수로 넣는다.
+.key
+.env
+.env.*
+
+# 개발 환경
+.git
+.gitignore
+.venv/
+venv/
+node_modules/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.vercel/
+uvicorn.log
+
+# 강의 원본 서브모듈 — 읽기 전용 참고 자료라 서버 구동과 무관하다
+lecture/
+
+# 문서·작업 기록 (README 는 남긴다)
+docs/
+research/
+*.md
+!README.md
+!NOTICE.md
+프로젝트 작업 프롬프트*.txt
+
+# 테스트·스크립트 — 이미지 안에서 돌리지 않는다
+tests/
+scripts/
+test.sh
+
+# ★ 대용량 로컬 데이터 — 이미지에 굽지 않는다.
+#   krx_cache.db 123MB · krx_bundle.db 30MB · report_index.db 18.5MB = 171MB.
+#   compose 가 ./data 를 볼륨으로 마운트하므로 컨테이너 안에서는 그대로 보인다.
+#   (앱이 반드시 필요로 하는 JSON 7종은 2MB 남짓이고 같은 볼륨으로 들어온다.)
+data/

@@ -1,0 +1,69 @@
+# data-service — 모듈 자기 것만 둔다.
+# 팀 단계에서 상위 조립(quant-contract/compose.yaml)이 include 로 흡수한다.
+# 그래야 지금은 이 레포 하나만 클론해도 그대로 뜬다.
+#
+#   docker compose up -d                      앱만
+#   docker compose --profile local-db up -d   앱 + 로컬 Postgres
+
+name: data-service
+
+services:
+  data-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: data-service:local      # ★ 결과물 태그다. 공식 베이스 이미지명을 적으면
+                                   #   로컬의 그 이미지를 덮어쓴다
+    container_name: data-service
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=local
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/data_service}
+      # 인증키는 파일이 아니라 환경변수로 넣는다. 없으면 해당 API 만 503 이 되고 서버는 뜬다.
+      - KRX_API_KEY=${KRX_API_KEY:-}
+      - DART_API_KEY=${DART_API_KEY:-}
+      - FRED_API_KEY=${FRED_API_KEY:-}
+      - ECOS_API_KEY=${ECOS_API_KEY:-}
+      - KOSIS_API_KEY=${KOSIS_API_KEY:-}
+      - FINANCE_SUPERVISORY_API_KEY=${FINANCE_SUPERVISORY_API_KEY:-}
+      - HUGGINGFACE_ACCESS_TOKEN=${HUGGINGFACE_ACCESS_TOKEN:-}
+    volumes:
+      # data/ 는 이미지에 굽지 않는다(.dockerignore). 171MB 중 대부분이 SQLite 캐시라
+      # 이미지에 넣으면 빌드마다 그만큼이 복사된다. 호스트 폴더를 그대로 보여준다.
+      - ./data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false            # 기본 up 에서는 db 가 안 뜨므로 필수로 걸지 않는다
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 20s            # 기동 시 자동완성 색인 15,414종목을 올린다(실측 10초)
+
+  db:
+    profiles: ["local-db"]               # 기본 up 에서는 안 뜬다 (ADR-CT-0007)
+    image: pgvector/pgvector:0.8.2-pg16  # ★ 버전 핀. pg16 롤링 태그 금지 (CVE-2026-3172)
+    container_name: data-service-db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=data_service
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/init:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d data_service"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
