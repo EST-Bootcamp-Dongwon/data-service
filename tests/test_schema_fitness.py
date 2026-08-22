@@ -165,7 +165,7 @@ def test_fitness_script_parses_live_schema():
     assert parsed["rate_precision"] == int(match.group(1))
     assert parsed["rate_scale"] == int(match.group(2))
     assert parsed["rate_int_digits"] == int(match.group(1)) - int(match.group(2))
-    # ohlcv 블록만 봐야 한다 — securities 의 listed_shares 를 주워 오면 결정 #2 판정이 뒤집힌다
+    # ohlcv 블록만 봐야 한다 — securities 의 listed_shares 를 주워 오면 listed_shares 판단이 뒤집힌다
     assert {"volume", "value", "market_cap"} <= parsed["bigint_cols"]
     assert {"open", "high", "low", "close"} <= parsed["not_null_cols"]
 
