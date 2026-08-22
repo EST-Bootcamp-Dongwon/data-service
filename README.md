@@ -1,7 +1,13 @@
-# api-test — FastAPI + KRX OpenAPI 실습
+# data-service — FastAPI + KRX OpenAPI 실습
 
-> ⚠️ **이 README 는 낡았다.** 저장소는 2026-08-16 에 `api-test` → **`data-service`** 로
-> 개명·승격했다. 아래 본문은 개명 전 개인 개발기이며 교체 예정이다(작업 ⑤).
+> ⚠️ **이 README 는 아직 개명 전 틀을 쓰고 있다.** 저장소는 2026-08-16 에 `api-test` →
+> **`data-service`** 로 개명·승격했는데, 본문 구성은 여전히 "강의 실습 개발기"다.
+> **정체성·구성 재작성은 다음 세션 과제로 미뤄 두었다** — 이 레포가 어디까지 맡을지가
+> 아직 정해지는 중이라, 지금 현관을 다시 지으면 두 번 짓게 된다.
+>
+> 그와 별개로 **사실이 틀린 것들은 2026-08-22 에 고쳤다** — 저장소 이름·clone 명령·
+> 캐시 규모·원천 목록. 특히 아래 §1 의 `lecture/` 서브모듈은 **원본이 사라져서
+> 지금 clone 하면 실패한다.** 그 대처가 §1 에 있다.
 >
 > **이 모듈의 경계 — 데이터를 가져오는 것까지.** 리포트를 만드는 것은 `research-service` 다
 > (ADR-DS-0007). 다만 경계만 그었을 뿐 `app/services/research/` 는 아직 이 레포에 있다.
@@ -14,8 +20,8 @@
 | 항목 | 내용 |
 |------|------|
 | 프레임워크 | FastAPI 0.141 + Uvicorn 0.52 |
-| 데이터 출처 | **KRX OpenAPI** (유가증권·코스닥 일별매매정보) · **KOSIS OpenAPI** · **야후 파이낸스** · **FRED** (미국 거시지표) |
-| 시세 저장소 | SQLite (`data/krx_cache.db`) — 약 232거래일 · 64만 행 · 96MB |
+| 데이터 출처 | **9종** — KRX(일별매매정보) · DART(공시·사업보고서) · KOSIS · ECOS(한국은행) · FSS(금감원) · FRED(미국 거시) · 야후 파이낸스 · HuggingFace. 클라이언트는 [`app/clients/`](app/clients) 에 하나씩 있다 |
+| 시세 저장소 | SQLite (`data/krx_cache.db`) — **282거래일 · 780,484행 · 2,870종목 · 118MB** (20250609~20260731, 2026-08-22 실측). Postgres 전환이 진행 중이다 → [ADR-DS-0002](docs/decisions/0002-file-cache-to-postgres.md) |
 | 사용자 저장소 | 메모리 리스트 (`app/repositories/user_store.py`) — **서버 재시작 시 초기화** |
 | 외부 라이브러리 | KRX·KOSIS·FRED·DB는 표준 라이브러리만. **주가 화면·스크립트만** `yfinance` · `matplotlib` |
 
@@ -31,19 +37,22 @@
 | 위치 | 내용 | 수정 |
 |------|------|------|
 | 저장소 루트 | 내 실습 코드 (`main.py` · [`app/`](app) · [`static/`](static) · [`scripts/`](scripts)) | 자유롭게 |
-| [`lecture/`](lecture) | 강사님 원본 [edumgt/api-test2](https://github.com/edumgt/api-test2) — **서브모듈** | ❌ 읽기 전용 |
+| [`lecture/`](lecture) | 강사님 원본 `edumgt/api-test2` — **서브모듈 · 원본 소멸** | ❌ 읽기 전용 |
+
+> ⚠️ **`lecture/` 원본이 GitHub 에서 사라졌다** (2026-08-10 확인 · 수업 종료로 추정).
+> `git ls-remote` 가 `Repository not found` 를 낸다. 그래서 **`--recurse-submodules` 를
+> 붙이면 clone 이 실패한다.** 로컬 사본(`370097b`)은 그대로 두되, 갱신할 원본이 없다.
 
 ```bash
-# 최초 clone — 서브모듈까지 함께 받는다
-git clone --recurse-submodules https://github.com/EST-Bootcamp-Dongwon/api-test.git
+# 최초 clone — 서브모듈은 빼고 받는다 (lecture 원본이 없어졌다)
+git clone https://github.com/EST-Bootcamp-Dongwon/data-service.git
 
-# 이미 clone 했다면
-git submodule update --init --recursive
-
-# 강의 자료 최신화
-git submodule update --remote lecture
-git add lecture && git commit -m "chore: 강의 자료(api-test2) 갱신" && git push
+# 강의 원본 사본이 필요하면 — 실패해도 본체는 멀쩡하다
+git submodule update --init lecture || echo "lecture 원본 소멸 — 무시하고 진행한다"
 ```
+
+강의 자료 최신화 명령은 **더 이상 쓰지 않는다.** `git submodule update --remote lecture`
+는 원본이 없어 실패한다. 이 레포는 개명·승격 후 자체 계보로 발전한다(AGENTS.md).
 
 ---
 
@@ -53,7 +62,7 @@ git add lecture && git commit -m "chore: 강의 자료(api-test2) 갱신" && git
 이 저장소는 **Controller → Service → Repository** 로 나누고, **폴더도 계층대로** 뒀다.
 
 ```
-api-test/
+data-service/
 ├── main.py                 FastAPI 앱 조립만 담당 (uvicorn main:app)
 ├── app/
 │   ├── routers/            ← 컨트롤러 : 요청 검증 · DTO · 엔드포인트
@@ -102,7 +111,7 @@ api-test/
 ├── data/
 │   ├── stock_master.json   국내 2,764종목 — 코드·이름·시장·시총순위 (111KB, **포함**)
 │   ├── us_master.json      미국 12,650종목 — 티커·이름·거래소·S&P500 (751KB, **포함**)
-│   ├── krx_cache.db        시세 캐시 96MB (.gitignore 대상)
+│   ├── krx_cache.db        시세 캐시 118MB (.gitignore 대상)
 │   ├── yf/                 scripts/yf.py 가 저장한 차트 PNG (.gitignore 대상)
 │   └── kosis_rss/          KOSIS 공지 RSS 산출물 (.gitignore 대상)
 ├── docs/                   todo · 작업 기록
@@ -291,7 +300,7 @@ python3 scripts/fetch_krx.py --status        # 받지 않고 현재 캐시 상�
 - 이미 받은 날짜는 건너뛴다. **휴장일(0건)도 기록**해 두므로 다시 요청하지 않는다.
 - 단, 최근 7일 이내의 0건은 다시 확인한다 (당일 데이터는 장 마감 후 올라오기 때문).
 - 서버를 껐다 켜도 캐시는 남는다. `--reload` 로 코드를 저장해도 마찬가지다.
-- `data/krx_cache.db` 는 `.gitignore` 대상이다 (약 96MB, 언제든 재생성 가능).
+- `data/krx_cache.db` 는 `.gitignore` 대상이다 (약 118MB, 언제든 재생성 가능).
 - `data/` 폴더가 없으면 처음 실행할 때 자동으로 만들어진다.
 
 ---
