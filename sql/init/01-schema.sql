@@ -120,7 +120,13 @@ CREATE TABLE ohlcv (
   -- 전일대비. close 차이로 역산하면 3원씩 어긋나는 종목이 있어 원본을 그대로 받는다
   -- (scripts/build_krx_bundle.py:64-67 에 그 실측이 남아 있다).
   change       integer,
-  change_rate  numeric(8, 4),                -- 등락률(%) — 유일하게 정수가 아니다
+  -- 등락률(%) — 유일하게 정수가 아니다.
+  -- numeric(8,4) 는 정수부가 4자리뿐이라 실측 원본 1행이 들어가지 않는다:
+  --   20260209 · 052670 제일바이오 · close 625,000 · change 622,920 · rate 29948.08
+  -- 액면병합·재상장으로 보이고 같은 행의 close·change 와 산술적으로 일관된다. 즉 원본이
+  -- 옳고 그릇이 좁았다. 값을 깎는 대신 그릇을 넓힌다 —
+  -- `scripts/check_migration_fitness.py` 가 매번 이 한계를 다시 잰다.
+  change_rate  numeric(12, 4),
 
   volume       bigint,
   value        bigint,                       -- 거래대금
