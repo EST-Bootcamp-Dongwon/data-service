@@ -21,13 +21,12 @@ ADR-DS-0002 를 실행하기 전에 **자를 먼저 댄다.** 780,484행을 다 
 `--quick` 은 종목별 집계(변동 종목 수 등)를 건너뛴다. 그 항목들은 **판단 근거**이지
 적재를 막는 조건이 아니라서, 빠르게 치명 항목만 보고 싶을 때 쓴다.
 
-판단 대기 넷
+판단 대기 셋
 -----------
 치명이 아닌 줄은 **적재를 막지 않는다.** 전환 도중 조용히 틀어질 자리를 미리 세어 두는
-것이고, 아래 넷은 아직 결정이 안 났다. 결정이 나면 ADR 로 옮기고 여기서 지운다.
+것이고, 아래 셋은 아직 결정이 안 났다. 결정이 나면 ADR 로 옮기고 여기서 지운다.
 아래 이름이 출력의 "판단 근거"·"판단 대기" 꼬리표와 짝이다.
 
-    listed_shares    ohlcv 에 되살릴 것인가. 없으면 turnover 가 예외 없이 전 종목 0.0 이다
     securities 원천  마스터 JSON 인가 daily_price 인가. 마스터는 시세 종목 일부를 못 덮는다
     name 이력        최신값 하나로 접을 것인가. 접으면 옛 이름으로 검색이 안 된다
     is_delisted      원본에 폐지 정보가 없다. 최신 거래일 부재로 추정 판정할 것인가
@@ -274,6 +273,33 @@ def check_zero_bars(conn: sqlite3.Connection, out: list) -> None:
     )
 
 
+def check_shares_identity(conn: sqlite3.Connection, out: list) -> None:
+    """`market_cap = close × listed_shares` 가 아직 성립하는지.
+
+    ADR-DS-0010 은 이 항등식이 **성립함에도** listed_shares 를 저장하기로 한 결정이다.
+    역산을 안 쓰기로 했다고 항등식이 쓸모없어지지는 않는다 — 깨지는 순간이 **원본의
+    정의가 바뀌었다는 신호**이기 때문이다(예: 상장주식수 → 유동주식수).
+
+    막지 않는다. `CHECK` 제약으로 걸면 정의가 바뀐 첫 행에서 배치가 통째로 롤백된다.
+    사람이 봐야 할 일이지 적재를 멈출 일이 아니다.
+    """
+    total, broken = conn.execute(
+        "SELECT COUNT(*), SUM(CASE WHEN market_cap <> close * listed_shares THEN 1 ELSE 0 END) "
+        "FROM daily_price WHERE listed_shares IS NOT NULL AND close IS NOT NULL"
+    ).fetchone()
+    broken = broken or 0
+    out.append(
+        Finding(
+            "market_cap = close × 주식수",
+            f"어긋난 행 {human(broken)} / {human(total)}",
+            "(막지 않음 · 깨지면 원본 정의가 바뀐 것이다)",
+            True,
+            False,
+            "ADR-DS-0010 이 역산 대신 저장을 고른 근거. 깨져도 저장본은 영향이 없다",
+        )
+    )
+
+
 def check_master_coverage(conn: sqlite3.Connection, out: list) -> None:
     """마스터 JSON 이 시세 종목코드를 덮는지 — securities 원천 선택의 근거."""
     codes = {r[0] for r in conn.execute("SELECT DISTINCT code FROM daily_price")}
@@ -415,23 +441,23 @@ def main() -> int:
         check_numeric_fit(conn, target, findings)
         check_not_null(conn, target, findings)
         check_zero_bars(conn, findings)
+        check_shares_identity(conn, findings)
         check_master_coverage(conn, findings)
         if not args.quick:
             check_per_code_variance(conn, findings)
     finally:
         conn.close()
 
-    if not target["has_listed_shares"]:
-        findings.append(
-            Finding(
-                "ohlcv.listed_shares",
-                "DDL 에 없다",
-                "(listed_shares 판단 대기)",
-                True,
-                False,
-                "없으면 market_data.py:109 의 turnover 가 예외 없이 전 종목 0.0 이 된다",
-            )
+    findings.append(
+        Finding(
+            "ohlcv.listed_shares",
+            "DDL 에 있다" if target["has_listed_shares"] else "DDL 에 없다",
+            "ADR-DS-0010 — 있어야 한다",
+            target["has_listed_shares"],
+            False,
+            "빠지면 market_data.py:109 의 turnover 가 예외 없이 전 종목 0.0 이 된다",
         )
+    )
 
     return render(findings)
 

@@ -132,6 +132,14 @@ CREATE TABLE ohlcv (
   value        bigint,                       -- 거래대금
   market_cap   bigint,                       -- 시가총액 (수집 시점 기준)
 
+  -- 그 거래일의 상장주식수 (ADR-DS-0010). securities.listed_shares 는 **최신** 값이라
+  -- 역할이 다르다 — 둘이 갈리는 것이 정상이고, 갈렸다고 동기화 오류로 읽지 않는다.
+  -- 종목당 한 줄로 접으면 액면분할 종목의 과거 회전율이 10배 틀린다(실측 4종목).
+  -- market_cap / close 로 역산하면 오늘은 780,484행 전부 정확하지만, 그 항등식이
+  -- 깨지는 날 역산은 예외 대신 **그럴듯하게 틀린 값**을 낸다. change 컬럼과 같은 이유로
+  -- 원본을 그대로 싣는다. 항등식 자체는 check_migration_fitness.py 가 계속 잰다.
+  listed_shares bigint,
+
   PRIMARY KEY (security_id, trade_date)
 ) PARTITION BY RANGE (trade_date);
 

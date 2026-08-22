@@ -90,6 +90,55 @@ def test_ohlc_is_integer_not_null(column: str):
     )
 
 
+def test_ohlcv_keeps_point_in_time_listed_shares():
+    """`ohlcv.listed_shares` 는 있어야 한다 (ADR-DS-0010).
+
+    종목당 한 줄(`securities`)로 접으면 액면분할 종목의 과거 회전율이 **10배** 틀린다 —
+    미원화학·포스코스틸리온·대한제분·만호제강이 실측 10:1 이다.
+    아예 빼면 `market_data.py:109` 의 turnover 가 예외 없이 전 종목 `0.0` 이 된다.
+    숫자가 나오기 때문에 화면만 봐서는 잡히지 않는다.
+    """
+    block = _table_block("ohlcv", _schema_text())
+    assert re.search(r"^\s*listed_shares\s+bigint", block, re.M), (
+        "ohlcv.listed_shares 가 없다. ADR-DS-0010 을 되돌리는 변경이라면 그 ADR 을"
+        " superseded 로 바꾸고 market_data.py:109 의 turnover 를 함께 손본다"
+    )
+
+
+def test_securities_also_keeps_listed_shares():
+    """`securities.listed_shares` 도 남는다 — 두 컬럼은 역할이 다르다 (ADR-DS-0010).
+
+    securities 는 **최신**, ohlcv 는 **그 거래일**이다. 중복으로 보고 한쪽을 지우면
+    종목 목록·검색이 거래일을 골라야 주식수를 알 수 있게 된다.
+    """
+    block = _table_block("securities", _schema_text())
+    assert re.search(r"^\s*listed_shares\s+bigint", block, re.M), (
+        "securities.listed_shares 가 없다. ohlcv 쪽과 중복이 아니다 —"
+        " 한쪽은 최신, 한쪽은 시점이다"
+    )
+
+
+def test_shares_identity_is_measured_not_constrained():
+    """항등식을 `CHECK` 로 걸지 않는다 (ADR-DS-0010).
+
+    `market_cap = close × listed_shares` 는 지금 780,484행 전부에서 성립한다. 그렇다고
+    제약으로 걸면 원본 정의가 바뀌는 첫 행에서 **배치가 통째로 롤백된다** — S1 이 통째로
+    막으려던 그 사고다. 대신 `check_migration_fitness.py` 가 매번 세기만 한다.
+    """
+    # 주석을 먼저 걷어낸다 — 근거를 적은 `-- ... check_migration_fitness.py ...` 가
+    # 대문자로 접히면 제약이 있는 것처럼 읽힌다. 검사할 것은 SQL 이지 설명문이 아니다.
+    sql_only = re.sub(r"--[^\n]*", "", _table_block("ohlcv", _schema_text()))
+    assert not re.search(r"\bCHECK\s*\(", sql_only, re.I), (
+        "ohlcv 에 CHECK 제약이 생겼다. 항등식은 제약이 아니라 측정으로 감시한다"
+        " — 제약은 원본 정의가 바뀐 첫 행에서 배치를 통째로 롤백시킨다 (ADR-DS-0010)"
+    )
+
+    fitness = (PROJECT_ROOT / "scripts" / "check_migration_fitness.py").read_text(encoding="utf-8")
+    assert "check_shares_identity" in fitness, (
+        "항등식을 재는 검사가 사라졌다. 제약을 안 걸기로 한 대신 이 측정이 유일한 감시다"
+    )
+
+
 def test_ohlcv_is_range_partitioned_by_trade_date():
     """연 단위 RANGE 파티셔닝 + PK 는 (security_id, trade_date) — 확정 사항."""
     text = _schema_text()
