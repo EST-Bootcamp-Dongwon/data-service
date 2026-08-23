@@ -25,7 +25,7 @@ import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -79,16 +79,44 @@ def _git(*args: str) -> str:
         return ""
 
 
+def _read_committed(rel: Path) -> str:
+    """**HEAD 에 커밋된** 내용을 읽는다. 작업 트리가 아니다.
+
+    ⚠️ 이 구분이 이 스크립트의 핵심이다. 작업 트리를 읽으면 아직 커밋하지 않은
+    초안이 볼트로 새고, frontmatter 의 `commit:` 이 **거짓이 된다** — 그 해시의
+    커밋에는 없는 내용이 그 해시를 달고 볼트에 앉는다.
+    (2026-08-23 실측: 훅을 처음 돌렸을 때 스테이징도 하지 않은 `AGENTS.md` 가 미러됐다.)
+
+    추적되지 않는 파일이면 빈 문자열이다 — 그런 것은 미러하지 않는다.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "show", f"HEAD:{rel.as_posix()}"],
+            cwd=PROJECT_ROOT, capture_output=True, timeout=10,
+        )
+        return out.stdout.decode("utf-8") if out.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
+        return ""
+
+
 def _collect() -> list[Path]:
-    """미러 대상 파일을 레포 상대경로로 모은다."""
+    """미러 대상 파일을 레포 상대경로로 모은다.
+
+    ⚠️ **git 이 추적하는 것만** 센다. 글롭을 작업 트리에 대고 돌리면 아직 커밋하지
+    않은 새 문서가 잡히는데, 그것은 미러할 커밋 내용이 없다.
+    """
+    # ⚠️ `core.quotePath=false` 가 없으면 **한글 경로가 8진 이스케이프**로 나온다
+    #    (`"\354\204\270\354\205\230-..."`). 그러면 `세션-시작-프롬프트.md` 가 목록에서
+    #    조용히 빠져 미러되지 않는다 — 실측으로 한 번 놓쳤다 (2026-08-23).
+    tracked = set(_git("-c", "core.quotePath=false", "ls-files").splitlines())
     found: list[Path] = []
     for name in MIRROR_FILES:
-        path = PROJECT_ROOT / name
-        if path.exists():
+        if name in tracked:
             found.append(Path(name))
     for pattern in MIRROR_GLOBS:
-        for path in sorted(PROJECT_ROOT.glob(pattern)):
-            found.append(path.relative_to(PROJECT_ROOT))
+        for name in sorted(tracked):
+            if PurePosixPath(name).match(pattern):
+                found.append(Path(name))
     return found
 
 
@@ -122,7 +150,7 @@ def _tags_for(rel: Path) -> list[str]:
 
 def _render(rel: Path, stamp: str, commit: str) -> str:
     """원본에 frontmatter 와 경고 머리말을 붙여 미러본 내용을 만든다."""
-    text = (PROJECT_ROOT / rel).read_text(encoding="utf-8")
+    text = _read_committed(rel)
 
     # 원본에 이미 frontmatter 가 있으면 두 개가 겹친다. 이 레포 문서에는 없지만,
     # 생기면 조용히 깨지는 대신 그대로 두고 머리말만 붙인다.
@@ -188,12 +216,12 @@ def _index(rels: list[Path], stamp: str, commit: str, subject: str) -> str:
         "",
     ]
     for rel in adrs:
-        title = _title_of((PROJECT_ROOT / rel).read_text(encoding="utf-8"), rel.stem)
+        title = _title_of(_read_committed(rel), rel.stem)
         lines.append(f"- [[{rel.stem}|{title}]]")
 
     lines += ["", "## 그 밖의 문서", ""]
     for rel in others:
-        title = _title_of((PROJECT_ROOT / rel).read_text(encoding="utf-8"), rel.stem)
+        title = _title_of(_read_committed(rel), rel.stem)
         lines.append(f"- [[{rel.stem}|{title}]]")
 
     lines += [
