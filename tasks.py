@@ -90,6 +90,13 @@ def preflight(c):
       "그 다음 `invoke check` 를 다시 실행한다."
     )
 
+  # ── Obsidian 미러 훅 (ADR-DS-0013) ───────────────────────────────────
+  # **막지 않는다.** 훅이 없어도 검증은 통과해야 한다 — 미러는 문서 편의이지
+  # 코드 품질 게이트가 아니다. 다만 없다는 사실이 조용히 묻히면 볼트가 낡으므로,
+  # 여기서 한 줄 알려 준다 (훅은 clone 마다 새로 설치해야 한다).
+  if not _hook_path().exists():
+    print("[preflight] Obsidian 미러 훅이 없다 → `invoke hooks` 로 설치한다 (ADR-DS-0013).")
+
 
 @task
 def test(c):
@@ -163,14 +170,107 @@ def check(c):
   build(c)
 
 
+def _hook_path() -> Path:
+  """`post-commit` 훅이 놓일 자리.
+
+  ⚠️ 이 레포는 **서브모듈**이라 `.git` 이 디렉터리가 아니라 gitdir 포인터 **파일**이다
+  (`gitdir: ../../.git/modules/...`). 그래서 `.git/hooks` 를 그대로 쓰면 빗나간다.
+  git 에게 물어보는 것이 유일하게 맞는 방법이다.
+  """
+  from subprocess import run
+  out = run(["git", "rev-parse", "--git-dir"], cwd=PROJECT_ROOT,
+            capture_output=True, text=True)
+  git_dir = Path(out.stdout.strip()) if out.returncode == 0 else PROJECT_ROOT / ".git"
+  if not git_dir.is_absolute():
+    git_dir = (PROJECT_ROOT / git_dir).resolve()
+  return git_dir / "hooks" / "post-commit"
+
+
+@task
+def hooks(c):
+  """`post-commit` 훅을 설치한다 — 커밋할 때마다 문서를 Obsidian 볼트로 미러한다.
+
+  ADR-DS-0013. 커밋된 것만 미러되므로 볼트 내용이 항상 어떤 커밋과 대응한다.
+
+  ⚠️ **커밋을 절대 막지 않는다.** 미러가 실패해도 `|| true` 로 흘리고,
+  볼트 폴더가 없으면(다른 머신) 스크립트가 조용히 건너뛴다.
+  """
+  hook = _hook_path()
+  hook.parent.mkdir(parents=True, exist_ok=True)
+  hook.write_text(
+    "#!/bin/sh\n"
+    "# data-service — 문서를 Obsidian 볼트로 미러한다 (ADR-DS-0013).\n"
+    "# `invoke hooks` 가 설치한다. 커밋을 막지 않도록 실패는 흘린다.\n"
+    'cd "$(git rev-parse --show-toplevel)" || exit 0\n'
+    "python3 scripts/sync_obsidian.py --quiet || true\n",
+    encoding="utf-8",
+  )
+  hook.chmod(0o755)
+  print(f"post-commit 훅 설치 완료 → {hook}")
+  print("  다음 커밋부터 문서가 볼트로 미러된다. 지금 한 번 돌려 보려면:")
+  print("    python3 scripts/sync_obsidian.py --check")
+
+
 @task(name="docs-check")
 def docs_check(c):
-  """문서 검증: 마크다운 → 링크(오프라인) → OpenAPI 내보내기."""
+  """문서 검증: 마크다운 → 링크(오프라인) → OpenAPI 내보내기.
+
+  markdownlint 설정은 `.markdownlint-cli2.jsonc` 다. 설정이 없던 시절에는 기본값
+  (영문 80자·compact 표)으로 돌아 **6,500건 넘게** 걸렸고, 그래서 이 게이트는
+  "빨간불로 고정"돼 아무것도 잡아 주지 못했다. 지금은 0건에서 출발한다.
+  """
   c.run('npx markdownlint-cli2 "docs/**/*.md" "README.md"')
+
   # --offline: 내부 링크만 본다. 외부 링크는 네트워크 상태에 따라 실패해
   # "검증이 원래 가끔 빨간불"이라는 나쁜 습관을 만든다. 주 1회 수동으로 돌린다.
-  c.run("lychee --offline docs/**/*.md README.md")
+  #
+  # ⚠️ lychee 는 이 환경에 설치돼 있지 않다. 예전에는 그 자리에서 하드 실패해
+  #    **링크 검사가 통째로 안 도는데도 그 사실이 안 보였다.** 없으면 아래
+  #    폴백으로 최소한 "가리키는 파일이 실재하는가" 는 본다 — 그리고 무엇을
+  #    못 하고 있는지 화면에 밝힌다 (환경 가드를 막다른 길로 만들지 않는다).
+  if which("lychee"):
+    c.run("lychee --offline docs/**/*.md README.md")
+  else:
+    print("[docs-check] lychee 없음 → 내부 링크만 파이썬 폴백으로 본다.")
+    print("[docs-check]   폴백이 못 보는 것: 앵커(#절) 유효성 · 외부 URL.")
+    print("[docs-check]   전부 보려면: cargo install lychee (또는 배포판 패키지)")
+    _check_local_links()
+
   openapi(c)
+
+
+def _check_local_links() -> None:
+  """마크다운의 **상대 경로 링크**가 실재하는 파일을 가리키는지만 본다.
+
+  lychee 가 없을 때의 폴백이다. 앵커(`#절`)와 외부 URL 은 보지 않는다 —
+  볼 수 없는 것을 본 척하지 않는 편이 낫다.
+  """
+  import re
+  import sys
+
+  targets = [PROJECT_ROOT / "README.md", *sorted((PROJECT_ROOT / "docs").rglob("*.md"))]
+  skip_dirs = {"md"}   # docs/md 는 얼려 둔 옛 명세서 사본이라 lint 대상에서 빠져 있다
+  link_re = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+
+  broken: list[str] = []
+  checked = 0
+  for doc in targets:
+    if any(part in skip_dirs for part in doc.relative_to(PROJECT_ROOT).parts):
+      continue
+    for target in link_re.findall(doc.read_text(encoding="utf-8")):
+      # 외부 URL · 순수 앵커 · 메일은 폴백의 범위 밖이다
+      if target.startswith(("http://", "https://", "#", "mailto:")):
+        continue
+      path = (doc.parent / target.split("#", 1)[0]).resolve()
+      checked += 1
+      if not path.exists():
+        broken.append(f"  {doc.relative_to(PROJECT_ROOT)} → {target}")
+
+  if broken:
+    print(f"[docs-check] 깨진 상대 링크 {len(broken)}건:")
+    print("\n".join(broken))
+    sys.exit(1)
+  print(f"[docs-check] 상대 링크 {checked}건 전부 실재 ✓")
 
 
 @task

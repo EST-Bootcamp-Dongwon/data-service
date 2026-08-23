@@ -3,6 +3,30 @@
 > 공통 규칙 정본: `../quant-contract/AGENTS.md`
 > 이 파일에는 **이 모듈에만 해당하는 것**만 적는다. 공통 규칙을 복사하지 않는다.
 
+## 이 모듈이 무엇인가
+
+> **흩어져 있는 국내 투자 정보를 한 곳에 모아 두는 수집·보관·조회 서비스.**
+> 시세·통계는 정형 API 로, 공시·뉴스·커뮤니티는 수집으로 모으고, **기업과 산업**을 축으로 되찾는다.
+
+⚠️ **이 문장은 네 곳이 공유한다** — `README.md` 첫머리 · 랜딩(`static/pages/dashboard.html`) ·
+`/guide`(`static/pages/index.html`) · OpenAPI 개요(`app/core/api_docs.py`).
+**넷이 어긋나면 그것이 곧 결함이다.** 정체성은 한 군데서만 바뀐다 (ADR-DS-0012 §1).
+
+수집 대상은 **여섯 갈래**다 — 공시 · 정기보고서 · 뉴스 · 커뮤니티 · 동영상 · 시세/통계.
+착수 순서는 **공시·보고서 → 뉴스 → 커뮤니티·동영상**이고, 인증키와 클라이언트가 이미
+있고 이용약관 확인이 필요 없는 쪽부터다. ⚠️ **커뮤니티·동영상은 `robots.txt` 와 이용약관을
+읽고 그 결과를 ADR 로 남긴 뒤에** 착수한다 — 읽지 않고 짜기 시작하지 않는다.
+
+⚠️ **본문은 담지 않는다.** 링크·제목·출처·발행일·내 메모까지다 (ADR-DS-0008 · 0012 §3).
+예외는 DART 공시·보고서 원문 하나뿐이다(공공데이터).
+
+⚠️ **수집 저장은 Postgres 전환(ADR-DS-0011 S3~S5) 뒤에 시작한다.** 지금 SQLite 에 표를
+새로 파면 나중에 두 번 옮긴다. **화면과 문서는 그 순서를 기다리지 않는다** — 이미 섰다.
+
+⚠️ **화면은 자료 종류로 가른다. 원천별이 아니다** (ADR-DS-0012 §4). 사이드바 정본은
+`static/assets/shell.js` 의 `NAV` 하나이고, 아직 없는 화면은 `soon: true` 로 **메뉴에 걸어 둔다** —
+앞으로 무엇이 생기는지가 정보구조의 일부다. 감추지 않는다.
+
 ## 이 모듈의 경계
 
 **데이터를 가져오는 것까지.** 리포트를 만드는 것은 `research-service` 다 (ADR-DS-0007).
@@ -20,7 +44,14 @@
     이것이 없으면 pytest 가 **원인에서 먼 곳**(conftest 의 앱 로딩)에서 죽는다.
   - ⚠️ `export` 가 `build` 보다 앞인 것이 뜻을 가진다. `invoke build` 단독은 의존성을 고친 날
     낡은 `uv.lock` 으로 하드 실패한다(Dockerfile 이 `uv sync --locked`).
-- 문서 검증: `invoke docs-check` (markdownlint → lychee --offline → openapi export)
+- 문서 검증: `invoke docs-check` (markdownlint → 링크 → openapi export)
+  - ✅ **2026-08-23 에 초록이 됐다.** 그전에는 설정 파일이 없어 기본값(영문 80자·compact 표)으로
+    돌았고 **6,500건 넘게** 걸려 게이트가 "빨간불로 고정"돼 있었다. 설정은
+    `.markdownlint-cli2.jsonc` 다 — 끈 규칙마다 **왜 이 레포와 충돌하는지**를 그 파일에 적어 두었다.
+  - ⚠️ **`lychee` 는 이 환경에 없다.** 없으면 `tasks.py` 의 `_check_local_links()` 폴백이
+    **상대 경로 링크가 실재하는지만** 본다. 앵커(`#절`)와 외부 URL 은 **여전히 안 본다** —
+    그 사실을 실행할 때마다 화면에 밝힌다.
+- 미러 훅 설치: `invoke hooks` (clone 마다 한 번 · ADR-DS-0013)
 - **CI가 아니라 이 명령이 정본이다.** CI는 이 명령을 호출만 한다.
 - ⚠️ **이 모듈은 `ruff format --check`를 넣지 않는다** (ADR-DS-0005). 공통 규칙과 한 단계 다르다.
   적용하면 93파일 15,442줄이 바뀌는데 거의 전부가 인라인 주석 정렬을 뭉개는 변경이다.
@@ -145,6 +176,22 @@
   `tests/test_source_vocabulary.py`가 어휘와 화면 양쪽을 검사한다.
   ⚠️ 이름이 `source` 라고 다 같은 축이 아니다 — `research/ledger.py`의 출처 등급(`KRX`·
   `DART-…`)과 `preprocess`의 `source`는 **누가 생산했나**라서 이 어휘 밖이다.
+- **문서는 Obsidian 볼트로 자동 미러된다** (ADR-DS-0013). `post-commit` 훅이
+  `scripts/sync_obsidian.py` 를 불러 `Master_Obsidian/30_Projects/data-service/` 에 쓴다.
+  대상은 `README` · `AGENTS` · `docs/decisions/*` · `docs/README` · `세션-시작-프롬프트` 다.
+  ⚠️ **한 방향이다. 볼트 쪽에서 고친 것은 되돌아오지 않고 다음 커밋에 덮인다.**
+  메모를 남기려면 미러 폴더 **밖**(`00_Inbox` 등)에 노트를 만들고 링크한다.
+  ⚠️ **`invoke check` 에 묶지 않았다** — 검증 명령이 레포 밖에 쓰기를 하면 그 명령을
+  신뢰할 수 없게 된다. 부작용의 자리는 훅이다.
+  ⚠️ **훅은 clone 마다 새로 설치해야 한다**(`invoke hooks`). `invoke preflight` 가
+  없으면 한 줄 알려 주되 **막지는 않는다** — 미러는 문서 편의이지 품질 게이트가 아니다.
+  ⚠️ 이 레포는 서브모듈이라 `.git` 이 **포인터 파일**이다. 훅 자리는 `git rev-parse --git-dir` 로 찾는다.
+  볼트가 최신인지 의심스러우면 `python3 scripts/sync_obsidian.py --check` 로 잰다.
+  ⚠️ 전역 규칙(`~/.claude/CLAUDE.md` §7.1)은 "`docs/`는 `.gitignore`"라고 하는데
+  **이 레포는 한 단계 다르다** — ADR 이 코드와 같은 커밋에 묶여야 하므로 `docs/`를 커밋한다.
+  그래서 여기서는 gitignore 대신 **양쪽 다 보관**이 된다.
+- **팀 프로젝트는 별도 레포다** (ADR-DS-0012 §9). 이 레포는 **개인 프로젝트로 완성**하고,
+  팀 협업용 장치(브랜치 전략·이슈 템플릿·다인 배포)를 미리 넣지 않는다.
 - ⚠️ **`app/core/trading_calendar.py`는 공휴일을 모른다.** `weekday() < 5`로 주말만 거른다.
   거래일 판정이 필요하면 `trading_calendar` 테이블을 쓴다 (ADR-DS-0002).
   ⚠️ **그 안내는 아직 실행 불가다** — DDL만 섰고 표를 채우는 코드도 읽는 코드도 없다.
