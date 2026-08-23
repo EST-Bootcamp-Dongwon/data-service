@@ -6,7 +6,8 @@ requires-python = ">=3.12"
 license = { text = "MIT" }
 
 # 앱 런타임이 실제로 import 하는 것만 적는다.
-# 실측 근거: `grep -rhoE '^\s*(import|from)\s+\w+' app/ main.py` → fastapi · numpy · pydantic · yfinance.
+# 실측 근거: `grep -rhoE '^\s*(import|from)\s+\w+' app/ main.py` →
+#            fastapi · numpy · pydantic · yfinance · **sqlalchemy** (2026-08-23 갱신).
 # 나머지 requirements.txt 항목(pandas·peewee·curl_cffi·protobuf…)은 전부 전이 의존이라 여기 적지 않는다.
 # uv 가 uv.lock 에 고정하고 `uv export` 가 requirements.txt 로 펼친다.
 dependencies = [
@@ -19,6 +20,28 @@ dependencies = [
   #   화면 3개가 조용히 빠진다. 즉 이걸 빼면 **공개 계약이 51개에서 41개로 줄어든다.**
   #   tests/test_contract.py 의 스냅샷이 그 축소를 잡는다.
   "yfinance==1.5.2",
+  # 저장계층 전환 S2 (ADR-DS-0011). `app/core/db.py` 가 sqlalchemy 를 import 하므로 위
+  # 규칙대로 런타임 의존성이다 — 아직 `app/main.py` 경로가 부르지 않을 뿐이다(S4 에서 잇는다).
+  #
+  # ⚠️ **asyncpg 는 위 grep 에 안 걸린다.** 코드가 import 하지 않고 `DATABASE_URL` 의
+  #    `postgresql+asyncpg://` 접두사로 SQLAlchemy 가 찾아 쓰는 **드라이버**이기 때문이다.
+  #    그래서 grep 규칙의 예외이고, 빠뜨리면 import 오류가 아니라 **첫 접속에서** 죽는다.
+  #
+  # ⚠️ **asyncpg 를 0.30.0 에 묶어 둔다. 0.31.0 으로 올리지 않는다.**
+  #    0.31.0 은 리눅스 휠을 `manylinux_2_28` 로만 낸다(glibc 2.28+). 0.30.0 은
+  #    `manylinux_2_17` 이라 훨씬 넓다. 실측(2026-08-23, PyPI 파일 목록):
+  #      0.30.0  asyncpg-0.30.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+  #      0.31.0  asyncpg-0.31.0-cp312-cp312-manylinux_2_28_x86_64.whl        ← 2_17 없음
+  #    Vercel 런타임의 glibc 를 여기서 확인할 방법이 없고, 안 맞으면 **빌드가 조용히**
+  #    실패한다(프로덕션 URL 은 마지막 성공본을 계속 서빙한다 — 아래 [tool.vercel] 주석 참조).
+  #    도커는 python:3.12-slim(glibc 2.36)이라 어느 쪽이든 되므로, 좁은 쪽을 고를 이유가 없다.
+  #
+  # ⚠️ 두 버전은 prepared statement **이름 규칙이 다르다.** 0.30 은 이름을 항상 붙이고,
+  #    0.31 은 `statement_cache_size=0` 이면 익명으로 바꾼다. 0.30 을 쓰는 지금은
+  #    캐시 둘을 꺼도 이름이 붙으므로 **이름 유일화까지 켜야** transaction 모드에서 안전하다
+  #    (ADR-DS-0003 rev.2 §4 의 실측표). 올릴 때는 그 표를 다시 재고 ADR 을 개정한다.
+  "sqlalchemy[asyncio]==2.0.52",
+  "asyncpg==0.30.0",
 ]
 
 [project.optional-dependencies]

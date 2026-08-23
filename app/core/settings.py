@@ -53,10 +53,17 @@ VERCEL_MARKERS: tuple[str, ...] = ("VERCEL", "VERCEL_ENV")
 LOCAL_DB_PORT = 5432
 VERCEL_DB_PORT = 6543
 
-# transaction 모드에서 prepared statement 를 끄는 두 손잡이. **둘 다** 꺼야 한다.
+# transaction 모드에서 준비구문 **캐시**를 끄는 두 손잡이. 둘 다 꺼야 한다.
 #   statement_cache_size            asyncpg 자신의 LRU 캐시
 #   prepared_statement_cache_size   SQLAlchemy asyncpg 방언이 그 위에 하나 더 두는 캐시
-# 하나만 끄면 **빈도만 줄고 사라지지 않는다.** 그게 "산발적으로 난다"의 정체다.
+# 하나만 끄면 조합에 따라 결과가 전혀 다르고, asyncpg 버전에 따라서도 갈린다
+# (실측표는 ADR-DS-0003 rev.2). 따로 켜고 끄지 않는다.
+#
+# ⚠️ **이 둘만으로는 부족하다.** 캐시를 꺼도 이름은 계속 붙는다 —
+#    세 번째 손잡이는 아래 UNIQUE_STATEMENT_NAMES_ON_VERCEL 이다.
+#
+# ⚠️ 값은 파이썬 `int` 여야 한다. URL 쿼리(`?statement_cache_size=0`)로 옮기면
+#    문자열 `"0"` 으로 도착해 asyncpg 가 `"0" < 0` 을 시도하다 죽는다.
 VERCEL_CONNECT_ARGS: Mapping[str, int] = MappingProxyType({
     "statement_cache_size": 0,
     "prepared_statement_cache_size": 0,
@@ -64,6 +71,22 @@ VERCEL_CONNECT_ARGS: Mapping[str, int] = MappingProxyType({
 
 # 로컬은 아무것도 끄지 않는다 — 직결이라 prepared statement 가 정상 동작하고, 그게 더 빠르다.
 LOCAL_CONNECT_ARGS: Mapping[str, int] = MappingProxyType({})
+
+# ⭐ 세 번째 손잡이 — **이름**이다 (ADR-DS-0003 rev.2, 2026-08-23 실측).
+#
+# 캐시를 둘 다 꺼도 asyncpg 0.30 은 준비구문에 **이름을 붙인다.** 그 이름은
+# `__asyncpg_stmt_1__` 처럼 **커넥션마다 1부터 다시 세는 카운터**라, 서버리스에서 호출마다
+# 새 커넥션이 열리면 매번 같은 이름을 다시 쓴다. transaction 모드 풀러 뒤에서는 DEALLOCATE 가
+# 다른 물리 커넥션으로 갈 수 있어 이름이 남고, 그 뒤로는 **첫 질의부터** 전부 죽는다
+# (`select pg_catalog.version()` 에서 `DuplicatePreparedStatementError`).
+#
+# ⚠️ 이 고장은 **갓 띄운 풀러에서는 재현되지 않는다.** 잔여물이 쌓인 뒤에만 나타나므로,
+#    깨끗한 상대에 한 번 대 보고 "괜찮다"고 결론내면 거짓 음성을 얻는다.
+#    실제로 rev.2 초안이 그 함정에 빠졌다 — 그래서 이 상수에 그 사실을 적어 둔다.
+#
+# 값이 아니라 **사실**만 둔다. 이름을 만드는 함수는 접속 계층(`app/core/db.py`)이 준다 —
+# 이 모듈은 SQLAlchemy 를 몰라야 하고(§6), 무엇으로 이름을 만들지는 드라이버 사정이다.
+UNIQUE_STATEMENT_NAMES_ON_VERCEL = True
 
 # compose.yaml:22 의 기본값과 같은 문자열. 로컬은 이것만으로 뜬다.
 DEFAULT_LOCAL_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@db:5432/data_service"
@@ -133,6 +156,9 @@ class DatabaseSettings:
     expected_port: int                  # 이 환경에서 정상인 포트. 검증·안내용이다
     use_null_pool: bool                 # True 면 접속 코드가 NullPool 을 쓴다
     connect_args: Mapping[str, int]     # asyncpg 로 그대로 넘어갈 값
+    # True 면 접속 코드가 준비구문 이름을 **커넥션마다 겹치지 않게** 만들어 준다.
+    # 함수가 아니라 사실만 둔다 — 위 UNIQUE_STATEMENT_NAMES_ON_VERCEL 주석 참조.
+    unique_statement_names: bool = False
 
     def safe_url(self) -> str:
         """로그·화면에 실어도 되는 형태. **비밀번호를 가린다.**
@@ -190,9 +216,11 @@ def database_settings() -> DatabaseSettings:
     | 풀 | 정상 풀 | `NullPool` |
     | `statement_cache_size` | 그대로 | `0` |
     | `prepared_statement_cache_size` | 그대로 | `0` |
+    | 준비구문 이름 | 기본(카운터) | **커넥션마다 유일** |
 
-    ⚠️ **배포본 쪽 셋은 한 벌이다.** 하나만 빠져도 prepared statement 충돌이
-    산발적으로 난다. 근거는 ADR-DS-0003 의 근거 절에 있다.
+    ⚠️ **배포본 쪽은 한 벌이다.** 하나만 빠져도 prepared statement 충돌이 난다.
+    ⚠️ 특히 **이름 손잡이를 빼면 갓 띄운 풀러에서는 멀쩡하다가**, 잔여물이 쌓인 뒤
+    갑자기 전부 실패한다. 실측표는 ADR-DS-0003 rev.2 에 있다.
     """
     current = app_env()
     if current == VERCEL:
@@ -202,6 +230,7 @@ def database_settings() -> DatabaseSettings:
             expected_port=VERCEL_DB_PORT,
             use_null_pool=True,           # 서버리스는 호출 사이에 얼었다 녹는다. 풀을 들고 있을 수 없다
             connect_args=VERCEL_CONNECT_ARGS,
+            unique_statement_names=UNIQUE_STATEMENT_NAMES_ON_VERCEL,
         )
     return DatabaseSettings(
         app_env=current,
@@ -209,6 +238,7 @@ def database_settings() -> DatabaseSettings:
         expected_port=LOCAL_DB_PORT,
         use_null_pool=False,              # 직결이라 풀이 그대로 이득이다
         connect_args=LOCAL_CONNECT_ARGS,
+        unique_statement_names=False,     # 직결에는 이름 충돌이 없다. 기본 이름이 더 싸다
     )
 
 
@@ -222,7 +252,12 @@ def url_port(url: str) -> int | None:
         return None
     _, _, rest = url.partition("://")
     host_part = rest.rpartition("@")[2] if "@" in rest else rest
-    host_part = host_part.split("/", 1)[0]      # 뒤의 /dbname 을 떼어낸다
+    # 뒤에 붙는 것을 순서대로 떼어낸다. **셋 다 떼야 한다** — `/dbname` 만 떼면
+    # `host:6543?sslmode=require` 같은 형태에서 포트를 못 읽고 `None` 을 돌려주는데,
+    # 그러면 port_warning() 이 **조용히 꺼져** 포트가 틀려도 아무 말을 하지 않는다.
+    host_part = host_part.split("/", 1)[0]      # /dbname
+    host_part = host_part.split("?", 1)[0]      # ?sslmode=...
+    host_part = host_part.split("#", 1)[0]      # #fragment
     if host_part.startswith("["):               # IPv6 리터럴 [::1]:5432
         host_part = host_part.partition("]")[2]
     _, sep, port = host_part.rpartition(":")

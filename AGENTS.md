@@ -15,7 +15,11 @@
 
 ## 검증 명령
 
-- 전체 검증: `invoke check` (ruff check → pytest → uv export → docker build)
+- 전체 검증: `invoke check` (preflight → ruff check → pytest → uv export → docker build)
+  - `preflight` 는 `.venv` 가 `pyproject.toml` 을 따라잡았는지만 본다. 의존성을 더한 날
+    이것이 없으면 pytest 가 **원인에서 먼 곳**(conftest 의 앱 로딩)에서 죽는다.
+  - ⚠️ `export` 가 `build` 보다 앞인 것이 뜻을 가진다. `invoke build` 단독은 의존성을 고친 날
+    낡은 `uv.lock` 으로 하드 실패한다(Dockerfile 이 `uv sync --locked`).
 - 문서 검증: `invoke docs-check` (markdownlint → lychee --offline → openapi export)
 - **CI가 아니라 이 명령이 정본이다.** CI는 이 명령을 호출만 한다.
 - ⚠️ **이 모듈은 `ruff format --check`를 넣지 않는다** (ADR-DS-0005). 공통 규칙과 한 단계 다르다.
@@ -74,11 +78,33 @@
   `tests/test_settings.py`가 그 목록을 얼려 두어 **새로 늘어나는 것만** 잡는다.
 - **DB 접속은 `APP_ENV`로 분기한다** (ADR-DS-0003).
   `vercel`: 6543 + `NullPool` + `statement_cache_size=0` + `prepared_statement_cache_size=0`
-  `local` : 5432 직결 + 정상 풀. **셋 중 하나만 빠져도 prepared statement 충돌이 산발적으로 난다.**
-  캐시가 두 겹이라 하나만 끄면 **빈도만 줄고 사라지지 않는다** — 그게 "산발적"의 정체다.
+  + **준비구문 이름 유일화**(`prepared_statement_name_func`) — **넷이 한 벌이다**(rev.2).
+  `local` : 5432 직결 + 정상 풀. **넷 중 하나만 빠져도 prepared statement 충돌이 난다.**
   ⚠️ **`APP_ENV` 미설정이 기본 사고 지점이다.** 정적 기본값을 `local`로 두면 배포본이 조용히
   로컬 전략으로 뜬다. 그래서 `VERCEL`·`VERCEL_ENV`를 먼저 감지하고 그 다음에 `local`로 떨어진다.
-  ⚠️ **아직 표명일 뿐 엔진이 없다.** 값이 실제로 맞는지는 접속 코드를 쓸 때 처음 검증된다.
+  ✅ **엔진이 섰다** — `app/core/db.py` (ADR-DS-0011 S2, 2026-08-23). 표명이 실측으로 닫혔다.
+- **엔진 계층은 `app/core/db.py`다.** `settings.py`가 *무엇으로* 붙을지를 정하고 이쪽이 만든다.
+  ⚠️ **캐시 두 값은 `connect_args` 안에 `int`로 둔다.** 옮길 자리가 셋처럼 보이는데 나머지 둘은
+  각각 다르게 죽는다 — `create_async_engine(url, prepared_statement_cache_size=0)`은 `TypeError`
+  (방언 인자가 아니라 **DBAPI 인자**), URL 쿼리 `?statement_cache_size=0`은 문자열 `"0"`로
+  도착해 asyncpg가 `"0" < 0`을 시도하다 죽는다. `tests/test_db.py`가 자리와 타입을 얼려 둔다.
+  ⚠️ **하나만 끄는 최적화를 하지 않는다.** "빈도만 준다"가 아니라 **조합마다 결과가 다르고
+  asyncpg 버전에 달려 있다** — 0.30은 `statement_cache_size=0`이어도 이름을 붙이고 0.31은
+  익명으로 바꾼다. 실측표는 ADR-DS-0003 rev.2에 있다. **`asyncpg==0.30.0` 핀을 올릴 때 다시 잰다**
+  (0.31은 `manylinux_2_17` 휠이 없어 Vercel 빌드가 조용히 깨질 수 있다).
+  ⚠️⚠️ **캐시를 둘 다 꺼도 이름은 계속 붙는다.** 그래서 네 번째 손잡이가 있다. 이것을 빼면
+  **갓 띄운 풀러에서는 0건이다가** 잔여물이 쌓인 뒤 **첫 질의부터 전부** 실패한다
+  (`DuplicatePreparedStatementError`). rev.2 초안이 그 거짓 음성을 한 번 통과했다.
+  ⚠️ **접속 검증은 "한 번 초록"으로 끝내지 않는다.** `scripts/check_db_connection.py` 는
+  **호출마다 엔진을 새로** 만들어(서버리스 모양) 재본다 — 엔진을 재사용하면 아무것도 못 잡는다.
+  ⚠️ **이 계층은 DDL을 발행하지 않는다.** `krx_store`는 `init_db()`를 조회마다 부르지만
+  (krx_store.py:146 · 호출 9곳) Postgres에서 DDL은 asyncpg 타입 캐시를 무효화한다.
+  스키마는 `sql/init/*.sql`이 빈 볼륨에서 한 번 세운다.
+  ⚠️ **아직 아무도 import하지 않는다** — S4에서 잇는다. `tests/test_db.py`가 그 경계를 얼려 두고,
+  **그 테스트를 지우는 것이 곧 "이제 연결했다"는 표시**다.
+  실측 도구: `python3 scripts/check_db_connection.py` (읽기 전용 · 부하 검사로 판정한다)
+  검증 상대: `docker compose --profile pooler up -d` (transaction 모드 풀러 · 6543).
+  재현 절차 (a)(b)(c)는 ADR-DS-0011 의 "S2 재현 절차" 에 있다 — **(c)를 빼면 검증이 아니다.**
 - **OHLC는 `integer`.** 국내 주가는 원 단위 정수라 `numeric`이 필요 없다(25% 절약).
 - `ohlcv`는 **연 단위 RANGE 파티셔닝**. 인덱스는 PK 하나로 시작한다.
 - **`listed_shares`는 `ohlcv`와 `securities` 양쪽에 있고 중복이 아니다** (ADR-DS-0010).
@@ -122,6 +148,6 @@
 - ⚠️ **`app/core/trading_calendar.py`는 공휴일을 모른다.** `weekday() < 5`로 주말만 거른다.
   거래일 판정이 필요하면 `trading_calendar` 테이블을 쓴다 (ADR-DS-0002).
   ⚠️ **그 안내는 아직 실행 불가다** — DDL만 섰고 표를 채우는 코드도 읽는 코드도 없다.
-  저장계층 전환 때 함께 처리한다.
+  저장계층 전환 때 함께 처리한다 (ADR-DS-0011 **S9**).
   ★ 이 파일은 하류 `label-service`의 **수직 배리어가 의존하는 정본**이 된다.
   공개 형태(함수 시그니처·반환 타입)를 바꿀 때 그 사실을 기억한다.

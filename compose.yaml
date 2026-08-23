@@ -3,7 +3,9 @@
 # 그래야 지금은 이 레포 하나만 클론해도 그대로 뜬다.
 #
 #   docker compose up -d                      앱만
-#   docker compose --profile local-db up -d   앱 + 로컬 Postgres
+#   docker compose --profile local-db up -d   앱 + 로컬 Postgres (5432 직결)
+#   docker compose --profile pooler up -d     + transaction 모드 풀러 (6543)
+#                                             ← 배포본(Supabase) 커넥션 전략을 검증하는 자리
 
 name: data-service
 
@@ -46,7 +48,9 @@ services:
       start_period: 20s            # 기동 시 자동완성 색인 15,414종목을 올린다(실측 10초)
 
   db:
-    profiles: ["local-db"]               # 기본 up 에서는 안 뜬다 (ADR-CT-0007)
+    # `pooler` 프로파일에도 넣는다 — 풀러는 이 DB 앞에 서는 물건이라 혼자 뜰 수 없다.
+    # (compose 는 depends_on 대상이 활성 프로파일에 없으면 아예 실행을 거부한다.)
+    profiles: ["local-db", "pooler"]     # 기본 up 에서는 안 뜬다 (ADR-CT-0007)
     image: pgvector/pgvector:0.8.2-pg16  # ★ 버전 핀. pg16 롤링 태그 금지 (CVE-2026-3172)
     container_name: data-service-db
     environment:
@@ -64,6 +68,44 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # ────────────────────────────────────────────────────────────────────────
+  # transaction 모드 풀러 — **배포본(Supabase) 을 로컬에서 흉내 내는 자다.**
+  #
+  #   docker compose --profile pooler up -d
+  #   APP_ENV=vercel \
+  #     DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:6543/data_service \
+  #     python3 scripts/check_db_connection.py
+  #
+  # ⚠️ **`max_prepared_statements=0` 이 이 컨테이너의 존재 이유다.** PgBouncer 는 1.21 부터
+  #    transaction 모드에서 준비구문을 대신 관리하고, 1.25 의 **기본값은 200** 이다.
+  #    기본값 그대로 세우면 **틀린 커넥션 전략도 통과한다** — 실제로 그 거짓 음성을 한 번
+  #    겪었다(ADR-DS-0003 rev.2). Supavisor 는 그 대행을 하지 않으므로 0 으로 맞춘다.
+  #
+  # ⚠️ 이 프로파일은 **검증용**이다. 앱이 여기로 붙지 않는다 — `data-service` 는 5432 직결이다.
+  pooler:
+    profiles: ["pooler"]
+    image: edoburu/pgbouncer:v1.25.2-p0   # ★ 버전 핀. `latest` 는 기본값이 바뀔 수 있다
+                                         #   (태그 형식이 `v<버전>-p<패치>` 다 — `1.25.2` 는 없다)
+    container_name: data-service-pooler
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=data_service
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=50
+      - DEFAULT_POOL_SIZE=2             # 작게 둔다 — 물리 커넥션이 자주 갈려야 고장이 드러난다
+      - MAX_PREPARED_STATEMENTS=0       # ★ 위 경고 참조. 이 값이 200 이면 검증이 무의미해진다
+      - AUTH_TYPE=scram-sha-256
+      - ADMIN_USERS=postgres
+    ports:
+      - "6543:5432"                     # 배포본과 같은 포트 번호로 맞춘다 (ADR-DS-0003 §4)
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:

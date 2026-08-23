@@ -8,6 +8,7 @@ CI 는 이 명령을 호출만 한다. Makefile·tox·check.py 를 따로 두지
     invoke docs-check     문서 검증
 
 개별 단계만 돌리고 싶을 때: `invoke lint` · `invoke test` · `invoke export`.
+`invoke preflight` 는 venv 가 pyproject 를 따라잡았는지만 본다(check 가 먼저 부른다).
 """
 
 from pathlib import Path
@@ -44,6 +45,50 @@ def lint(c):
   포맷 일관성 대신 `ruff check`(lint)로 품질 게이트를 건다. 이쪽은 전부 통과 상태다.
   """
   c.run("ruff check .")
+
+
+# `pyproject.toml` 의 `[project.dependencies]` 중 **손으로 추린** 목록이다. 자동 유도가
+# 아니다 — 배포 이름과 import 이름이 다르고(`sqlalchemy[asyncio]` → `sqlalchemy`),
+# extra 가 끌고 오는 것(greenlet)까지 세면 목록이 오히려 부정확해진다.
+# 의존성을 더하면 **여기도 함께 손본다.**
+#
+# `yfinance` 를 넣어 둔 이유: 이것만 빠지면 서버는 뜨지만 라우터 3종·엔드포인트 10개가
+# 조용히 사라진다(app/main.py:58-64 가 흡수한다). 그 상태로 계약 스냅샷을 돌리면
+# "계약이 줄었다"는 실패가 나는데, 원인이 의존성이라는 것이 화면에 안 보인다.
+REQUIRED_IMPORTS = ("fastapi", "pydantic", "numpy", "yfinance", "sqlalchemy", "asyncpg")
+
+
+@task
+def preflight(c):
+  """검사를 돌리기 전에 `.venv` 가 `pyproject.toml` 을 따라잡았는지 본다.
+
+  `invoke check` 에는 설치 단계가 **일부러** 없다 — 있으면 검증이 조용히 환경을 바꾼다.
+  그래서 의존성을 더한 직후에는 venv 가 뒤처져 있는 것이 정상이고, 그 상태로 검사를
+  돌리면 lint 를 지나 pytest 수집 단계에서 죽는다.
+
+  ⚠️ **죽는 메시지 자체는 지금 명확하다** — 실측하면 `tests/test_db.py:24` 를 가리키며
+  `ModuleNotFoundError: No module named 'sqlalchemy'` 가 뜬다. 이 태스크가 버는 것은
+  **시간과 다음 동작**이다: ruff 를 먼저 돌리지 않고 즉시 멈추고, 트레이스백 대신
+  "무엇을 실행하라"를 준다.
+
+  ⚠️ S4(읽기 어댑터)에서는 이야기가 달라진다. `app/` 이 엔진 계층을 import 하기 시작하면
+  같은 결손이 `conftest.py:24-35` 의 앱 로딩 폴백을 거치면서 **원인에서 먼 메시지**가 된다
+  (`main.py` 가 다시 `app.main` 을 부르므로 두 번째 예외는 안 잡힌다). 그때 이 가드의
+  값이 커진다.
+  """
+  import importlib.util
+
+  missing = [name for name in REQUIRED_IMPORTS if importlib.util.find_spec(name) is None]
+  if missing:
+    # 막다른 길로 만들지 않는다 — 무엇을 해야 하는지까지 알려준다.
+    # uv 경로는 `_uv()` 가 이미 OS 별로 찾아 둔다. 여기서 다시 하드코딩하지 않는다.
+    uv = _uv() or "uv"
+    raise SystemExit(
+      f".venv 에 없는 런타임 모듈이 있다: {', '.join(missing)}\n"
+      "pyproject.toml 을 고친 뒤 아직 설치하지 않은 상태로 보인다. 먼저 맞춘다:\n"
+      f"  {uv} sync --extra dev        (uv.lock 대로 venv 를 맞춘다)\n"
+      "그 다음 `invoke check` 를 다시 실행한다."
+    )
 
 
 @task
@@ -104,7 +149,14 @@ def format_code(c):
 
 @task(name="check")
 def check(c):
-  """코드 검증 정본: lint → test → export → build."""
+  """코드 검증 정본: preflight → lint → test → export → build.
+
+  ⚠️ **순서가 뜻을 가진다.** `export` 가 `build` 보다 앞이라, 의존성을 더한 직후에도
+  `uv.lock` → `requirements.txt` 가 먼저 갱신되고 나서 도커가 `uv sync --locked` 를 만난다.
+  `invoke build` 를 단독으로 돌리면 그 순서가 없어서 낡은 락으로 하드 실패한다 —
+  의존성을 고친 날에는 `invoke check` 로 돌린다.
+  """
+  preflight(c)
   lint(c)
   test(c)
   export(c)

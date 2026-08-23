@@ -3,8 +3,8 @@
 `APP_ENV` 하나로 DB 커넥션 전략이 갈린다. **그 분기가 실제로 갈리는지**를 여기서 검사한다.
 
 이 테스트가 지키려는 사고는 조용한 쪽이다 — 배포본이 로컬 설정으로 뜨는 것.
-포트·풀·캐시 셋 중 하나만 어긋나도 prepared statement 충돌이 **산발적으로** 나서,
-재현이 안 되고 로그만 봐서는 원인을 못 찾는다. 그래서 세 값을 함께 얼려 둔다.
+포트·풀·캐시 둘·이름 유일화 **넷 중 하나만** 어긋나도 prepared statement 충돌이 나는데,
+재현이 안 되고 로그만 봐서는 원인을 못 찾는다. 그래서 네 값을 함께 얼려 둔다.
 
 외부 API 도 DB 도 부르지 않는다 — 환경변수를 monkeypatch 해서 분기만 본다.
 """
@@ -98,13 +98,16 @@ def test_app_env_is_always_in_the_vocabulary(clean_env):
 
 
 # ==================================================
-# 2. 커넥션 전략 — 셋이 한 벌이다 (ADR-DS-0003 §4·§5)
+# 2. 커넥션 전략 — 넷이 한 벌이다 (ADR-DS-0003 rev.2 §4·§5)
 # ==================================================
-def test_vercel_strategy_has_all_three(clean_env):
-    """⭐ 배포본 설정 셋을 **함께** 검사한다.
+def test_vercel_strategy_has_all_four(clean_env):
+    """⭐ 배포본 설정 **넷**을 함께 검사한다 (ADR-DS-0003 rev.2).
 
-    포트 6543 · NullPool · 캐시 두 개 0. 하나만 빠져도 산발적 충돌이 나므로
-    따로 검사하면 뜻이 없다. 이 테스트가 그 한 벌을 얼려 둔다.
+    포트 6543 · NullPool · 캐시 두 개 0 · **준비구문 이름 유일화**.
+    하나만 빠져도 충돌이 나므로 따로 검사하면 뜻이 없다.
+
+    ⚠️ 네 번째가 뒤늦게 들어왔다. 캐시 둘만으로 충분해 보였던 이유는 **갓 띄운 풀러에서는
+    정말로 0건이기 때문**이다 — 잔여물이 쌓인 뒤에야 100% 실패로 드러났다(2026-08-23 실측).
     """
     clean_env.setenv("APP_ENV", "vercel")
     clean_env.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@host:6543/db")
@@ -115,6 +118,7 @@ def test_vercel_strategy_has_all_three(clean_env):
     assert db.use_null_pool is True
     assert db.connect_args["statement_cache_size"] == 0
     assert db.connect_args["prepared_statement_cache_size"] == 0
+    assert db.unique_statement_names is True
 
 
 def test_local_strategy_keeps_the_normal_pool(clean_env):
@@ -126,13 +130,18 @@ def test_local_strategy_keeps_the_normal_pool(clean_env):
     assert db.expected_port == 5432
     assert db.use_null_pool is False
     assert dict(db.connect_args) == {}
+    assert db.unique_statement_names is False     # 직결에는 이름 충돌이 없다
 
 
 def test_the_two_caches_are_both_named(clean_env):
-    """손잡이가 둘이라는 사실 자체를 고정한다.
+    """**캐시** 손잡이가 둘이라는 사실 자체를 고정한다.
 
-    `statement_cache_size` 만 끄면 SQLAlchemy 방언이 그 위에 둔 두 번째 LRU 가 남아
-    **빈도만 낮아진 채 같은 오류가 계속 난다.** 한쪽만 지우는 리팩터링을 막는다.
+    한쪽만 끄면 조합에 따라 결과가 전혀 다르고 asyncpg 버전에 따라서도 갈린다
+    (ADR-DS-0003 rev.2 의 실측표). 한쪽만 지우는 리팩터링을 막는다.
+
+    ⚠️ 이 둘이 `connect_args` 의 전부다. **세 번째 손잡이(이름 유일화)는 여기 없다** —
+    그것은 값이 아니라 함수라, 설정은 `unique_statement_names` 라는 사실만 들고
+    함수는 접속 계층(`app/core/db.py`)이 준다.
     """
     assert set(settings.VERCEL_CONNECT_ARGS) == {
         "statement_cache_size",
@@ -189,6 +198,12 @@ def test_explicit_url_is_used_as_written(clean_env):
     ("postgresql+asyncpg://host:5432/db", 5432),
     ("postgresql+asyncpg://u:p@[::1]:5432/db", 5432),
     ("not-a-url", None),
+    # ⚠️ 경로 없이 쿼리만 붙는 형태. SQLAlchemy 는 이것을 정상으로 읽고 6543 에 붙는다.
+    #    여기서 None 을 돌려주면 port_warning() 이 **조용히 꺼져** 포트가 틀려도 말이 없다.
+    ("postgresql+asyncpg://u:p@host:6543?sslmode=require", 6543),
+    ("postgresql+asyncpg://u:p@host:5432#frag", 5432),
+    # 쿼리 안에 `:` 가 있으면 그 끝을 포트로 잘못 읽는 사고가 있었다. 쿼리를 먼저 뗀다.
+    ("postgresql+asyncpg://u:p@host:5432?options=-c%20x:1", 5432),
 ])
 def test_url_port_extraction(url, port):
     assert settings.url_port(url) == port
