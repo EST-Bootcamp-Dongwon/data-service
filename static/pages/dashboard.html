@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>대시보드 — G.I.C Lab</title>
+  <title>국내 투자 정보 수집·보관·조회 — G.I.C Lab</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/static/assets/app.css" />
   <style>
@@ -29,6 +29,18 @@
     .status-row .t { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); font-size: var(--t-md); font-weight: 600; }
     .status-row .d { font-size: var(--t-xs); color: var(--muted); word-break: break-all; }
 
+    /* 수집 갈래 타일 (ADR-DS-0012 §7) — 갈래마다 지금 어디까지 왔는지 밝힌다.
+       흐리게 하되 읽히지 않을 만큼은 아니다. '준비중'은 색이 아니라 글자로도 말한다. */
+    .tile .stage { font-size: var(--t-xs); font-weight: 600; }
+    .tile.pending { opacity: 0.72; border-style: dashed; }
+    .tile.pending .stage { color: var(--muted); }
+    .tile.live .stage { color: var(--up); }
+    .tile-label .ico { margin-right: 5px; }
+    .tile-sub code { font-family: var(--mono); font-size: 0.92em; }
+
+    /* 카드 밖 소제목 — `.card h2` 규칙이 닿지 않는 자리라 여기서 맞춘다 */
+    .sec-head { font-size: var(--t-lg); margin: var(--sp-5) 0 var(--sp-3); }
+
     /* 앞으로 붙을 자리 (M4~M6) — 비어 있음을 숨기지 않고 그대로 말한다 */
     .placeholder {
       border: 1px dashed var(--border); border-radius: var(--radius);
@@ -41,8 +53,10 @@
 <div class="wrap">
   <header class="page-head">
     <div>
-      <h1>대시보드</h1>
-      <p>지수·환율·금리·시장 온도를 <b>값 + 추이 + 상태등급</b>으로 함께 본다.</p>
+      <h1>국내 투자 정보를 한 곳에</h1>
+      <p>흩어져 있는 국내 투자 정보를 모아 두는 <b>수집·보관·조회 서비스</b>다.
+        시세·통계는 정형 API 로, 공시·뉴스·커뮤니티는 수집으로 모으고,
+        <b>기업과 산업</b>을 축으로 되찾는다.</p>
     </div>
     <div class="pillbar">
       <button class="ghost" id="reloadBtn" type="button">다시 불러오기</button>
@@ -51,12 +65,63 @@
 
   <p class="notice-line" id="notice"></p>
 
-  <!-- ── 시장 카드 그리드 ───────────────────── -->
+  <!-- ── ① 무엇을 모으나 (ADR-DS-0012 §2) ───────
+       이 서비스가 하는 일이 첫 화면 맨 위에 온다. 예전에는 맨 아래였다.
+       ⚠️ 갈래마다 **지금 어디까지 왔는지**를 그대로 쓴다. 클라이언트만 있는 것을
+          '가동중'이라고 쓰지 않는다 — 화면에서 쓸 수 있어야 가동이다. -->
+  <section class="card" id="scope">
+    <h2>무엇을 모으나 <span class="muted">— 여섯 갈래</span></h2>
+    <p class="hint">착수 순서는 <b>공시·보고서 → 뉴스 → 커뮤니티·동영상</b>이다.
+      인증키와 클라이언트가 이미 있고 공공데이터라 이용약관 확인이 필요 없는 쪽부터 한다.</p>
+    <div class="tiles">
+      <div class="tile pending">
+        <div class="tile-label"><span class="ico" aria-hidden="true">📑</span>공시</div>
+        <div class="stage">클라이언트만 · 화면 준비중</div>
+        <div class="tile-sub">DART 정기·수시공시. <code>clients/dart_data.py</code></div>
+      </div>
+      <div class="tile pending">
+        <div class="tile-label"><span class="ico" aria-hidden="true">📘</span>정기보고서</div>
+        <div class="stage">클라이언트만 · 화면 준비중</div>
+        <div class="tile-sub">사업·반기·분기보고서 원문. <code>clients/dart_report.py</code></div>
+      </div>
+      <div class="tile pending">
+        <div class="tile-label"><span class="ico" aria-hidden="true">📰</span>뉴스</div>
+        <div class="stage">인증키만 배치 · 미착수</div>
+        <div class="tile-sub">제목·링크·언론사·발행일까지. <b>본문은 담지 않는다</b></div>
+      </div>
+      <div class="tile pending">
+        <div class="tile-label"><span class="ico" aria-hidden="true">💬</span>커뮤니티</div>
+        <div class="stage">미착수</div>
+        <div class="tile-sub">종목토론방·게시판. 이용약관 확인이 먼저다</div>
+      </div>
+      <div class="tile pending">
+        <div class="tile-label"><span class="ico" aria-hidden="true">🎬</span>동영상</div>
+        <div class="stage">미착수</div>
+        <div class="tile-sub">제목·채널·게시일. <b>링크까지만</b> 모은다</div>
+      </div>
+      <div class="tile live">
+        <div class="tile-label"><span class="ico" aria-hidden="true">📈</span>시세·통계</div>
+        <div class="stage">가동중 — 9원천</div>
+        <div class="tile-sub">KRX · 야후 · KOSIS · ECOS · FRED · FSS · DART · HF</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── ② 데이터 상태 ─────────────────────────
+       "지금 무엇을 쓸 수 있는가". 맨 아래였던 것을 위로 올렸다. -->
+  <section class="card" id="data-status">
+    <h2>데이터 상태</h2>
+    <p class="hint">인증키와 캐시 현황. <b>키 값은 서버가 응답에 담지 않는다</b> — 출처와 길이만 확인한다.</p>
+    <div class="status-list" id="statusBody"><div class="empty">불러오는 중…</div></div>
+  </section>
+
+  <!-- ── ③ 시장 카드 그리드 ─────────────────── -->
+  <h2 class="sec-head">오늘의 시장</h2>
   <div class="card-grid" id="cards">
     <div class="stat"><div class="stat-label">불러오는 중…</div></div>
   </div>
 
-  <!-- ── 시장 온도 ─────────────────────────── -->
+  <!-- ── ④ 시장 온도 ─────────────────────────── -->
   <section class="card" id="tempCard">
     <h2>시장 온도 <span class="muted">— 상승 종목 비율</span></h2>
     <p class="hint">지수는 대형주 몇 개에 좌우되지만, <b>몇 종목이 올랐는지</b>는 시장 전체를 센다.
@@ -64,20 +129,15 @@
     <div id="tempBody" class="empty">불러오는 중…</div>
   </section>
 
-  <!-- ── 최근 리포트 (M4~M6) ───────────────── -->
+  <!-- ── ⑤ 최근 리포트 (M4~M6) ─────────────────
+       빈 자리를 없애지 않고 맨 아래로 내렸다 (ADR-DS-0012 §7).
+       비어 있음을 숨기지 않는 것이 이 화면의 방침이다. -->
   <section class="card">
     <h2>최근 리서치 리포트</h2>
     <p class="hint">GIC 하네스(H00~H11)로 실행한 리포트가 여기 쌓인다.</p>
     <div class="placeholder">
-      리서치 하네스는 <b>M4</b>에서 붙는다. 지금은 데이터 실험실 화면으로 원천 데이터를 확인할 수 있다.
+      리서치 하네스는 <b>M4</b>에서 붙는다. 지금은 시장 데이터 화면으로 원천 데이터를 확인할 수 있다.
     </div>
-  </section>
-
-  <!-- ── 데이터 상태 ───────────────────────── -->
-  <section class="card" id="data-status">
-    <h2>데이터 상태</h2>
-    <p class="hint">인증키와 캐시 현황. <b>키 값은 서버가 응답에 담지 않는다</b> — 출처와 길이만 확인한다.</p>
-    <div class="status-list" id="statusBody"><div class="empty">불러오는 중…</div></div>
   </section>
 </div>
 

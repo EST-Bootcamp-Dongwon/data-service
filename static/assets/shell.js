@@ -16,39 +16,65 @@
 window.Shell = (() => {
   'use strict';
 
-  // ── 정보구조 (명세서 §7.1) ────────────────────────────────
+  // ── 정보구조 (ADR-DS-0012 §4) ─────────────────────────────
+  // 화면을 **자료 종류**로 가른다. 원천별이 아니다 — 사용자가 찾는 것은
+  // "야후에서 온 것" 이 아니라 "삼성전자에 관한 것" 이기 때문이다.
+  //
   // `soon: true` 는 아직 만들지 않은 화면이다. 링크를 죽여 두고 '준비중'을 글자로 밝힌다.
   // (메뉴에 보여 주는 이유 — 앞으로 무엇이 생기는지가 정보구조의 일부라서다)
+  // ⚠️ '수집 자료' 다섯이 지금 전부 준비중이다. 사이드바 절반이 비어 보이는데,
+  //    ADR-DS-0012 §결과가 그것을 감수하기로 한 부분이다. 감추지 않는다.
   const NAV = [
     {
       items: [
         { key: 'dashboard', href: '/', label: '대시보드', ico: '◈' },
+        // 기업·산업으로 검색하면 여섯 갈래가 한 화면에 모이는 허브 (ADR-DS-0012 §5).
+        // 갈래별 화면보다 **위** 단계다.
+        { key: 'hub', label: '통합 검색', ico: '🔍', soon: true },
+      ],
+    },
+    {
+      // 이 서비스가 무엇인지가 여기서 읽힌다 (ADR-DS-0012 §1·§2).
+      // 착수 순서는 공시·보고서 → 뉴스 → 커뮤니티·동영상이다.
+      title: '수집 자료',
+      items: [
+        { key: 'filings', label: '공시·보고서', ico: '📑', soon: true, tag: '1차' },
+        { key: 'news', label: '뉴스', ico: '📰', soon: true },
+        { key: 'posts', label: '커뮤니티', ico: '💬', soon: true },
+        { key: 'videos', label: '동영상', ico: '🎬', soon: true },
+        // 담아 둔 자료를 되찾는 곳 (`clip` 표 · ADR-DS-0008)
+        { key: 'clips', label: '보관함', ico: '🔖', soon: true },
+      ],
+    },
+    {
+      title: '시장 데이터',
+      items: [
         // 대시보드 카드는 작아서 모양이 안 보이고 기간도 못 바꾼다. 그 둘을 여기서 푼다.
         { key: 'market', href: '/market', label: '시장 상세', ico: '📉' },
+        { key: 'stock', href: '/stock', label: '종목 조회', ico: '🔎' },
+        { key: 'krx', href: '/krx', label: 'KRX 시세', ico: '📈' },
+        { key: 'yf', href: '/yf', label: '야후 파이낸스', ico: '💹' },
+        { key: 'kosis', href: '/kosis', label: 'KOSIS 통계', ico: '📊' },
+      ],
+    },
+    {
+      title: '분석',
+      items: [
+        { key: 'quant', href: '/quant', label: '퀀트 분석', ico: '🧮' },
+        // M3 — numpy 로 직접 구현한 시계열 엔진(`/api/ts/*`)을 눈으로 보는 화면.
+        { key: 'timeseries', href: '/timeseries', label: '시계열 분석', ico: '🌊' },
       ],
     },
     {
       // M6 — 네 항목이 같은 화면(`research.html`)으로 간다. 12상태가 넷 다 같아
       // 화면을 나눌 이유가 없고, 갈라지는 것은 대상 입력과 리포트 양식뿐이다.
+      // ⚠️ 리포트를 **만드는** 것은 이 레포의 경계 밖이다 (ADR-DS-0007). 화면은 남아 있다.
       title: '리서치',
       items: [
         { key: 'corp-r', href: '/research?ws=CORP-R', label: '기업 리서치', ico: '▤' },
         { key: 'corp-tp', href: '/research?ws=CORP-TP', label: '기업 Top Pick', ico: '▤' },
         { key: 'ind-r', href: '/research?ws=IND-R', label: '산업 리서치', ico: '▦' },
         { key: 'ind-tp', href: '/research?ws=IND-TP', label: '산업 Top Pick', ico: '▦' },
-      ],
-    },
-    {
-      title: '데이터 실험실',
-      items: [
-        { key: 'stock', href: '/stock', label: '종목 조회', ico: '🔎' },
-        { key: 'yf', href: '/yf', label: '야후 파이낸스', ico: '💹' },
-        { key: 'krx', href: '/krx', label: 'KRX 시세', ico: '📈' },
-        { key: 'kosis', href: '/kosis', label: 'KOSIS 통계', ico: '📊' },
-        { key: 'quant', href: '/quant', label: '퀀트 분석', ico: '🧮' },
-        // M3 — numpy 로 직접 구현한 시계열 엔진(`/api/ts/*`)을 눈으로 보는 화면.
-        // 명세 §7.1 IA 에는 없던 화면이라 변경 노트 N26 으로 남긴다.
-        { key: 'timeseries', href: '/timeseries', label: '시계열 분석', ico: '🌊' },
       ],
     },
     {
@@ -119,7 +145,7 @@ window.Shell = (() => {
     shell.className = 'shell';
     shell.innerHTML = `
       <aside class="side" id="shellSide">
-        <a class="side-brand" href="/">⚡ G.I.C Lab<small>api-test</small></a>
+        <a class="side-brand" href="/">⚡ G.I.C Lab<small>data-service</small></a>
         ${navHtml(current)}
         <div class="side-foot">
           교육·리서치용 · 투자자문 아님<br />데이터는 15분 이상 지연됩니다

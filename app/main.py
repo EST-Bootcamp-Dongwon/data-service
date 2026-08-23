@@ -92,7 +92,7 @@ async def lifespan(_app: FastAPI):
 # 여기에 넘긴 값들은 전부 /docs 문서에 반영된다.
 app = FastAPI(
     lifespan=lifespan,               # 위에서 정의한 시작 준비 작업
-    title="My FastAPI Backend",          # 문서 최상단 제목
+    title="data-service",                # 문서 최상단 제목 (ADR-DS-0012 §1)
     description=API_DESCRIPTION,         # 제목 아래 마크다운 설명
     version="1.0.0",                     # API 버전 (문서 표시용)
     openapi_tags=TAGS_METADATA,          # 태그(그룹) 설명
