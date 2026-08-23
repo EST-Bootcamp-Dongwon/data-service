@@ -3230,7 +3230,7 @@
           "db_path": {
             "type": "string",
             "title": "Db Path",
-            "description": "DB 파일명",
+            "description": "DB 파일명. **`mode` 가 가리키는 층의 것**이다 — 원본이 비면 축약본 파일명이 온다",
             "examples": [
               "krx_cache.db"
             ]
@@ -3238,7 +3238,7 @@
           "db_size_mb": {
             "type": "number",
             "title": "Db Size Mb",
-            "description": "DB 파일 크기 (MB)",
+            "description": "DB 파일 크기 (MB). `db_path` 와 같은 층",
             "examples": [
               101.4
             ]
@@ -6792,9 +6792,9 @@
           "source": {
             "type": "string",
             "title": "Source",
-            "description": "데이터 출처 — `cache`(DB) · `live`(KRX 를 방금 호출) · `live-cache`(라이브 결과 메모리 재사용)",
+            "description": "데이터 출처 `<provider>-<tier>` (ADR-DS-0009) — `krx-db`(정본 저장소) · `krx-bundle`(배포용 축약본) · `krx-live`(KRX 를 방금 호출) · `krx-live-memo`(라이브 결과를 메모리에서 재사용)",
             "examples": [
-              "cache"
+              "krx-db"
             ]
           },
           "total": {
@@ -7032,9 +7032,9 @@
           "source": {
             "type": "string",
             "title": "Source",
-            "description": "데이터 출처 — `yfinance` · `krx-cache`",
+            "description": "데이터 출처 `<provider>-<tier>` (ADR-DS-0009) — `yahoo-live` · `krx-db`·`krx-bundle`(야후 조회 실패 시 국내 대체 경로)",
             "examples": [
-              "yfinance"
+              "yahoo-live"
             ]
           },
           "market_state": {
@@ -7784,7 +7784,7 @@
               }
             ],
             "title": "Source",
-            "description": "출처 — `cache` · `live` · `live-cache`"
+            "description": "출처 `<provider>-<tier>` (ADR-DS-0009) — `krx-db` · `krx-bundle` · `krx-live` · `krx-live-memo`"
           },
           "grade": {
             "anyOf": [
@@ -8617,15 +8617,15 @@
           },
           "cache": {
             "$ref": "#/components/schemas/CacheStats",
-            "description": "디스크 캐시 현황"
+            "description": "저장소 현황. 숫자는 **`mode` 가 가리키는 층**의 것이다"
           },
           "mode": {
             "type": "string",
             "title": "Mode",
-            "description": "조회 방식 — `cache`(DB 에서 읽음) 또는 `live`(캐시가 비어 KRX 를 요청할 때마다 직접 호출)",
-            "default": "cache",
+            "description": "저장소가 서 있는 층 (ADR-DS-0009) — `db`(정본 저장소에서 읽음) · `bundle`(원본이 비어 배포용 축약본에서 읽음) · `live`(둘 다 없어 요청할 때마다 KRX 를 직접 호출). **`cache` 의 숫자는 이 층의 것이다.**",
+            "default": "db",
             "examples": [
-              "cache"
+              "db"
             ]
           }
         },
