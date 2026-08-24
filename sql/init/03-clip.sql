@@ -5,8 +5,9 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 왜 한 표인가 (ADR-DS-0008)
 --
--- 담는 것은 네 종류다 — 뉴스·공시 링크 / 데이터셋 스냅샷 / 리서치 리포트 / 메모.
--- 종류마다 표를 나누면 "이 화면에서 담은 것 전부"를 낼 때마다 UNION 넷이 된다.
+-- 담는 것은 일곱 종류다 — 뉴스·공시 링크 / 커뮤니티 글 / 동영상 링크 /
+-- 데이터셋 스냅샷 / 리서치 리포트 / 메모. (처음 넷이었고 ADR-DS-0012 가 post·video 를 더했다.)
+-- 종류마다 표를 나누면 "이 화면에서 담은 것 전부"를 낼 때마다 UNION 일곱이 된다.
 -- 그런데 요구의 핵심이 바로 **화면별로 나눠 본다**는 것이라 그 질의가 가장 잦다.
 -- 그래서 kind 로 구분하고 종류별 가변 필드는 payload(jsonb)로 흘린다.
 --
@@ -48,13 +49,27 @@ CREATE TABLE clip (
     -- 종류별 가변 필드
     payload         jsonb       NOT NULL DEFAULT '{}'::jsonb,
 
+    -- ⚠️ 여섯 갈래(ADR-DS-0012 §2)를 **미리** 전부 받아 둔다. 지금 쓰는 것은 filing·news 뿐이고
+    --    post·video 는 3차 착수분이지만, 이 레포에는 **마이그레이션 러너가 없다** —
+    --    이 파일은 빈 볼륨 최초 기동에만 돈다(01-schema.sql:3-5). 적재를 시작한 뒤에 값을
+    --    더하려면 전면 재적재다. 값 하나가 늘어나는 비용은 지금 0 이고 나중엔 그 값이 아니다.
+    --
+    --    여섯 갈래 → kind 대응 (갈래가 여섯이고 kind 는 일곱이다. 1:1 이 아니다)
+    --      ① 공시 · ② 정기보고서  → filing     (둘이 한 값을 쓴다)
+    --      ③ 뉴스                 → news
+    --      ④ 커뮤니티             → post   ★ 아직 안 쓴다
+    --      ⑤ 동영상               → video  ★ 아직 안 쓴다
+    --      ⑥ 시세·통계            → (clip 이 아니라 ohlcv 등 정형 표로 간다)
+    --    dataset · report · memo 는 갈래가 아니라 **내가 담는 것**이라 원래부터 있었다(ADR-DS-0008).
     CONSTRAINT clip_kind_ck
-        CHECK (kind IN ('news', 'filing', 'dataset', 'report', 'memo')),
+        CHECK (kind IN ('news', 'filing', 'dataset', 'report', 'memo', 'post', 'video')),
     CONSTRAINT clip_industry_source_ck
         CHECK (industry_source IN ('auto', 'manual')),
     -- 링크형은 URL 이 있어야 한다. 나머지는 없어도 된다.
+    -- ⚠️ post·video 도 링크형이다 — ADR-DS-0012 §3 이 ④⑤ 를 **링크까지만** 으로 못박았으므로
+    --    URL 이 없는 커뮤니티 글·동영상은 담을 것이 아예 없다는 뜻이 된다.
     CONSTRAINT clip_link_needs_url_ck
-        CHECK (kind NOT IN ('news', 'filing') OR url IS NOT NULL)
+        CHECK (kind NOT IN ('news', 'filing', 'post', 'video') OR url IS NOT NULL)
 );
 
 -- 같은 기사를 두 번 담지 않는다.
@@ -77,7 +92,7 @@ CREATE INDEX clip_saved_idx        ON clip (saved_at DESC);
 CREATE INDEX clip_tags_idx         ON clip USING gin (tags);
 
 COMMENT ON TABLE  clip IS
-    '화면에서 담아 두는 자료 보관함. 뉴스·공시 링크 / 데이터셋 스냅샷 / 리서치 리포트 / 메모 (ADR-DS-0008).';
+    '화면에서 담아 두는 자료 보관함. 뉴스·공시·커뮤니티·동영상 링크 / 데이터셋 스냅샷 / 리서치 리포트 / 메모 (ADR-DS-0008 · ADR-DS-0012).';
 COMMENT ON COLUMN clip.occurred_at IS
     '자료 자체의 날짜 — 기사 발행일·공시일·데이터 기준일. 날짜별/월별 묶기는 이 컬럼으로 한다.';
 COMMENT ON COLUMN clip.saved_at IS

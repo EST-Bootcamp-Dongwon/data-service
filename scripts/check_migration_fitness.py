@@ -21,15 +21,18 @@ ADR-DS-0002 를 실행하기 전에 **자를 먼저 댄다.** 780,484행을 다 
 `--quick` 은 종목별 집계(변동 종목 수 등)를 건너뛴다. 그 항목들은 **판단 근거**이지
 적재를 막는 조건이 아니라서, 빠르게 치명 항목만 보고 싶을 때 쓴다.
 
-판단 대기 셋
------------
+판단 대기 셋 — **결정됐다** (2026-08-23 · ADR-DS-0014)
+------------------------------------------------------
 치명이 아닌 줄은 **적재를 막지 않는다.** 전환 도중 조용히 틀어질 자리를 미리 세어 두는
-것이고, 아래 셋은 아직 결정이 안 났다. 결정이 나면 ADR 로 옮기고 여기서 지운다.
-아래 이름이 출력의 "판단 근거"·"판단 대기" 꼬리표와 짝이다.
+것이다. 그중 셋은 여기서 "아직 결정이 안 났다"고 미뤄 두고 있었고, S3 적재기를 쓰면서
+답이 나왔다. 이 자는 이제 그 결정이 **여전히 성립하는지**를 재는 쪽이 된다.
 
-    securities 원천  마스터 JSON 인가 daily_price 인가. 마스터는 시세 종목 일부를 못 덮는다
-    name 이력        최신값 하나로 접을 것인가. 접으면 옛 이름으로 검색이 안 된다
-    is_delisted      원본에 폐지 정보가 없다. 최신 거래일 부재로 추정 판정할 것인가
+    securities 원천  daily_price 다. 마스터 JSON 은 세 컬럼만 덧칠한다   (ADR-DS-0014 §1)
+    name 이력        최신값으로 접는다. 옛 이름은 버린다                 (ADR-DS-0014 §2)
+    is_delisted      추정하지 않는다. 전부 false 로 두고 S8 에서 채운다  (ADR-DS-0014 §3)
+
+즉 아래 세 줄은 "무엇을 고를까"가 아니라 **"고른 것의 대가가 아직 이만큼인가"** 를 센다.
+숫자가 크게 움직이면 그 결정을 다시 볼 때다.
 """
 
 import argparse
@@ -318,7 +321,7 @@ def check_master_coverage(conn: sqlite3.Connection, out: list) -> None:
         Finding(
             "마스터가 못 덮는 시세 종목",
             f"{len(missing)}개",
-            "securities 원천을 daily_price 로 두면 0 (securities 원천 판단 근거)",
+            "securities 원천을 daily_price 로 두면 0 (ADR-DS-0014 §1 — 그래서 그렇게 정했다)",
             True,
             False,
             ("예: " + ", ".join(missing[:5])) if missing else "",
@@ -353,7 +356,7 @@ def check_per_code_variance(conn: sqlite3.Connection, out: list) -> None:
         Finding(
             "listed_shares 가 변하는 종목",
             f"{human(ls_varying)} / {human(codes)}",
-            "(listed_shares 판단 근거)",
+            "(ADR-DS-0010 — 그래서 ohlcv 에 따로 싣는다)",
             True,
             False,
             "securities 단일값으로 접으면 과거 회전율이 최신 주식수 기준이 된다"
@@ -364,7 +367,7 @@ def check_per_code_variance(conn: sqlite3.Connection, out: list) -> None:
         Finding(
             "name 이 변하는 종목",
             f"{human(name_varying)} / {human(codes)}",
-            "(name 이력 판단 근거)",
+            "(ADR-DS-0014 §2 — 접기로 한 대가)",
             True,
             False,
             "최신값으로 접으면 옛 이름 검색이 안 된다 — stock_service.py:154-159",
@@ -383,7 +386,7 @@ def check_per_code_variance(conn: sqlite3.Connection, out: list) -> None:
         Finding(
             "최신 거래일에 없는 종목",
             f"{human(gone)}",
-            "(is_delisted 판단 근거)",
+            "(ADR-DS-0014 §3 — 추정하지 않기로 했다)",
             True,
             False,
             "상장폐지 후보. 원본에 폐지 정보가 없어 이건 추정이다",

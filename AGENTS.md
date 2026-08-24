@@ -131,8 +131,11 @@
   ⚠️ **이 계층은 DDL을 발행하지 않는다.** `krx_store`는 `init_db()`를 조회마다 부르지만
   (krx_store.py:146 · 호출 9곳) Postgres에서 DDL은 asyncpg 타입 캐시를 무효화한다.
   스키마는 `sql/init/*.sql`이 빈 볼륨에서 한 번 세운다.
-  ⚠️ **아직 아무도 import하지 않는다** — S4에서 잇는다. `tests/test_db.py`가 그 경계를 얼려 두고,
-  **그 테스트를 지우는 것이 곧 "이제 연결했다"는 표시**다.
+  ⚠️ **`app/` 안에서는 아직 아무도 import하지 않는다** — S4에서 잇는다. `tests/test_db.py`가
+  그 경계를 얼려 두고, **그 테스트를 지우는 것이 곧 "이제 연결했다"는 표시**다.
+  ⚠️ 그 가드는 `app/` 만 훑는다. `scripts/` 는 **이미 둘이 쓴다** —
+  `check_db_connection.py`(진단)와 `load_pg.py`(적재). 도구가 엔진을 쓰는 것은 경계 위반이
+  아니다. 화면·API 경로가 쓰기 시작하는 것이 S4다.
   실측 도구: `python3 scripts/check_db_connection.py` (읽기 전용 · 부하 검사로 판정한다)
   검증 상대: `docker compose --profile pooler up -d` (transaction 모드 풀러 · 6543).
   재현 절차 (a)(b)(c)는 ADR-DS-0011 의 "S2 재현 절차" 에 있다 — **(c)를 빼면 검증이 아니다.**
@@ -146,6 +149,22 @@
   ⚠️ `market_cap = close × listed_shares`는 780,484행 전부에서 성립하지만
   **`CHECK` 제약으로 걸지 않는다** — 원본 정의가 바뀌는 첫 행에서 배치가 롤백된다.
   `scripts/check_migration_fitness.py`가 세기만 한다.
+- **일회성 적재기는 `scripts/load_pg.py`다** (ADR-DS-0011 S3 · ADR-DS-0014, 2026-08-23).
+  SQLite `daily_price` 780,484행 → `ohlcv` + `securities`, `fetch_log` → `ohlcv_sync_log`.
+  실측 **32초**(27,900행/초)에 대조 21항목 전부 일치. **다시 돌려도 안전하다**
+  (`ON CONFLICT`). 원본은 `mode=ro` 로 연다.
+  - `python3 scripts/load_pg.py --dry-run` (DB 없이 원본만) · `--verify-only`(대조만)
+  - ⚠️ **읽기 경로는 아직 SQLite다.** Postgres에 자료가 있지만 **아무도 읽지 않는다** —
+    그것이 S3의 정의다. 그래서 SQLite에 새 거래일이 들어오면 두 저장소가 갈린다.
+    다시 돌리면 따라잡는다.
+  - ⚠️ **원격 DB는 호스트로 막는다.** `APP_ENV`로는 못 막는다 — 개발자 셸은 그 값이 없어
+    `local`로 떨어지는데 `DATABASE_URL`은 Supabase일 수 있다. 뚫으려면 `--allow-remote`.
+  - ⚠️ **`clip_kind_ck`가 일곱 값인지 적재 직전에 확인한다.** clip은 이 적재기가 손대는
+    표가 아닌데도 본다 — 볼륨을 다시 세울 수 있는 마지막 순간이 그때이기 때문이다.
+    실제로 이 가드가 S2 때 만든 옛 볼륨을 잡아냈다.
+  - ⚠️ **접은 것과 비워 둔 것**: `securities`에 옛 이름이 없다(101종목) ·
+    `is_delisted`는 전부 false(107종목이 후보이나 **추정하지 않는다**) ·
+    `universe_tier`는 전부 `full`(구성종목 목록이 레포에 없다). 근거는 ADR-DS-0014.
 - **응답에 상한을 건다** — Vercel 요청·응답 본문 4.5MB 한도 (ADR-DS-0004).
   목록형은 `page`+`size`, **시계열형은 구간 상한 + 잘림 고지**(`meta.row_truncated`).
   시계열을 페이지로 자르면 이동평균이 페이지 경계에서 깨진다.
@@ -190,6 +209,10 @@
   ⚠️ 전역 규칙(`~/.claude/CLAUDE.md` §7.1)은 "`docs/`는 `.gitignore`"라고 하는데
   **이 레포는 한 단계 다르다** — ADR 이 코드와 같은 커밋에 묶여야 하므로 `docs/`를 커밋한다.
   그래서 여기서는 gitignore 대신 **양쪽 다 보관**이 된다.
+- **`clip.kind`는 일곱 값이다** — `news`·`filing`·`dataset`·`report`·`memo`·`post`·`video`
+  (ADR-DS-0014 §8, 2026-08-23). 수집 갈래가 여섯이고 그것이 `kind` 넷으로 접히며
+  `dataset`·`report`·`memo`는 갈래가 아니라 **내가 담는 것**이라 원래부터 있었다.
+  ⚠️ ADR-DS-0012 §2의 "여섯 값"은 그 정정 전 표기다. **갈래 수와 값 수는 1:1이 아니다.**
 - **팀 프로젝트는 별도 레포다** (ADR-DS-0012 §9). 이 레포는 **개인 프로젝트로 완성**하고,
   팀 협업용 장치(브랜치 전략·이슈 템플릿·다인 배포)를 미리 넣지 않는다.
 - ⚠️ **`app/core/trading_calendar.py`는 공휴일을 모른다.** `weekday() < 5`로 주말만 거른다.

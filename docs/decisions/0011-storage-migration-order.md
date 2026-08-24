@@ -34,7 +34,7 @@ ADR-DS-0002 가 "파일 캐시를 Postgres 로 옮긴다"를 정했고 `sql/init
    |---|---|---|---|
    | **S1** | 적합성 자 — SQLite 원본이 목표 DDL 을 통과하는지 잰다 | `check_migration_fitness.py` 가 치명 0 · `test_schema_fitness.py` 초록 | ☑ 2026-08-22 (`2d52be7`) |
    | **S2** | 엔진 계층 — `app/core/db.py` + `sqlalchemy[asyncio]`·`asyncpg` | 실 DB 없이 `invoke check` 초록 · 아래 §S2 재현 절차가 (a)(c) 0건 · (b) 실패 | ☑ 2026-08-23 |
-   | **S3** | 일회성 적재기 — `scripts/load_pg.py` (SQLite → Postgres) | 780,484행이 들어가고 행수·합계가 원본과 일치 | ☐ |
+   | **S3** | 일회성 적재기 — `scripts/load_pg.py` (SQLite → Postgres) | 780,484행이 들어가고 행수·합계가 원본과 일치 | ☑ 2026-08-23 (ADR-DS-0014) |
    | **S4** | 읽기 어댑터 + `STORE_BACKEND` 스위치 (**기본은 `sqlite`**) | 스위치를 켠 상태로 계약 스냅샷 51경로가 그대로 | ☐ |
    | **S5** | 로컬 기본값 뒤집기 (`STORE_BACKEND=postgres`) | 로컬 화면 10개가 Postgres 로만 돈다 | ☐ |
    | **S6** | Supabase (core 유니버스만 · ADR-CT-0010) | 배포본이 DB 를 읽는다 | ☐ |
@@ -56,6 +56,9 @@ ADR-DS-0002 가 "파일 캐시를 Postgres 로 옮긴다"를 정했고 `sql/init
 
 6. **새 ADR 번호를 미리 예약하지 않는다.** 전환 중 결정이 생기면 그때 다음 번호를 쓴다.
    (예정으로만 적어 둔 것: `securities` 승격 · `bundle` 폐기 — 확정되면 번호를 받는다.)
+   → 실제로 **S3 에서 그런 일이 생겼다.** 위 표의 완료 조건("행수·합계 일치")만으로는
+   답이 안 나오는 질문이 다섯 있었다 — `securities` 원천 · `name` 이력 · `is_delisted` ·
+   `universe_tier` · 붓는 대상. **ADR-DS-0014** 가 그것을 닫았다.
 
 ### S2 재현 절차 — 레포 안에서 끝난다
 
