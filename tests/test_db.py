@@ -491,27 +491,20 @@ def test_the_ddl_guard_actually_catches_ddl():
         if value.lstrip().lower().startswith(DDL_PREFIXES)
     ]
 
-
 # ==================================================
-# 6. S2 의 경계 — 아직 아무도 부르지 않는다
+# 6. S2 의 경계 — **S4 에서 지웠다** (2026-08-25)
 # ==================================================
-# ⚠️ **이 테스트는 S4(읽기 어댑터)에서 지운다.** 지우는 것이 곧 "이제 연결했다"는 표시다.
-#    S2 를 이렇게 닫아 두는 이유는 진단 가능성이다 — 엔진과 어댑터를 한 번에 넣으면,
-#    접속이 안 될 때 커넥션 설정 탓인지 질의 탓인지 가릴 수가 없다.
-def test_nothing_in_app_imports_the_engine_layer_yet():
-    # 자기 자신만 뺀다. `path.name != "db.py"` 로 하면 app/ 아래 **어디에 있든**
-    # db.py 라는 이름의 파일이 전부 검사에서 빠진다 — 나중에 다른 db.py 가 생기면
-    # 그 파일이 조용히 사각지대가 된다.
-    engine_layer = PROJECT_ROOT / "app" / "core" / "db.py"
-    importers = sorted(
-        path.relative_to(PROJECT_ROOT).as_posix()
-        for path in (PROJECT_ROOT / "app").rglob("*.py")
-        if path != engine_layer and ENGINE_LAYER in _imported_from(PROJECT_ROOT, path)
-    )
-    assert not importers, (
-        f"app/ 안에서 엔진 계층을 import 하는 파일이 생겼다: {importers}. "
-        "S4(읽기 어댑터)에 도달했다면 이 테스트를 지운다 (ADR-DS-0011)."
-    )
+# 여기에 `test_nothing_in_app_imports_the_engine_layer_yet` 이 있었다. "app/ 안에서 아무도
+# 이 모듈을 import 하지 않는다"를 얼려 두던 검사이고, **지우는 것이 곧 "이제 연결했다"는
+# 표시**라고 ADR-DS-0011 §5 가 미리 정해 두었다. S4 에서 `app/repositories/krx_pg.py` 가
+# 엔진 계층을 부르기 시작했으므로 그 표시를 실행한다.
+#
+# S2 를 그렇게 닫아 둔 이유는 진단 가능성이었다 — 엔진과 어댑터를 한 번에 넣으면 접속이
+# 안 될 때 커넥션 설정 탓인지 질의 탓인지 가릴 수 없다. 그 판단은 값을 했다:
+# 배포본 전략에 손잡이 하나가 통째로 빠져 있었다는 것이 S2 에서 드러났다(ADR-DS-0003 rev.2).
+#
+# ⚠️ **아래 §5 의 계층 검사는 그대로 남는다.** 방향이 반대이기 때문이다 —
+#    어댑터가 엔진을 부르는 것은 허용이고, 엔진이 위층을 부르는 것은 여전히 금지다.
 
 
 # ⭐ 위 두 검사(§5 계층 · §6 경계)가 **장식이 아닌지**를 함께 못박는다.
@@ -579,3 +572,144 @@ def test_the_layer_guard_catches_relative_imports_too(tmp_path, where, source):
     assert any(name.startswith(u) for name in imported for u in UPPER_LAYERS), (
         f"이 표기를 못 잡는다: {source!r}"
     )
+
+
+# ==================================================
+# 7. 동기 다리 — sync 워커에서 async 엔진을 쓴다 (S4 · ADR-DS-0015)
+# ==================================================
+# 여기서는 **DB 없이** 다리의 성질만 본다. 실제 조회로 재는 것은 pytest 밖이다.
+def test_run_sync_returns_the_coroutine_result(clean_env):
+    """가장 기본 — 코루틴 하나가 워커 스레드에서 값으로 돌아온다."""
+    async def answer():
+        return 42
+
+    try:
+        assert db.run_sync(answer()) == 42
+    finally:
+        db.shutdown_bridge()
+
+
+def test_run_sync_uses_one_loop_for_every_call(clean_env):
+    """⭐ **루프가 하나여야 뜻이 있다.**
+
+    두 개가 되면 asyncpg 커넥션이 두 루프로 갈리고, 이 절이 없애려던
+    `got Future attached to a different loop` 가 그대로 돌아온다.
+    """
+    async def which_loop():
+        return id(asyncio.get_running_loop())
+
+    try:
+        seen = {db.run_sync(which_loop()) for _ in range(20)}
+        assert len(seen) == 1, f"루프가 {len(seen)}개 생겼다"
+    finally:
+        db.shutdown_bridge()
+
+
+def test_run_sync_shares_the_loop_across_threads(clean_env):
+    """FastAPI 는 sync 핸들러를 **여러 워커 스레드**에서 돌린다. 그래도 루프는 하나다."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    async def which_loop():
+        return id(asyncio.get_running_loop())
+
+    try:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            seen = set(pool.map(lambda _: db.run_sync(which_loop()), range(32)))
+        assert len(seen) == 1, f"스레드마다 루프가 갈렸다 ({len(seen)}개)"
+    finally:
+        db.shutdown_bridge()
+
+
+def test_run_sync_propagates_exceptions_instead_of_swallowing(clean_env):
+    """접속 실패를 빈 결과로 바꾸면 DB 장애가 "자료 없음"으로 위장된다.
+
+    그러면 부르는 쪽이 그것을 축약본 폴백 신호로 읽어 화면이 조용히 강등된다.
+    무엇이 폴백이고 무엇이 고장인지는 저장소 계층이 정한다 — 다리는 그대로 올려보낸다.
+    """
+    async def boom():
+        raise ValueError("붙지 않았다")
+
+    try:
+        with pytest.raises(ValueError, match="붙지 않았다"):
+            db.run_sync(boom())
+    finally:
+        db.shutdown_bridge()
+
+
+def test_run_sync_refuses_to_be_called_inside_a_loop(clean_env):
+    """`async def` 안에서 부르면 그 루프가 통째로 막힌다. 막히기 전에 거절한다.
+
+    이 레포의 라우트 핸들러는 60개가 전부 `def` 라 해당 사항이 없지만,
+    `async def` 를 새로 쓰는 날 조용히 멈추는 대신 크게 울어야 한다.
+    """
+    async def outer():
+        async def inner():
+            return 1
+        db.run_sync(inner())
+
+    try:
+        with pytest.raises(RuntimeError, match="이벤트 루프 안에서"):
+            asyncio.run(outer())
+    finally:
+        db.shutdown_bridge()
+
+
+def test_the_bridge_does_not_start_until_it_is_used(clean_env):
+    """⭐ import 만으로 스레드가 뜨면 안 된다.
+
+    기본값(`STORE_BACKEND=sqlite`)에서는 아무도 다리를 쓰지 않으므로 **배포본에
+    스레드가 없어야** 한다. S4 커밋이 기본 경로에 아무것도 더하지 않는다는 요구의 실물이다.
+    """
+    import threading
+
+    db.shutdown_bridge()
+    assert not [t for t in threading.enumerate() if t.name == "db-bridge"]
+
+    async def touch():
+        return 1
+
+    try:
+        db.run_sync(touch())
+        assert [t for t in threading.enumerate() if t.name == "db-bridge"]
+    finally:
+        db.shutdown_bridge()
+
+
+def test_shutdown_refuses_new_work_while_closing(clean_env):
+    """⚠️ 종료 중에 새 루프가 서면 **옛 엔진을 새 루프에서** 쓰게 된다.
+
+    이 절이 없애려던 바로 그 고장(`attached to a different loop`)이 종료 경로로
+    되살아나는 자리다. 접는 동안 도착한 조회는 `BridgeClosing` 을 받아야 한다.
+    """
+    async def touch():
+        return 1
+
+    db.run_sync(touch())                     # 다리를 세운다
+
+    # 접는 중 상태를 흉내 낸다 (실제 종료는 수 ms 라 경합을 재현하기 어렵다)
+    db._closing = True
+    try:
+        with pytest.raises(db.BridgeClosing):
+            db.run_sync(touch())
+    finally:
+        db._closing = False
+        db.shutdown_bridge()
+
+
+def test_shutdown_leaves_the_bridge_reusable(clean_env):
+    """접고 나면 다시 세울 수 있어야 한다. 검사가 매번 접고 다시 쓴다."""
+    async def touch():
+        return 1
+
+    try:
+        assert db.run_sync(touch()) == 1
+        db.shutdown_bridge()
+        assert db.run_sync(touch()) == 1     # 두 번째도 돈다
+    finally:
+        db.shutdown_bridge()
+
+
+def test_shutdown_is_safe_when_the_bridge_never_started(clean_env):
+    """한 번도 안 쓴 상태에서 접어도 조용해야 한다 — lifespan 이 늘 부른다."""
+    db.shutdown_bridge()
+    db.shutdown_bridge()                     # 두 번 불러도 같다

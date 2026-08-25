@@ -91,6 +91,53 @@ UNIQUE_STATEMENT_NAMES_ON_VERCEL = True
 # compose.yaml:22 의 기본값과 같은 문자열. 로컬은 이것만으로 뜬다.
 DEFAULT_LOCAL_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@db:5432/data_service"
 
+# ==================================================
+# 3. STORE_BACKEND — 시세를 어느 저장소에서 읽나 (ADR-DS-0015 · 전환 S4)
+# ==================================================
+# `DATABASE_URL` 이 **어디에 붙을지**를 말한다면 이 값은 **읽기 경로가 그것을 쓰는지**를 말한다.
+# 둘은 따로다 — 적재기(`scripts/load_pg.py`)는 S3 부터 Postgres 에 붙어 있었지만
+# 화면은 계속 SQLite 를 읽었다. 그 상태를 값 하나로 표현한 것이 이 스위치다.
+SQLITE = "sqlite"
+POSTGRES = "postgres"
+STORE_BACKENDS: tuple[str, ...] = (SQLITE, POSTGRES)
+
+# ⚠️ **기본은 `sqlite` 다. 뒤집는 것은 S5 의 일이다** (ADR-DS-0011 §2).
+# push 가 곧 배포라(GitLab→Vercel) 기본값을 바꾸는 커밋과 어댑터 커밋이 같으면
+# 어댑터에 결함이 있을 때 되돌릴 단위가 "전부"뿐이 된다.
+DEFAULT_STORE_BACKEND = SQLITE
+
+
+def store_backend() -> str:
+    """시세 읽기 경로가 쓸 저장소. `sqlite`(기본) 또는 `postgres`.
+
+    **`app_env()` 와 같은 자리에 같은 모양으로 둔다** — 어휘 밖 값이면 예외를 던진다.
+    오타(`postgre`·`pg`)를 조용히 기본값으로 떨어뜨리면 "스위치를 켰다고 믿었는데
+    실은 SQLite 를 재고 있었다"가 된다. 그 거짓 음성이 이 전환에서 가장 비싼 실수다
+    (ADR-DS-0011 근거 — "깨끗한 상대에 한 번 대 보는 것은 검증이 아니다").
+
+    ⚠️ **상수가 아니라 함수인 것이 뜻을 가진다.** 모듈 상수로 두면 import 시점에 얼어붙어
+    검사가 스위치를 뒤집을 방법이 없어진다. `krx_store.DB_PATH` 가 실제로 그렇게 굳어 있어
+    `KRX_DB_PATH` 를 `monkeypatch.setenv` 해도 아무 효과가 없다 — 그 함정을 되풀이하지 않는다.
+    """
+    raw = env("STORE_BACKEND")
+    if not raw:
+        return DEFAULT_STORE_BACKEND
+
+    value = raw.lower()
+    if value not in STORE_BACKENDS:
+        # 막다른 길로 만들지 않는다 — 무엇을 해야 하는지까지 알려준다.
+        raise ValueError(
+            f"STORE_BACKEND 값 '{raw}' 을 모른다. 쓸 수 있는 값은 {', '.join(STORE_BACKENDS)} 다.\n"
+            f"  지금까지처럼 SQLite 로 읽기 : STORE_BACKEND={SQLITE} (이 값이 기본이라 지워도 같다)\n"
+            f"  Postgres 로 읽기          : STORE_BACKEND={POSTGRES} (DATABASE_URL 도 함께 필요하다)"
+        )
+    return value
+
+
+def uses_postgres_store() -> bool:
+    """읽기 경로가 Postgres 를 보는가. 분기 조건을 한 낱말로 읽히게 한다."""
+    return store_backend() == POSTGRES
+
 
 def env(name: str, default: str = "") -> str:
     """환경변수 한 개를 읽는다 — **새 코드가 환경을 만지는 유일한 통로.**

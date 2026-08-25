@@ -1,17 +1,22 @@
-"""DB 엔진을 만드는 유일한 자리 (저장계층 전환 S2 · ADR-DS-0011).
+"""DB 엔진을 만드는 유일한 자리 (저장계층 전환 S2·S4 · ADR-DS-0011 · ADR-DS-0015).
 
 `settings.py` 가 **어떻게 붙을지**를 정하고, 이 모듈이 그 값을 그대로 엔진에 옮긴다.
 `paths.py` 가 경로의 기준점이고 `settings.py` 가 환경의 기준점인 것과 같은 자리다 —
 이쪽은 **커넥션의 기준점**이다.
 
-## 아직 아무도 부르지 않는다
+## 이제 어댑터가 이것을 쓴다 (S4, 2026-08-25)
 
-이 모듈은 S2 의 산출물이고, 실제 조회를 옮기는 것은 S4(읽기 어댑터)다. 지금 `app/` 안에서
-이것을 import 하는 파일은 **하나도 없다** — `tests/test_db.py` 가 그 사실을 얼려 둔다.
-일부러 그렇게 둔다. 엔진과 어댑터를 한 커밋에 섞으면, 접속이 안 될 때 그것이 커넥션
-설정 탓인지 질의 탓인지 가릴 수가 없다. 여기까지를 먼저 실측으로 닫는다.
+S2 는 **아무도 import 하지 않는 상태**로 끝냈다. 엔진과 어댑터를 한 커밋에 섞으면 접속이
+안 될 때 그것이 커넥션 설정 탓인지 질의 탓인지 가릴 수 없기 때문이었고, 그 판단이 값을
+했다 — 배포본 전략에 손잡이 하나가 통째로 빠져 있었다는 것이 그때 드러났다(ADR-DS-0003 rev.2).
+
+S4 에서 `app/repositories/krx_pg.py` 가 이 모듈을 부르기 시작했다. `tests/test_db.py` 가
+얼려 두던 "app/ 안에서 아무도 import 하지 않는다" 검사는 그 표시로 지웠다(ADR-DS-0011 §5).
 
     실측 도구: `python3 scripts/check_db_connection.py`
+
+⚠️ 어댑터는 async 가 아니라 **§2-1 의 동기 다리**를 거친다. 이 레포의 라우트 핸들러가
+전부 `def` 라서다. 그 절에 실측표와 기각한 대안이 함께 있다.
 
 ## 왜 `settings.py` 와 나뉘어 있나
 
@@ -73,6 +78,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading  # 동기 다리의 전용 루프 스레드 (§2-1)
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -256,6 +262,169 @@ async def dispose_engine() -> None:
     if _engine is not None:
         await _engine.dispose()
         _engine = None
+
+
+# ==================================================
+# 2-1. 동기 다리 — sync 호출 경로에서 async 엔진을 쓴다 (ADR-DS-0015 · S4)
+# ==================================================
+# 이 레포의 라우트 핸들러 **60개가 전부 `def`** 다(`async def` 가 0개). FastAPI 는 그것을
+# anyio 워커 스레드풀에서 돌리므로, 저장소 계층은 **돌고 있는 이벤트 루프가 없는 스레드**에서
+# 불린다. 그런데 이 모듈의 엔진은 async 전용이다. 그 사이를 잇는 것이 이 절이다.
+#
+# ## 왜 `asyncio.run()` 을 호출마다 부르지 않는가 — 실측으로 기각했다
+#
+# 되는 것처럼 보인다. 워커 스레드에는 루프가 없으니 `asyncio.run()` 이 성립하고,
+# `scripts/check_db_connection.py` 도 그 모양이다. 그러나 **엔진을 캐시한 채로는 깨진다.**
+# 로컬 Postgres 에 스레드 8 × 6라운드로 대 봤다 (2026-08-25):
+#
+# | 방법 | APP_ENV=local (정상 풀) | APP_ENV=vercel (NullPool) |
+# |---|---|---|
+# | 호출마다 `asyncio.run()` | **15/48 실패** · 88ms | 0 실패 · 71ms |
+# | 전용 루프 (이 절) | 0 실패 · 17ms | 0 실패 · 33ms |
+# | 전용 루프 (풀이 데워진 뒤) | 0 실패 · **13ms** | 0 실패 · 31ms |
+#
+# 실패는 `RuntimeError: Task ... got Future ... attached to a different loop` 다.
+# 풀이 들고 있던 asyncpg 커넥션은 **그것을 만든 루프**에 묶여 있는데, `asyncio.run()` 은
+# 매번 새 루프를 열고 끝나면 닫는다. 다음 호출이 죽은 루프의 커넥션을 꺼내 쓰는 순간 터진다.
+# NullPool 이면 매번 새 커넥션이라 안 나지만, 그 대신 왕복마다 TCP+인증을 다시 한다.
+#
+# 즉 `asyncio.run()` 방식은 **ADR-DS-0003 의 로컬 전략(정상 풀)을 포기해야만** 성립한다.
+# 전용 루프는 커넥션이 전부 한 루프에 묶이므로 두 전략 어느 쪽에서도 돈다. 그래서 이쪽이다.
+#
+# ## 이 루프는 게으르게 뜬다
+#
+# import 만으로는 스레드가 생기지 않는다. `run_sync()` 를 처음 부를 때 뜬다.
+# `STORE_BACKEND=sqlite`(기본)면 아무도 부르지 않으므로 **배포본에는 스레드가 없다** —
+# S4 커밋이 기본 경로에 아무것도 더하지 않아야 한다는 요구(ADR-DS-0011 §2)가 여기서 지켜진다.
+#
+# ## ⚠️ 아는 값 — 루프가 하나라 조회가 직렬화된다
+#
+# 모든 조회가 이 루프 하나를 지난다. `window()` 처럼 큰 결과를 읽는 조회는
+# `fetchall()` 이 166,057개 행 객체를 **루프 스레드에서** 만드는 동안(실측 300~450ms)
+# 다른 DB 조회를 붙잡아 둔다. 화면 하나가 병렬 XHR 을 던지면 그만큼 밀린다.
+#
+# 지금 이대로 둔다 — 갈아야 할 이유가 실측으로 서기 전에 손잡이를 늘리면, 무엇이 느린지
+# 모르는 채 복잡도만 는다. SQLite 경로도 쓰기를 전역 자물쇠로 줄 세우고 있었다(krx_store:147).
+# 다만 **S5 에서 기본값을 뒤집을 때 이 값을 다시 잰다** — 그때가 화면 10개가 동시에
+# 이 루프를 쓰는 첫 순간이다.
+
+# 다리를 통과하는 한 번의 조회에 거는 상한(초). 넘으면 화면이 매달리는 대신 실패한다.
+BRIDGE_TIMEOUT_SECONDS = 30.0
+
+_loop: asyncio.AbstractEventLoop | None = None
+_loop_thread: threading.Thread | None = None
+_loop_lock = threading.Lock()
+# ⚠️ 접는 중에는 루프를 **새로 세우지 않는다.** 이 표식이 없으면 종료 중에 도착한 조회가
+#    새 루프를 세우고, 아직 `dispose_engine()` 이 끝나지 않아 살아 있는 **옛 엔진**을
+#    그 새 루프에서 쓰게 된다 — 이 절이 없애려던 바로 그 고장이 종료 경로로 되살아난다.
+_closing = False
+
+
+class BridgeClosing(RuntimeError):
+    """다리를 접는 중에 조회가 들어왔다. 재시도할 값이 없으므로 그대로 올려보낸다."""
+
+
+def _bridge_loop() -> asyncio.AbstractEventLoop:
+    """조회용 이벤트 루프. 없으면 데몬 스레드에 하나 띄우고 그 뒤로는 같은 것을 쓴다.
+
+    자물쇠는 **루프를 두 개 만들지 않기 위한** 것이다. 두 개가 되면 커넥션이 두 루프로
+    갈려 위 표의 실패가 그대로 돌아온다.
+    """
+    global _loop, _loop_thread
+    with _loop_lock:
+        if _closing:
+            raise BridgeClosing("다리를 접는 중이라 새 조회를 받지 않는다.")
+        if _loop is not None and not _loop.is_closed():
+            return _loop
+
+        loop = asyncio.new_event_loop()
+        thread = threading.Thread(
+            target=_run_forever, args=(loop,), name="db-bridge", daemon=True
+        )
+        thread.start()
+        _loop, _loop_thread = loop, thread
+        return loop
+
+
+def _run_forever(loop: asyncio.AbstractEventLoop) -> None:
+    """스레드의 본체. 루프를 그 스레드 것으로 못 박고 계속 돈다."""
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
+
+
+def run_sync(coro, timeout: float = BRIDGE_TIMEOUT_SECONDS):
+    """코루틴 하나를 다리 위에서 돌리고 결과를 **동기적으로** 돌려준다.
+
+    저장소 어댑터가 이 모듈을 쓰는 **유일한 통로**다. 예외는 삼키지 않고 그대로 올려보낸다 —
+    접속 실패를 빈 결과로 바꾸면 DB 장애가 "그 날짜에 자료가 없음"으로 위장되고,
+    화면은 축약본으로 조용히 강등된다. 무엇이 폴백이고 무엇이 고장인지는 부르는 쪽이 정한다.
+
+    ⚠️ **이미 이벤트 루프 안에서는 부르지 않는다.** `async def` 안에서 부르면 그 루프를
+    막아 버린다. 이 레포의 라우트 핸들러는 전부 `def` 라 해당 사항이 없지만,
+    `async def` 를 새로 쓰는 날에는 이 함수 대신 코루틴을 그대로 `await` 한다.
+    """
+    running = None
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        pass                              # 정상 — 워커 스레드에는 루프가 없다
+    # ⚠️ 넘겨받은 코루틴은 **어느 갈래로 빠져나가든 닫는다.** 안 닫으면 파이썬이
+    #    "coroutine ... was never awaited" 를 stderr 로 흘린다. 종료 중 거절 경로에서
+    #    실제로 그 경고가 났다.
+    if running is not None:
+        coro.close()
+        raise RuntimeError(
+            "run_sync() 를 이벤트 루프 안에서 불렀다. `async def` 안에서는 코루틴을 "
+            "그대로 await 한다 — 여기서 기다리면 그 루프가 통째로 막힌다."
+        )
+
+    try:
+        loop = _bridge_loop()
+    except BaseException:
+        coro.close()
+        raise
+
+    return asyncio.run_coroutine_threadsafe(coro, loop).result(timeout)
+
+
+def shutdown_bridge() -> None:
+    """다리를 접는다 — 엔진을 그 루프 안에서 닫고, 루프를 멈추고, 스레드를 거둔다.
+
+    ⚠️ **엔진 정리가 반드시 루프 안에서 일어나야 한다.** 밖에서 `dispose()` 를 부르면
+    죽은 루프의 커넥션을 닫으려다 `RuntimeError: Event loop is closed` 가 stderr 로 샌다.
+
+    ⚠️ **`_closing` 을 먼저 세우고 마지막에 내린다.** 그 사이에 도착한 조회는
+    `BridgeClosing` 을 받는다. 표식 없이 참조만 비우면, 아직 살아 있는 옛 엔진을
+    새 루프가 집어 가는 창이 열린다(수 ms 지만 종료 중 요청에서 실제로 열린다).
+
+    다 접고 나면 표식을 내려 **다시 쓸 수 있는 상태로** 되돌린다 — 검사가 매번 접고
+    다시 세우기 때문이다.
+    """
+    global _loop, _loop_thread, _closing
+    with _loop_lock:
+        if _closing:
+            return                        # 이미 다른 스레드가 접고 있다
+        loop, thread = _loop, _loop_thread
+        if loop is None or loop.is_closed():
+            _loop, _loop_thread = None, None
+            return
+        _closing = True
+
+    try:
+        try:
+            asyncio.run_coroutine_threadsafe(dispose_engine(), loop).result(
+                BRIDGE_TIMEOUT_SECONDS
+            )
+        except Exception as error:        # 이미 죽은 루프 등 — 접는 것을 막지는 않는다
+            log.debug("다리를 접는 중 엔진 정리에 실패했다: %s", error)
+
+        loop.call_soon_threadsafe(loop.stop)
+        if thread is not None:
+            thread.join(timeout=BRIDGE_TIMEOUT_SECONDS)
+        loop.close()
+    finally:
+        with _loop_lock:
+            _loop, _loop_thread, _closing = None, None, False
 
 
 # ==================================================

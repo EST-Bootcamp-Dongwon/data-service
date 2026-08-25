@@ -83,7 +83,17 @@ async def lifespan(_app: FastAPI):
         print(f"[준비] 자동완성 색인 {count:,}종목을 메모리에 올렸습니다.")
     except Exception as error:      # 파일 손상 등 — 서버 기동을 막지는 않는다
         print(f"[안내] 자동완성 색인 준비 실패 — {error}")
+
     yield                            # 여기서부터 요청을 받는다
+
+    # 종료 — Postgres 로 읽었다면 커넥션을 닫고 나간다 (ADR-DS-0015).
+    # `STORE_BACKEND=sqlite`(기본)면 다리가 뜬 적이 없어 아무 일도 안 일어난다.
+    # ⚠️ 이 자리는 **검사에서 한 번도 실행되지 않는다** — `conftest.py` 가 `TestClient` 를
+    #    `with` 없이 만들어 lifespan 을 돌리지 않기 때문이다(색인 15,414종목이 느려서).
+    #    커넥션 누수는 손으로 확인한다 (ADR-DS-0011 §결과).
+    from app.core import db
+
+    db.shutdown_bridge()
 
 
 # --------------------------------------------------

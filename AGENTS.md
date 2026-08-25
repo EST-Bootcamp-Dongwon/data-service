@@ -131,14 +131,43 @@
   ⚠️ **이 계층은 DDL을 발행하지 않는다.** `krx_store`는 `init_db()`를 조회마다 부르지만
   (krx_store.py:146 · 호출 9곳) Postgres에서 DDL은 asyncpg 타입 캐시를 무효화한다.
   스키마는 `sql/init/*.sql`이 빈 볼륨에서 한 번 세운다.
-  ⚠️ **`app/` 안에서는 아직 아무도 import하지 않는다** — S4에서 잇는다. `tests/test_db.py`가
-  그 경계를 얼려 두고, **그 테스트를 지우는 것이 곧 "이제 연결했다"는 표시**다.
-  ⚠️ 그 가드는 `app/` 만 훑는다. `scripts/` 는 **이미 둘이 쓴다** —
-  `check_db_connection.py`(진단)와 `load_pg.py`(적재). 도구가 엔진을 쓰는 것은 경계 위반이
-  아니다. 화면·API 경로가 쓰기 시작하는 것이 S4다.
+  ✅ **이제 `app/repositories/krx_pg.py` 가 이것을 쓴다** (S4 · 2026-08-25). S2 의 경계 검사는
+  그 표시로 지웠다. `tests/test_db.py` §5 의 **계층** 검사는 그대로 남는다 — 방향이 반대라서다
+  (어댑터가 엔진을 부르는 것은 허용, 엔진이 위층을 부르는 것은 여전히 금지).
+  ⚠️ **어댑터는 async 가 아니라 §2-1 의 동기 다리를 거친다.** 라우트 핸들러 60개가 전부
+  `def` 이기 때문이다. 실측표와 기각한 대안이 그 절에 있다 (ADR-DS-0015 §1).
   실측 도구: `python3 scripts/check_db_connection.py` (읽기 전용 · 부하 검사로 판정한다)
   검증 상대: `docker compose --profile pooler up -d` (transaction 모드 풀러 · 6543).
   재현 절차 (a)(b)(c)는 ADR-DS-0011 의 "S2 재현 절차" 에 있다 — **(c)를 빼면 검증이 아니다.**
+- **읽기 어댑터는 `app/repositories/krx_pg.py`이고 스위치는 `STORE_BACKEND`다**
+  (ADR-DS-0015 · 전환 S4, 2026-08-25). **기본은 `sqlite` 다 — 뒤집는 것은 S5 다.**
+  `settings.store_backend()` 가 정본이고 어휘 밖 값이면 **예외**다(`app_env()` 와 같은 모양).
+  ⚠️ **상수가 아니라 함수인 것이 뜻을 가진다.** 모듈 상수로 두면 import 시점에 얼어붙어
+  검사가 스위치를 못 뒤집는다 — `krx_store.DB_PATH` 가 실제로 그렇게 굳어 있어
+  `KRX_DB_PATH` 를 `monkeypatch.setenv` 해도 아무 효과가 없다(실측).
+  - **이음매는 여덟이고 한 벌이다** — `_cache_is_empty`·`latest_date`·`available_dates`·
+    `snapshot_tiered`·`series_tiered`·`window`·`stats`, 그리고 `tier()` 가 따라온다.
+    하나만 남기면 SQLite 를 지운 셸에서 Postgres 는 꽉 찼는데 `tier()` 만 `bundle` 을 낸다.
+    `snapshot`·`series`·`universe`·`closes_matrix`·`source_tag` 는 **분기하지 않는다**(자동으로 따라온다).
+  - **경계에서 셋을 되돌린다** — `change_rate` 는 `Decimal`→`float`, 날짜는 `date`→문자열
+    (**`date` 키는 `YYYY-MM-DD`, `bas_dd`·`latest_date`·`stats` 는 `YYYYMMDD`**),
+    `listed_shares` 는 **`ohlcv` 쪽**(`securities` 는 최신값이라 회전율이 10배 틀린다).
+    ⚠️ `Decimal` 을 안 내리면 `tmp_cache.write()` 의 `json.dumps` 가 죽는데 **그 함수가 예외를
+    삼킨다** — 캐시가 영원히 안 써지고 로그도 안 남는다. 가장 조용한 고장이다.
+  - **`tier` 는 `db` 그대로다.** `postgres`·`pg` 를 만들지 않는다 — 어휘 검사·화면 정확비교·
+    `dashboard_data.py:328-345` 의 경고 배지가 동시에 깨진다. 낱말 정리는 S7 이다.
+  - **접속 실패를 빈 결과로 삼키지 않는다.** 빈 결과셋은 축약본 폴백이고 예외는 올라간다.
+    삼키면 DB 장애가 "그 날짜에 자료 없음"으로 위장돼 화면이 조용히 강등된다.
+  - ⚠️ **읽기 표면을 우회하는 곳이 둘 남아 있다** — `stock_service.py:144-159` 와
+    `scripts/build_stock_master.py:44-54` 가 `store.connect()` 로 SQLite 에 생 SQL 을 던진다.
+    스위치를 켜도 그 둘은 계속 SQLite 를 읽는다. **S5 가 갚아야 할 빚이고**,
+    `tests/test_krx_pg.py` 가 목록을 얼려 두어 모르는 사이에 늘지 않게 한다.
+  - 검증: 함수 24항목 중 23 일치 · HTTP 20경로 중 19 완전 일치(나머지 하나는 야후 라이브라
+    저장소와 무관) · 48 동시 요청에서 Postgres 48/48. 전부 ADR-DS-0015 "검증" 절에 있다.
+- **검사는 환경을 씻고 돈다** — `tests/conftest.py` 의 autouse `isolate_env` (ADR-DS-0015 §5).
+  위험한 여섯을 지우고 `DATABASE_URL` 을 **붙을 수 없는 주소**(`127.0.0.1:1`)로 덮는다.
+  ⚠️ 지우기만 하면 `local` 로 떨어져 기본값 `@db:5432` 를 쓰는데, compose 를 띄워 둔
+  기계에서는 그것이 실재하는 DB 다. 실 DB 가 필요하면 `@pytest.mark.realdb` 로 빠져나간다.
 - **OHLC는 `integer`.** 국내 주가는 원 단위 정수라 `numeric`이 필요 없다(25% 절약).
 - `ohlcv`는 **연 단위 RANGE 파티셔닝**. 인덱스는 PK 하나로 시작한다.
 - **`listed_shares`는 `ohlcv`와 `securities` 양쪽에 있고 중복이 아니다** (ADR-DS-0010).

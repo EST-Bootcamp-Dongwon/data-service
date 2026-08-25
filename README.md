@@ -42,7 +42,7 @@
 | 엔드포인트 | **51개** · 라우터 14파일 ([§7 API 목록](#7-api-목록)) |
 | 화면 | **10개** ([§6 화면](#6-화면)) |
 | 시세 저장소 | SQLite (`data/krx_cache.db`) — **282거래일 · 780,484행 · 2,870종목 · 118MB** (20250609~20260731, 2026-08-22 실측) |
-| 저장계층 전환 | Postgres 로 옮기는 중. 아홉 걸음 중 **S3 완료** — 780,484행이 들어갔고 대조 21항목 일치. **읽는 코드는 아직 SQLite 다** → [ADR-DS-0011](docs/decisions/0011-storage-migration-order.md) · [ADR-DS-0014](docs/decisions/0014-one-shot-loader.md) |
+| 저장계층 전환 | Postgres 로 옮기는 중. 아홉 걸음 중 **S4 완료** — 읽기 어댑터가 섰고 `STORE_BACKEND=postgres` 로 켜면 화면이 Postgres 로 돈다. **기본값은 아직 `sqlite`**(뒤집는 것은 S5) → [ADR-DS-0011](docs/decisions/0011-storage-migration-order.md) · [ADR-DS-0014](docs/decisions/0014-one-shot-loader.md) · [ADR-DS-0015](docs/decisions/0015-read-adapter.md) |
 | 수집 보관함 | `clip` 표 DDL 은 섰고 **쓰는 코드는 아직 없다** → [ADR-DS-0008](docs/decisions/0008-clip-store.md) |
 | 검증 | `invoke check` 하나 — **177 tests** · 이미지 553MB |
 | 배포 | Vercel ([§15 배포·공유](#15-배포--공유-)) |
@@ -1201,10 +1201,10 @@ WSL과 Windows 호스트 간 네트워크가 분리돼 있을 수 있다.
 ([ADR-DS-0012 §8](docs/decisions/0012-collection-scope-and-ia.md)).
 
 ```
-S3 적재기 → S4 읽기 어댑터 → S5 기본값 뒤집기 → clip_store + 공시·보고서 수집 → 화면 → 뉴스 → 커뮤니티·동영상
+~~S3 적재기~~ → ~~S4 읽기 어댑터~~ → **S5 기본값 뒤집기** → clip_store + 공시·보고서 수집 → 화면 → 뉴스 → 커뮤니티·동영상
 ```
 
-### 저장계층 — 아홉 걸음 중 S3 부터
+### 저장계층 — 아홉 걸음 중 S5 부터
 
 걸음별 완료 조건은 [ADR-DS-0011](docs/decisions/0011-storage-migration-order.md) 의 표가 정본이다.
 
@@ -1212,10 +1212,19 @@ S3 적재기 → S4 읽기 어댑터 → S5 기본값 뒤집기 → clip_store +
 |---|---|---|
 | S1 | 적합성 자 — SQLite 원본이 목표 DDL 을 통과하는지 잰다 | ☑ |
 | S2 | 엔진 계층 `app/core/db.py` + 커넥션 전략 실측 | ☑ |
-| **S3** | **일회성 적재기 `scripts/load_pg.py`** (780,484행) | ☐ **다음** |
-| S4 | 읽기 어댑터 + `STORE_BACKEND` 스위치 (기본 `sqlite`) | ☐ |
-| S5 | 로컬 기본값 뒤집기 | ☐ |
+| S3 | 일회성 적재기 `scripts/load_pg.py` (780,484행) | ☑ |
+| S4 | 읽기 어댑터 `krx_pg.py` + `STORE_BACKEND` 스위치 (기본 `sqlite`) | ☑ |
+| **S5** | **로컬 기본값 뒤집기** (`STORE_BACKEND=postgres`) | ☐ **다음** |
 | S6~S9 | Supabase · bundle 폐기 · 쓰기 경로 · 잔가지 | ☐ |
+
+지금 상태에서 Postgres 로 읽어 보려면 스위치만 켜면 된다:
+
+```bash
+docker compose --profile local-db up -d
+STORE_BACKEND=postgres APP_ENV=local \
+  DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/data_service \
+  uvicorn app.main:app --port 8000
+```
 
 ### 수집 — 공시·보고서부터
 

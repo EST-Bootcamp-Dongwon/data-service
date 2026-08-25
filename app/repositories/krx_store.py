@@ -27,8 +27,12 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from app.clients import krx_data as api  # KRX 호출·정규화 (외부 통신 담당)
+from app.core import settings  # STORE_BACKEND — 어느 저장소에서 읽나 (ADR-DS-0015)
 from app.core.trading_calendar import to_iso, today_kst, trading_days  # 거래일 계산 (공통 유틸)
-from app.repositories import krx_bundle  # 배포용 축약본 (원본이 없을 때의 대타)
+from app.repositories import (
+    krx_bundle,  # 배포용 축약본 (원본이 없을 때의 대타)
+    krx_pg,  # Postgres 읽기 어댑터 (전환 S4 · ADR-DS-0015)
+)
 
 # 이 파일은 app/repositories/ 안에 있으므로 parents[2] 가 프로젝트 루트다.
 # (parents[0]=repositories, parents[1]=app, parents[2]=프로젝트 루트)
@@ -260,8 +264,30 @@ def sync(days: int = 250, workers: int = 6, end: Optional[str] = None,
 #   1) 원본 캐시에 있으면 그것을 쓴다 (로컬 — 가장 정확하고 구간도 길다)
 #   2) 없으면 축약본에게 묻는다 (배포본)
 #   3) 축약본도 없으면 빈 결과 — 부르는 쪽이 라이브 조회나 안내로 넘어간다
+#
+# ⭐ **정본 저장소는 스위치가 정한다** (전환 S4 · ADR-DS-0015).
+#
+# 아래 여덟 함수가 `STORE_BACKEND` 를 보고 갈린다 — `_cache_is_empty` · `latest_date` ·
+# `available_dates` · `snapshot_tiered` · `series_tiered` · `window` · `stats`, 그리고
+# `tier()` 는 `_cache_is_empty()` 를 통해 따라온다. **여덟은 한 벌이다.** 하나만 남겨 두면
+# 로컬 SQLite 를 지운 개발자 셸에서 Postgres 는 꽉 차 있는데 `tier()` 만 `bundle` 을 내는
+# 어긋난 상태가 된다.
+#
+# `snapshot()`·`series()`·`universe()`·`closes_matrix()`·`source_tag()` 는 **분기하지 않는다.**
+# 전부 모듈 전역 이름으로 위 함수들을 부르므로 자동으로 따라온다. 거기까지 분기를 넣으면
+# 이중 분기가 된다.
+#
+# ⚠️ 분기는 `init_db()` **앞**에 둔다. Postgres 에서 DDL 은 asyncpg 의 타입 캐시를
+#    무효화하고, `init_db()` 는 애초에 SQLite 표를 만드는 함수라 그쪽에서는 뜻이 없다.
+def _postgres() -> bool:
+    """읽기를 Postgres 에서 하는가. 호출 시점에 다시 읽는다(설정이 상수가 아닌 이유)."""
+    return settings.uses_postgres_store()
+
+
 def _cache_is_empty() -> bool:
     """원본 캐시에 데이터가 한 줄이라도 있는지. (기본키 인덱스만 타므로 값싸다)"""
+    if _postgres():
+        return krx_pg.is_empty()
     init_db()
     with connect() as conn:
         row = conn.execute("SELECT MAX(bas_dd) FROM daily_price").fetchone()
@@ -303,6 +329,9 @@ def _rows_to_dicts(rows: Iterable[sqlite3.Row]) -> List[Dict]:
 
 def latest_date() -> Optional[str]:
     """데이터가 있는 가장 최근 거래일 (YYYYMMDD). 원본·축약본 어디에도 없으면 None."""
+    if _postgres():
+        found = krx_pg.latest_date()
+        return found or krx_bundle.latest_date()
     init_db()
     with connect() as conn:
         row = conn.execute("SELECT MAX(bas_dd) FROM daily_price").fetchone()
@@ -317,13 +346,18 @@ def available_dates(limit: int = 400) -> List[str]:
     원본이 비면 **파생 캘린더**(`krx_derived.json`)를 먼저 본다. 축약본 DB 는 150거래일뿐이지만
     파생 캘린더는 캐시 전 구간(282거래일)을 담고 있어, 전처리에 넘길 거래일 축이 더 길다.
     """
-    init_db()
-    with connect() as conn:
-        rows = conn.execute(
-            "SELECT DISTINCT bas_dd FROM daily_price ORDER BY bas_dd DESC LIMIT ?", (limit,)
-        ).fetchall()
-    if rows:
-        return [r[0] for r in rows]
+    if _postgres():
+        found = krx_pg.available_dates(limit=limit)
+        if found:
+            return found
+    else:
+        init_db()
+        with connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT bas_dd FROM daily_price ORDER BY bas_dd DESC LIMIT ?", (limit,)
+            ).fetchall()
+        if rows:
+            return [r[0] for r in rows]
 
     # 파생 캘린더는 `YYYY-MM-DD` 오름차순이라 이 함수의 계약(`YYYYMMDD` 최근순)에 맞춰 돌려준다
     calendar = krx_bundle.trading_days(limit=limit)
@@ -338,15 +372,21 @@ def snapshot_tiered(bas_dd: str, market: Optional[str] = None) -> Tuple[List[Dic
     출처를 응답에 싣는 호출자는 반드시 이쪽을 쓴다 (ADR-DS-0009 §5).
     `tier()` 를 따로 부르면 안 된다 — 그건 저장소 전체 상태라, 원본이 차 있는데
     **그 날짜만** 없어 번들로 내려간 경우를 `db` 라고 잘못 말한다.
+
+    ⚠️ **사다리의 모양은 두 저장소에서 같다** (ADR-DS-0015 §2). 바뀌는 것은 맨 윗단의
+    구현뿐이다 — 그래야 `STORE_BACKEND` 를 되돌리는 것만으로 화면이 원래대로 돌아온다.
     """
-    init_db()
-    sql = "SELECT * FROM daily_price WHERE bas_dd = ?"
-    params: List = [bas_dd]
-    if market:
-        sql += " AND market = ?"
-        params.append(market)
-    with connect() as conn:
-        rows = _rows_to_dicts(conn.execute(sql, params).fetchall())
+    if _postgres():
+        rows = krx_pg.snapshot(bas_dd, market)
+    else:
+        init_db()
+        sql = "SELECT * FROM daily_price WHERE bas_dd = ?"
+        params: List = [bas_dd]
+        if market:
+            sql += " AND market = ?"
+            params.append(market)
+        with connect() as conn:
+            rows = _rows_to_dicts(conn.execute(sql, params).fetchall())
     if rows:
         return rows, "db"
     fallback = _rows_to_dicts(krx_bundle.snapshot(bas_dd, market))
@@ -422,6 +462,13 @@ def series_tiered(code: str, days: int = 250,
     종목 단위로 갈리므로, 저장소 전체 상태인 `tier()` 로는 알 수 없다 —
     원본이 차 있어도 **그 종목만** 없으면 번들로 내려간다.
     """
+    if _postgres():
+        # 어댑터가 이미 오름차순으로 준다 (뒤집기까지 그쪽에서 끝낸다).
+        ordered = krx_pg.series(code, days=days, end=end)
+        if ordered:
+            return ordered, "db"
+        return _series_fallback(code, days=days, end=end)
+
     init_db()
     sql = "SELECT * FROM daily_price WHERE code = ?"
     params: List = [code]
@@ -436,6 +483,15 @@ def series_tiered(code: str, days: int = 250,
         rows = conn.execute(sql, params).fetchall()
     if rows:
         return list(reversed(_rows_to_dicts(rows))), "db"
+    return _series_fallback(code, days=days, end=end)
+
+
+def _series_fallback(code: str, days: int, end: Optional[str]) -> Tuple[List[Dict], str]:
+    """정본 저장소에 그 종목이 없을 때의 아랫단. **두 저장소가 이것을 함께 쓴다.**
+
+    사다리를 한 벌만 두는 것이 뜻을 가진다 — 백엔드마다 폴백이 갈리면
+    `STORE_BACKEND` 를 되돌리는 일이 "환경변수 한 줄"이 아니라 "두 동작 중 고르기"가 된다.
+    """
     # 축약본도 내림차순으로 주므로 같은 방식으로 뒤집는다 (차트는 왼쪽이 과거)
     fallback = list(reversed(_rows_to_dicts(krx_bundle.series(code, days=days, end=end))))
     # 축약본에도 없으면 "번들에서 왔다" 고 말할 근거가 없다. 저장소가 서 있는 층을 그대로 밝힌다.
@@ -497,7 +553,15 @@ def window(days: int = 60, columns: Sequence[str] = ("code", "bas_dd", "close", 
     행마다 임의 접근을 하게 되어 **18초** 가 걸렸다. 기본키가 `(bas_dd, code)` 라
     `ORDER BY bas_dd` 는 이미 정렬된 순서라서 추가 비용이 없다 — **0.8초**.
     종목별 묶음은 파이썬에서 하고, 날짜 오름차순으로 읽으므로 각 묶음도 자동으로 날짜순이 된다.
+
+    ⚠️ **Postgres 에서는 위 실측이 뒤집힌다** — 그쪽 PK 는 `(security_id, trade_date)` 라
+    `ORDER BY trade_date` 가 공짜가 아니다. 어댑터가 하한을 서브질의로 걸어 그 문제를 푼다
+    (`krx_pg.window()` docstring 참조).
     """
+    if _postgres():
+        rows = krx_pg.window(days=days, columns=columns)
+        return rows if rows else krx_bundle.window(days=days, columns=columns)
+
     init_db()
     if _cache_is_empty():
         return krx_bundle.window(days=days, columns=columns)
@@ -525,7 +589,17 @@ def stats() -> Dict:
     `days > 0` 만 보고 "원본 캐시가 있다" 고 재계산하면 번들 숫자에 캐시 라벨이 붙는다
     (ADR-DS-0009 §4 — `mode` 는 이 함수가 정본이고 소비자는 그대로 쓴다).
     """
+    if _postgres():
+        found = krx_pg.stats()
+        # 비어 있으면 축약본 가지로 내려간다 — SQLite 쪽과 같은 사다리다.
+        return found if found["days"] else _stats_bundle()
+
     init_db()
+    return _stats_sqlite()
+
+
+def _stats_sqlite() -> Dict:
+    """SQLite 원본의 현황. 비어 있으면 축약본 가지로 넘긴다."""
     with connect() as conn:
         row = conn.execute(
             "SELECT COUNT(*) AS rows, COUNT(DISTINCT bas_dd) AS days,"
@@ -543,7 +617,11 @@ def stats() -> Dict:
             "mode": "db",
             "notes": [],
         }
+    return _stats_bundle()
 
+
+def _stats_bundle() -> Dict:
+    """축약본(또는 아무것도 없음)의 현황. **두 저장소가 함께 쓰는 아랫단이다.**"""
     bundle = krx_bundle.stats()
     calendar = krx_bundle.derived_stats()
     return {

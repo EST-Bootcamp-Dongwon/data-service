@@ -35,7 +35,7 @@ ADR-DS-0002 가 "파일 캐시를 Postgres 로 옮긴다"를 정했고 `sql/init
    | **S1** | 적합성 자 — SQLite 원본이 목표 DDL 을 통과하는지 잰다 | `check_migration_fitness.py` 가 치명 0 · `test_schema_fitness.py` 초록 | ☑ 2026-08-22 (`2d52be7`) |
    | **S2** | 엔진 계층 — `app/core/db.py` + `sqlalchemy[asyncio]`·`asyncpg` | 실 DB 없이 `invoke check` 초록 · 아래 §S2 재현 절차가 (a)(c) 0건 · (b) 실패 | ☑ 2026-08-23 |
    | **S3** | 일회성 적재기 — `scripts/load_pg.py` (SQLite → Postgres) | 780,484행이 들어가고 행수·합계가 원본과 일치 | ☑ 2026-08-23 (ADR-DS-0014) |
-   | **S4** | 읽기 어댑터 + `STORE_BACKEND` 스위치 (**기본은 `sqlite`**) | 스위치를 켠 상태로 계약 스냅샷 51경로가 그대로 | ☐ |
+   | **S4** | 읽기 어댑터 + `STORE_BACKEND` 스위치 (**기본은 `sqlite`**) | 스위치를 켠 상태로 계약 스냅샷 51경로가 그대로 | ☑ 2026-08-25 (ADR-DS-0015) |
    | **S5** | 로컬 기본값 뒤집기 (`STORE_BACKEND=postgres`) | 로컬 화면 10개가 Postgres 로만 돈다 | ☐ |
    | **S6** | Supabase (core 유니버스만 · ADR-CT-0010) | 배포본이 DB 를 읽는다 | ☐ |
    | **S7** | `bundle`·`snapshot` 폐기 + 출처 어휘 정리 | `tier()` 3단 분기 제거 · `test_source_vocabulary.py` 개정 | ☐ |
@@ -53,6 +53,7 @@ ADR-DS-0002 가 "파일 캐시를 Postgres 로 옮긴다"를 정했고 `sql/init
 
 5. **S2 는 아무도 import 하지 않는 상태로 끝낸다.** `tests/test_db.py` 가 그것을 얼려 두고,
    **S4 에서 그 테스트를 지우는 것이 곧 "이제 연결했다"는 표시**다.
+   → **2026-08-25 에 지웠다.** `app/repositories/krx_pg.py` 가 엔진 계층을 부른다 (ADR-DS-0015).
 
 6. **새 ADR 번호를 미리 예약하지 않는다.** 전환 중 결정이 생기면 그때 다음 번호를 쓴다.
    (예정으로만 적어 둔 것: `securities` 승격 · `bundle` 폐기 — 확정되면 번호를 받는다.)
@@ -130,11 +131,15 @@ APP_ENV=vercel DATABASE_URL=$V python3 scripts/check_db_connection.py
 - ⚠️ **S4 가 시작되면 검사 격리가 먼저 필요하다.** `tests/conftest.py` 에 DB 픽스처가 없어서
   개발자 셸의 `DATABASE_URL` 을 그대로 물고 돈다. 그 값이 Supabase 면 검사가 배포 DB 에
   붙는다. S2 는 실 DB 를 안 열어서 무사하지만, 어댑터 검사는 그럴 수 없다.
+  → ✅ **닫혔다** (ADR-DS-0015 §5). `conftest.py` 의 autouse 픽스처가 위험한 여섯을 지우고
+  `DATABASE_URL` 을 붙을 수 없는 주소로 덮는다. 오염된 환경에서 돌려도 같은 결과가 나온다.
 - ⚠️ **S4 에서 `app/main.py:58-64` 의 흡수 구조를 조심한다.** 그 `try` 는
   `ModuleNotFoundError` 만, 라우터 3개만 감싼다. 그 안쪽에서 엔진 계층을 import 했다가
   의존성이 빠지면 **"야후 파이낸스 기능을 끕니다"** 라는 틀린 안내와 함께 엔드포인트
   10개가 사라진다. `test_contract.py:85` 의 `>= 40` 가드는 51→41 을 통과시키므로,
   이것을 잡는 것은 계약 스냅샷뿐이다.
+  → ✅ **피했다.** 어댑터를 부르는 `krx_store` 는 `krx_router`(그 `try` **밖**)가 먼저
+  import 하므로, 의존성이 빠지면 그 자리에서 크게 죽는다. 조용한 강등 경로가 없다.
 - lifespan 에 `dispose_engine()` 을 걸어도 **검사에서는 한 번도 실행되지 않는다** —
   `conftest.py:45-53` 이 `TestClient` 를 `with` 없이 만든다(색인 15,414종목이 느려서).
   커넥션 누수는 검사로 못 잡는다. S4~S6 에서 손으로 확인한다.
