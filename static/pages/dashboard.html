@@ -95,19 +95,21 @@
     <p class="hint">착수 순서는 <b>공시·보고서 → 뉴스 → 커뮤니티·동영상</b>이다.
       인증키와 클라이언트가 이미 있고 공공데이터라 이용약관 확인이 필요 없는 쪽부터 한다.</p>
     <div class="tiles">
-      <div class="tile pending">
+      <div class="tile">
         <div class="tile-label"><span class="ico" aria-hidden="true">📑</span>공시</div>
-        <div class="stage">클라이언트만 · 화면 준비중</div>
-        <div class="tile-sub">DART 정기·수시공시. <code>clients/dart_data.py</code></div>
+        <div class="stage">자동 수집 가동중</div>
+        <div class="tile-sub">DART 정기·수시공시를 보관함에 담는다.
+          <code>services/dart_collector.py</code></div>
       </div>
-      <div class="tile pending">
+      <div class="tile">
         <div class="tile-label"><span class="ico" aria-hidden="true">📘</span>정기보고서</div>
-        <div class="stage">클라이언트만 · 화면 준비중</div>
-        <div class="tile-sub">사업·반기·분기보고서 원문. <code>clients/dart_report.py</code></div>
+        <div class="stage">자동 수집 가동중 (목록)</div>
+        <div class="tile-sub">사업·반기·분기보고서. <b>원문 파싱은 다음</b> —
+          <code>clients/dart_report.py</code></div>
       </div>
       <div class="tile pending">
         <div class="tile-label"><span class="ico" aria-hidden="true">📰</span>뉴스</div>
-        <div class="stage">인증키만 배치 · 미착수</div>
+        <div class="stage">인증키만 배치 · 다음 차례</div>
         <div class="tile-sub">제목·링크·언론사·발행일까지. <b>본문은 담지 않는다</b></div>
       </div>
       <div class="tile pending">
@@ -175,6 +177,18 @@
     <div class="states" id="rfSteps"></div>
     <pre class="out rf-log" id="rfLog" hidden></pre>
     <p class="rf-note" id="rfNote"></p>
+  </section>
+
+  <!-- ── ②-2 DART 공시 수집 (ADR-DS-0020) ──────
+       ⚠️ **폴링하지 않는다.** 페이지가 뜰 때 한 번만 묻는다 — 일괄 수집은 셸에서 돌고
+       화면에서 도는 것은 `/stock` 의 한 종목짜리(3호출·1초)라 진행률을 볼 것이 없다.
+       진행 패널을 쓸 곳이 하나뿐인 지금 그것을 만들면 쓰는 곳이 하나뿐인 추상이 된다. -->
+  <section class="card" id="collect">
+    <h2>DART 공시 수집 <span class="muted">— 여섯 갈래 중 첫 갈래</span></h2>
+    <p class="hint">공시·정기보고서를 받아 <b>자료 보관함</b>에 담는다.
+      종목 하나는 <a href="/stock">/stock</a> 의 <b>DART 공시 가져오기</b> 버튼으로,
+      유니버스 일괄은 셸에서 돌린다.</p>
+    <div class="status-list" id="collectBody"><div class="empty">불러오는 중…</div></div>
   </section>
 
   <!-- ── ③ 시장 카드 그리드 ─────────────────── -->
@@ -469,9 +483,63 @@
     return { bind, poll };
   })();
 
-  document.getElementById('reloadBtn').addEventListener('click', load);
+  /** DART 수집 카드 — 페이지당 한 번만 묻는다 (ADR-DS-0020).
+   *
+   * ⚠️ 예산 라벨은 반드시 **"이 수집기가 쓴 호출"** 이다. `watermark` 는 이 수집기가
+   *    부른 것만 세고 리서치 화면이 부르는 것은 안 세므로, "DART 잔량" 이라고 적으면
+   *    거짓말이 된다. 그 부정확함은 일 한도 20,000 중 12,000 만 쓰는 마진으로 덮는다.
+   */
+  async function loadCollect() {
+    const box = document.getElementById('collectBody');
+    try {
+      const s = await App.get('/api/collect/dart/status');
+      const rows = [];
+      // 상태색은 반드시 **글자와 함께** 낸다 — 이 화면의 방침이고 `Shell.grade` 가 그 자리다.
+      const badge = s.available
+        ? Shell.grade('good', '준비됨')
+        : `${Shell.grade('critical', '잠김')} ${esc(s.reason)}`;
+      rows.push(['상태', badge]);
+      if (!s.available && (s.hints || []).length) {
+        // 막다른 길로 두지 않는다 — 무엇을 해야 하는지(그리고 언제 되는지)를 그대로 싣는다.
+        rows.push(['해야 할 일', s.hints.map((h) => `<code>${esc(h)}</code>`).join('<br>')]);
+      }
+      if (s.filings && s.filings.count != null) {
+        rows.push(['담긴 공시', `${App.num(s.filings.count)}건` +
+          (s.filings.latest ? ` · 최신 접수일 ${esc(s.filings.latest)}` : '')]);
+      }
+      if (s.budget && s.budget.left != null) {
+        rows.push(['오늘 <b>이 수집기가</b> 쓴 호출',
+          `${App.num(s.budget.used_by_collector)} / ${App.num(s.budget.batch_budget)} ` +
+          `<span class="muted">(DART 일 한도 ${App.num(s.budget.daily_limit)})</span>`]);
+      }
+      if (s.corp_code) {
+        const age = s.corp_code.age_days == null ? '알 수 없음' : `${s.corp_code.age_days}일 전`;
+        rows.push(['DART 고유번호',
+          `${esc(s.corp_code.generated_at || '없음')} (${age}) · ` +
+          `${App.num(s.corp_code.listed_count)}개 상장사` +
+          (s.corp_code.stale
+            ? ` ${Shell.grade('warning', '낡음')} ${esc(s.corp_code.hint)}` : '')]);
+      }
+      if (s.last_run) {
+        rows.push(['마지막 일괄 회차',
+          `${esc(s.last_run.last_synced_at || '')} · ${esc(s.last_run.note || '')}` +
+          ` · 새로 ${App.num(s.last_run.rows || 0)}건`]);
+      }
+      rows.push(['유니버스 일괄', `<code>${esc(s.batch_command)}</code><br>` +
+        `<span class="muted">${esc((s.universe && s.universe.note) || '')}</span>`]);
+      // 기존 '데이터 상태' 카드와 **같은 마크업**을 쓴다 (.t 제목 · .d 설명).
+      // 새 클래스를 만들면 그 카드만 다르게 보이고, 그 차이가 뜻이 없다.
+      box.innerHTML = rows.map(([k, v]) =>
+        `<div class="status-row"><div class="t">${k}</div><div class="d">${v}</div></div>`).join('');
+    } catch (e) {
+      box.innerHTML = `<div class="empty">수집 상태를 확인하지 못했습니다 — ${esc(e.message)}</div>`;
+    }
+  }
+
+  document.getElementById('reloadBtn').addEventListener('click', () => { load(); loadCollect(); });
   Refresh.bind();
   load();
+  loadCollect();
   Refresh.poll();
 })();
 </script>

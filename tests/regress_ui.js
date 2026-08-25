@@ -683,7 +683,155 @@ async function researchChecks() {
   }
 }
 
-researchChecks().then(() => {
-  console.log(`\n결과: ${failures === 0 ? '회귀 없음 ✓' : `${failures}건 실패 ✗`}`);
-  process.exit(failures === 0 ? 0 : 1);
-});
+/* ── 7. /stock 자료 보관함 + DART 수집 (ADR-DS-0019 · ADR-DS-0020) ──────────
+ *
+ * 이 절이 붙드는 것은 셋이다.
+ *
+ *  ① 패널 요소가 그대로 있는가 (버튼 하나가 사라져도 화면은 오류를 안 낸다)
+ *  ② ⭐ **차트가 안 뜨는 환경에서도 보관함이 산다** — ADR-DS-0019 §9 의 규칙이
+ *     지금까지 주석뿐이었다. `onStockResolved()` 를 `render()` 뒤로 옮기면
+ *     `drawPrice()` 의 예외에 보관함이 같이 죽는데, **jsdom 은 ApexCharts 가 없으므로
+ *     그 환경이 여기서 그대로 재현된다.** 검사로 바꾸는 자리가 여기다.
+ *  ③ 못 쓸 때 잠기고 **이유가 보이는가** — 배포본의 기본 상태다.
+ */
+function stockClipChecks() {
+  console.log('\n── 7. /stock 자료 보관함 · DART 수집 ────────');
+  const file = path.join(CURRENT, 'stock.html');
+  if (!fs.existsSync(file)) { failures++; console.log('  ✗  stock.html 이 없다'); return; }
+
+  const NEED = ['clipCard', 'clipBlocked', 'clipForm', 'clipKind', 'btnClipSave',
+    'btnFetchFilings', 'clipStatus', 'clipListWrap', 'clipFilterKind', 'clipFilterMonth',
+    'clipFilterTag', 'clipAllStocks', 'clipBody', 'clipScope'];
+  const ids = idsOf(fs.readFileSync(file, 'utf8'));
+  const gone = NEED.filter((id) => !ids.has(id));
+  if (gone.length) { failures++; console.log(`  ✗  빠진 요소: ${gone.join(', ')}`); }
+  else console.log(`  ✓  패널 요소 ${NEED.length}개 확인`);
+
+  // 담기 버튼과 DART 버튼이 **같은 잠금**을 물려받는지 — 형제로 있어야 한다.
+  const html = fs.readFileSync(file, 'utf8');
+  const formStart = html.indexOf('id="clipForm"');
+  const listStart = html.indexOf('id="clipListWrap"');
+  const inside = formStart >= 0 && listStart > formStart
+    && html.indexOf('id="btnFetchFilings"') > formStart
+    && html.indexOf('id="btnFetchFilings"') < listStart;
+  if (!inside) { failures++; console.log('  ✗  DART 버튼이 clipForm 밖에 있다 — 잠금을 안 물려받는다'); }
+  else console.log('  ✓  DART 버튼이 잠금 안쪽에 있다');
+
+  // ⭐ 순서 회귀 — `onStockResolved()` 가 `render()` 의 **첫 실행문**인가.
+  const render = html.slice(html.indexOf('function render('));
+  const first = render.slice(0, 600);
+  const clipAt = first.indexOf('onStockResolved(');
+  const drawAt = first.indexOf('drawPrice(');
+  if (clipAt < 0 || (drawAt >= 0 && drawAt < clipAt)) {
+    failures++;
+    console.log('  ✗  onStockResolved 가 그리기보다 뒤에 있다 — 차트 예외에 보관함이 같이 죽는다');
+  } else console.log('  ✓  보관함을 그리기보다 먼저 옮긴다 (ADR-DS-0019 §9)');
+  return { file, html };
+}
+
+/** 서버 없이 화면을 실제로 몰아 본다. **ApexCharts 를 일부러 비운 채**로. */
+async function stockClipRun(ctx) {
+  if (!ctx) return;
+  const clips = [];
+  const answer = (url, method, body) => {
+    if (url.includes('/api/clips/status')) return { available: true, reason: '', hints: [], kinds: ['news', 'filing', 'dataset', 'report', 'memo', 'post', 'video'], screens: ['stock'] };
+    if (url.includes('/api/clips/facets')) return { kinds: [{ kind: 'filing', count: clips.length }], months: [{ month: '2026-08', count: clips.length }], tags: [{ tag: '실적', count: 1 }] };
+    if (url.includes('/api/collect/dart/status')) return { available: true, reason: '', hints: [], budget: { left: 9000 }, filings: { count: 1, latest: '2026-08-21' }, corp_code: {}, universe: {}, batch_command: 'x' };
+    if (url.includes('/api/collect/dart/security')) {
+      clips.push({ clip_id: clips.length + 1, kind: 'filing', screen: 'stock', title: '사업보고서 (2025.12)', url: 'https://dart.fss.or.kr/dsaf001/main.do?rcpNo=1', source: 'DART', occurred_at: '2026-08-21', tags: ['실적', '정기보고서'], payload: {} });
+      return { scope: 'one', created: 1, duplicate: 0, invalid: 0, calls: 3, truncated_codes: [] };
+    }
+    if (url.includes('/api/clips')) {
+      if (method === 'POST') { clips.push({ clip_id: 99, kind: 'memo', screen: 'stock', title: (body && body.title) || 'x', tags: [], payload: {}, created: true }); return clips[clips.length - 1]; }
+      return { items: clips, total: clips.length, page: 1, size: 50 };
+    }
+    if (url.includes('/api/stock/')) {
+      return { code: '005930', name: '삼성전자', market: 'KR', price: { close: 70000, change_rate: 1.2 }, series: [], source: 'krx-db' };
+    }
+    return {};
+  };
+
+  const dom = new JSDOM(ctx.html, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/stock?code=005930' });
+  const { window } = dom;
+  // ⚠️ **`matchMedia` 도 `ApexCharts` 도 넣지 않는다.** 그 결핍이 이 검사의 요점이다 —
+  //    차트 경로가 던지는 환경에서 보관함이 살아남는지를 본다.
+  const errors = [];
+  window.addEventListener('error', (e) => errors.push(String(e.message)));
+  window.fetch = async (url, opt = {}) => {
+    const body = opt.body ? JSON.parse(opt.body) : null;
+    const data = answer(String(url), opt.method || 'GET', body);
+    return { ok: true, status: 200, text: async () => JSON.stringify(data), json: async () => data };
+  };
+
+  try {
+    window.eval(fs.readFileSync(path.join(ROOT, 'static/assets/app.js'), 'utf8'));
+    window.eval(fs.readFileSync(path.join(ROOT, 'static/assets/shell.js'), 'utf8'));
+    const page = ctx.html.match(/<script>([\s\S]*?)<\/script>/g).pop().replace(/<\/?script>/g, '');
+    window.eval(page);
+    await sleep(400);
+
+    const doc = window.document;
+    const checks = [
+      ['보관함 패널이 잠기지 않았다', doc.getElementById('clipForm').hidden === false],
+      ['범위 표시가 종목을 가리킨다', /삼성전자/.test(doc.getElementById('clipScope').textContent)],
+      ['DART 버튼이 눌릴 수 있다', doc.getElementById('btnFetchFilings').disabled === false],
+    ];
+    checks.forEach(([label, ok]) => { if (!ok) failures++; console.log(`  ${ok ? '✓' : '✗'}  ${label}`); });
+
+    // DART 버튼을 실제로 누른다
+    doc.getElementById('btnFetchFilings').click();
+    await sleep(300);
+    const status = doc.getElementById('clipStatus').textContent;
+    const said = /새로\s*1건/.test(status) && /이미 있던 것\s*0건/.test(status);
+    if (!said) { failures++; console.log(`  ✗  수집 결과 문장이 이상하다 — «${status}»`); }
+    else console.log(`  ✓  수집 결과를 새로/이미 로 나누어 말한다 — «${status}»`);
+
+    const drawn = doc.getElementById('clipBody').querySelectorAll('tr').length;
+    if (!drawn) { failures++; console.log('  ✗  담은 것이 목록에 안 그려졌다 (차트 예외에 같이 죽었을 수 있다)'); }
+    else console.log(`  ✓  ApexCharts 없이도 목록이 그려진다 — ${drawn}행`);
+  } catch (e) {
+    failures++;
+    console.log(`  ✗  /stock 실행 실패 — ${e.message}`);
+  }
+}
+
+/** 못 쓸 때 잠기고 이유가 보이는가 — 배포본의 기본 상태다. */
+async function stockClipLocked(ctx) {
+  if (!ctx) return;
+  const dom = new JSDOM(ctx.html, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/stock?code=005930' });
+  const { window } = dom;
+  window.fetch = async (url) => {
+    const locked = { available: false, reason: '저장소에 못 붙었다', hints: ['보관함은 Postgres 에만 있다 — 배포본은 S6(Supabase) 뒤에 쓸 수 있다.'], kinds: [], screens: [] };
+    const data = String(url).includes('/api/clips/status') ? locked : {};
+    return { ok: true, status: 200, text: async () => JSON.stringify(data), json: async () => data };
+  };
+  try {
+    window.eval(fs.readFileSync(path.join(ROOT, 'static/assets/app.js'), 'utf8'));
+    window.eval(fs.readFileSync(path.join(ROOT, 'static/assets/shell.js'), 'utf8'));
+    window.eval(ctx.html.match(/<script>([\s\S]*?)<\/script>/g).pop().replace(/<\/?script>/g, ''));
+    await sleep(300);
+    const doc = window.document;
+    const shown = doc.getElementById('clipBlocked').hidden === false;
+    const why = /S6/.test(doc.getElementById('clipBlocked').textContent);
+    if (!shown) { failures++; console.log('  ✗  못 쓰는데 잠금 안내가 안 뜬다'); }
+    else console.log('  ✓  못 쓰면 잠기고 안내가 뜬다');
+    if (!why) { failures++; console.log('  ✗  **언제** 쓸 수 있는지가 화면에 없다 — 막다른 길이다'); }
+    else console.log('  ✓  언제 되는지(S6)까지 화면에 실린다');
+    if (doc.getElementById('clipForm').hidden !== true) { failures++; console.log('  ✗  잠겼는데 담기 폼이 열려 있다'); }
+    else console.log('  ✓  담기 폼이 잠겼다');
+  } catch (e) {
+    failures++;
+    console.log(`  ✗  잠금 경로 실행 실패 — ${e.message}`);
+  }
+}
+
+researchChecks()
+  .then(async () => {
+    const ctx = stockClipChecks();
+    await stockClipRun(ctx);
+    await stockClipLocked(ctx);
+  })
+  .then(() => {
+    console.log(`\n결과: ${failures === 0 ? '회귀 없음 ✓' : `${failures}건 실패 ✗`}`);
+    process.exit(failures === 0 ? 0 : 1);
+  });

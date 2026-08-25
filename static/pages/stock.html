@@ -293,6 +293,10 @@
       </div>
       <div class="row" style="gap:8px;margin-top:10px;align-items:center">
         <button id="btnClipSave">담기</button>
+        <!-- ⚠️ 새 <section> 을 만들지 않는다. 이 패널의 잠금 해제 지점이 하나뿐이라
+             (initClips 의 clipForm.hidden = false) 여기 두면 잠금을 그대로 물려받는다. -->
+        <button class="ghost" id="btnFetchFilings"
+                title="이 종목의 최근 공시·정기보고서를 DART 에서 받아 담습니다">DART 공시 가져오기</button>
         <span class="status" id="clipStatus"></span>
       </div>
     </div>
@@ -992,6 +996,7 @@
       $('clipListWrap').hidden = false;
       $('clipKind').addEventListener('change', syncClipForm);
       $('btnClipSave').addEventListener('click', saveClip);
+      $('btnFetchFilings').addEventListener('click', fetchFilings);
       ['clipFilterKind', 'clipFilterMonth', 'clipFilterTag', 'clipAllStocks']
         .forEach((id) => $(id).addEventListener('change', loadClips));
       syncClipForm();
@@ -1018,6 +1023,11 @@
       ? `— ${d.name} (${d.code})`
       : '— 해외 종목이라 종목에 묶이지 않습니다 (메모는 담깁니다)';
     if (!isKorean) $('clipAllStocks').checked = true;
+    // 해외 티커는 DART 에 없다. 누를 수 있게 두면 반드시 404 가 난다.
+    $('btnFetchFilings').disabled = !clip.code;
+    $('btnFetchFilings').title = clip.code
+      ? `${d.name} 의 최근 공시를 DART 에서 받아 담습니다`
+      : '국내 종목에서만 쓸 수 있습니다 (DART 는 해외 종목을 다루지 않습니다)';
     if (!$('clipTitle').value) $('clipTitle').value = '';
     loadFacets();
     loadClips();
@@ -1063,6 +1073,40 @@
       loadClips();
     } catch (e) {
       setClipStatus(e.message, true);
+    }
+  }
+
+  /** ⭐ DART 공시를 자동으로 받아 담는다 (ADR-DS-0020).
+   *
+   * 손으로 링크를 붙여 넣는 것과 **같은 표**에 들어간다 — 다른 것은 사람이 아니라
+   * 수집기가 담았다는 표시(`payload.collected_by`)뿐이다.
+   *
+   * ⚠️ **중복은 오류가 아니다.** "새로 N · 이미 있던 것 M" 으로 나누어 말한다 —
+   *    붉은 글씨로 그리면 사람이 고장으로 읽는다.
+   * ⚠️ **유니버스 일괄은 여기서 못 돈다.** 350종목이 3분이라 화면이 붙들려 있게 되고,
+   *    진행 패널은 아직 쓸 곳이 하나뿐이라 만들지 않았다 — 셸에서 돌린다:
+   *      python3 scripts/collect_dart.py --top 350
+   */
+  async function fetchFilings() {
+    if (!clip.ready || !clip.code) return;
+    const button = $('btnFetchFilings');
+    button.disabled = true;
+    setClipStatus('DART 에서 공시를 받는 중…');
+    try {
+      const r = await App.post('/api/collect/dart/security',
+        { code: clip.code, months: 12, incremental: false });
+      const parts = [`새로 ${r.created}건`, `이미 있던 것 ${r.duplicate}건`];
+      if (r.invalid) parts.push(`못 담음 ${r.invalid}건`);
+      if ((r.truncated_codes || []).length) parts.push('⚠️ 100건 상한에 걸린 구간이 남았습니다');
+      setClipStatus(`${parts.join(' · ')} (호출 ${r.calls}회)`);
+      loadFacets();
+      loadClips();
+    } catch (e) {
+      // ⚠️ 처방을 버리지 않는다 — 503·429 는 detail 이 {reason, hints} 객체다.
+      const hints = (e.detail && e.detail.hints) || [];
+      setClipStatus(hints.length ? `${e.message} — ${hints[0]}` : e.message, true);
+    } finally {
+      button.disabled = !clip.code;
     }
   }
 

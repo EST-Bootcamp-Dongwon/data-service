@@ -48,11 +48,11 @@ router = APIRouter(prefix="/api/clips", tags=["자료 보관"])
 # `kind` 별로 `payload` 에 반드시 있어야 하는 열쇠. 표가 볼 수 없는 것만 적는다.
 # ⚠️ **`news` 는 비어 있다.** 뉴스는 링크·제목·출처·발행일이면 충분하고 그 넷은
 #    payload 가 아니라 컬럼이다. 본문은 애초에 담지 않는다 (ADR-DS-0008).
-REQUIRED_PAYLOAD: Dict[str, tuple] = {
-    "filing": ("rcept_no",),                      # 없으면 DART 원문을 되찾을 수 없다
-    "dataset": ("source", "params"),              # 어떤 조건으로 뽑은 스냅샷인지
-    "report": ("run_id",),                        # 어느 실행의 리포트인지
-}
+#
+# ⭐ **정본은 이제 `clip_store` 다** (ADR-DS-0020). 자동 수집기가 라우터를 거치지 않고
+#    저장소를 직접 부르기 때문에, 표가 여기 있으면 사람이 담는 길만 막히고 **수집기가
+#    담는 길은 뚫려 있게** 된다. 이 줄은 이름을 잃지 않으려는 재수출이고 두 벌이 아니다.
+REQUIRED_PAYLOAD: Dict[str, tuple] = store.REQUIRED_PAYLOAD
 
 
 # ==================================================
@@ -76,24 +76,19 @@ class ClipCreate(BaseModel):
 
     @model_validator(mode="after")
     def _check_kind(self) -> "ClipCreate":
-        """`kind` 가 요구하는 것이 갖춰졌는가. **DDL 이 보는 것은 여기서 안 본다.**"""
-        if self.kind not in store.KINDS:
-            raise ValueError(f"kind 는 {' · '.join(store.KINDS)} 중 하나다. 받은 값: {self.kind!r}")
-        if self.screen not in store.SCREENS:
-            raise ValueError(
-                f"screen 은 {' · '.join(store.SCREENS)} 중 하나다. 받은 값: {self.screen!r}")
-        if self.kind in store.LINK_KINDS and not (self.url or "").strip():
-            # 표도 이것을 막지만(clip_link_needs_url_ck), 여기서 먼저 막으면 사람이
-            # 읽을 수 있는 422 가 되고 DB 까지 갔다 오지 않는다.
-            raise ValueError(f"{self.kind} 는 링크형이라 url 이 있어야 한다")
-        if self.kind == "memo" and not (self.note or "").strip():
-            # 메모인데 내용이 없으면 담을 것이 없다. 제목만 남은 빈 행이 쌓인다.
-            raise ValueError("memo 는 note 가 있어야 한다")
-        missing = [k for k in REQUIRED_PAYLOAD.get(self.kind, ()) if k not in self.payload]
-        if missing:
-            raise ValueError(
-                f"{self.kind} 의 payload 에 {' · '.join(missing)} 이(가) 없다. "
-                f"필요한 열쇠: {' · '.join(REQUIRED_PAYLOAD[self.kind])}")
+        """`kind` 가 요구하는 것이 갖춰졌는가. **DDL 이 보는 것은 여기서 안 본다.**
+
+        ⚠️ **규칙은 `clip_store.validation_errors()` 에 있고 여기는 부르는 자리다.**
+        검증을 저장소 *안쪽*(`create()`)으로 옮기지 않는 것이 중요하다 — 라우터는
+        `_require_available()`(503)을 먼저 부르므로, 안쪽에만 두면 잘못된 입력이 전부
+        "DB 가 없다" 로 보이고 사람이 고칠 곳을 못 찾는다. **옮긴 것은 표와 규칙이지
+        검증이 일어나는 자리가 아니다.**
+        """
+        problems = store.validation_errors(
+            kind=self.kind, screen=self.screen, title=self.title,
+            url=self.url, note=self.note, payload=self.payload)
+        if problems:
+            raise ValueError(" / ".join(problems))
         return self
 
 

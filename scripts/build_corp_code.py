@@ -51,7 +51,14 @@ def build() -> dict:
     for row in rows:
         stock_code = row["stock_code"].strip()
         # 비상장사는 종목코드 칸이 비어 있다. 6자리가 아닌 것도 거른다.
-        if not stock_code or len(stock_code) != 6 or not stock_code.isdigit():
+        #
+        # ⚠️ **`isdigit()` 로 거르지 않는다.** KRX 신형 종목코드는 6자리이되 숫자가 아니다
+        #    (`0001A0` 덕양에너젠 · `0126Z0` 삼성에피스홀딩스 …). 숫자만 받으면 그 종목들이
+        #    **매핑에서 통째로 빠지고**, DART 조회가 404 로 떨어지는데 원인이 "파일이 낡았나"
+        #    로 보인다 — 다시 만들어도 안 낫는다. 실측(2026-08-25): corpCode.xml 의 6자리
+        #    종목코드 3,986건 중 **56건이 신형**이고, 그것이 `securities` 에서 corp_code 가
+        #    비어 있던 59종목의 정체다(나머지는 우선주 116종목으로 원래 고유번호가 없다).
+        if not stock_code or len(stock_code) != 6 or not stock_code.isalnum():
             continue
 
         entry = {"corp_code": row["corp_code"], "corp_name": row["corp_name"]}

@@ -45,6 +45,8 @@
     ]),
     'GET /api/clips/{clip_id}': list([
     ]),
+    'GET /api/collect/dart/status': list([
+    ]),
     'GET /api/dashboard/summary': list([
     ]),
     'GET /api/dashboard/ticker': list([
@@ -206,6 +208,8 @@
     ]),
     'POST /api/clips': list([
     ]),
+    'POST /api/collect/dart/security': list([
+    ]),
     'POST /api/krx/sync': list([
       'days',
     ]),
@@ -237,6 +241,7 @@
     'GET /api/clips/facets',
     'GET /api/clips/status',
     'GET /api/clips/{clip_id}',
+    'GET /api/collect/dart/status',
     'GET /api/dashboard/summary',
     'GET /api/dashboard/ticker',
     'GET /api/factors/radar',
@@ -281,6 +286,7 @@
     'GET /health',
     'PATCH /api/clips/{clip_id}',
     'POST /api/clips',
+    'POST /api/collect/dart/security',
     'POST /api/krx/sync',
     'POST /api/refresh/cancel',
     'POST /api/refresh/run',

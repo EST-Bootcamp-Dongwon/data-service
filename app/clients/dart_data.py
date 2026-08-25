@@ -112,6 +112,12 @@ FS_DIVS: Dict[str, str] = {"CFS": "연결재무제표", "OFS": "별도재무제�
 # 실측: 100개는 정상, 200개는 `021`(조회 가능 회사 개수 초과)로 거부한다.
 MULTI_ACCOUNT_LIMIT = 100
 
+# DART 가 정한 하루 호출 한도. 아래 `DART_STATUS["020"]` 이 같은 사실을 말한다.
+# ⚠️ **이것은 사실이지 정책이 아니다.** 우리가 그중 얼마를 쓸지(예산)는 수집기가 정한다
+#    (`app/services/dart_collector.py`). 둘을 한 파일에 두면 "한도를 올렸다" 와
+#    "예산을 늘렸다" 가 같은 diff 로 보인다.
+DAILY_CALL_LIMIT = 20_000
+
 # DART 응답 `status` 코드. 013 은 오류가 아니라 '빈 결과'다.
 DART_STATUS: Dict[str, str] = {
     "000": "정상",
@@ -226,11 +232,19 @@ _last_attempt: Dict[str, Optional[str]] = {"result": None, "detail": None}
 
 
 class DartError(Exception):
-    """DART 조회 실패. `status` 는 라우터가 그대로 HTTP 상태 코드로 쓴다."""
+    """DART 조회 실패. `status` 는 라우터가 그대로 HTTP 상태 코드로 쓴다.
 
-    def __init__(self, message: str, status: int = 502):
+    ⚠️ **`dart_status` 는 HTTP 상태와 다른 축이다.** DART 본문 코드(`DART_STATUS` 의 열쇠)를
+    그대로 싣는다. 배치 수집은 이 값으로 *중단할지 건너뛸지*를 가르는데, HTTP 상태만 보면
+    `800`(시스템 점검 — 중단해야 한다)과 `900`(정의되지 않은 오류 — 그 종목만 건너뛰면 된다)이
+    **둘 다 502** 라 한글 메시지를 파싱해야 구분된다. 그러면 문구를 고치는 날 조용히 깨진다.
+    빈 문자열은 "DART 가 답하기 전에 실패했다"(네트워크·HTTP·인증키 없음)는 뜻이다.
+    """
+
+    def __init__(self, message: str, status: int = 502, dart_status: str = ""):
         super().__init__(message)
         self.status = status
+        self.dart_status = dart_status
 
 
 # ==================================================
@@ -280,6 +294,19 @@ def _cached(key: Tuple, producer):
     with _cache_lock:
         _cache[key] = (time.monotonic(), value)
     return value
+
+
+def clear_cache() -> int:
+    """저장해 둔 응답을 전부 버리고 몇 개였는지 돌려준다.
+
+    ⚠️ **씻는 자리가 이 파일에 없었다.** `CACHE_TTL` 이 24시간인데 열쇠에 날짜가 없어서,
+    장수하는 웹 프로세스에서는 방금 담은 공시를 리서치 화면이 **하루 내내 낡은 사본**으로
+    본다. 오류가 안 뜨므로 사람이 캐시를 의심하지 못한다 — 수집이 끝난 자리에서 부른다.
+    """
+    with _cache_lock:
+        count = len(_cache)
+        _cache.clear()
+    return count
 
 
 def _require_key() -> str:
@@ -333,26 +360,26 @@ def _call(path: str, params: Dict[str, str], allow_empty: bool = True) -> dict:
         _last_attempt.update(result="empty", detail=None)
         if allow_empty:
             return payload
-        raise DartError(f"조회된 데이터가 없습니다. ({message})", status=404)
+        raise DartError(f"조회된 데이터가 없습니다. ({message})", status=404, dart_status=status)
 
     if status in ("010", "011", "012"):
         detail = f"DART 인증키 문제입니다 — {message}"
         _last_attempt.update(result="unauthorized", detail=detail)
-        raise DartError(detail, status=502)
+        raise DartError(detail, status=502, dart_status=status)
 
     if status == "020":
         detail = f"DART 요청 한도를 초과했습니다 — {message} (하루 20,000건)"
         _last_attempt.update(result="rate_limit", detail=detail)
-        raise DartError(detail, status=429)
+        raise DartError(detail, status=429, dart_status=status)
 
     if status == "100":
         detail = f"DART 요청 값이 올바르지 않습니다 — {message}"
         _last_attempt.update(result="bad_request", detail=detail)
-        raise DartError(detail, status=422)
+        raise DartError(detail, status=422, dart_status=status)
 
     detail = f"DART 오류 [{status}] {message}"
     _last_attempt.update(result="api_error", detail=detail)
-    raise DartError(detail, status=502)
+    raise DartError(detail, status=502, dart_status=status)
 
 
 # ==================================================
@@ -378,6 +405,25 @@ def _load_corp_map() -> Dict[str, Dict]:
         except Exception:
             _corp_map = {}
     return _corp_map
+
+
+def reload_corp_map() -> int:
+    """`data/corp_code.json` 을 **다시 읽는다.** 새로 만든 직후에 부른다.
+
+    ⚠️ `_load_corp_map()` 은 프로세스 수명 동안 **한 번만** 읽는다. 그래서 파일을 새로
+    만들어도 이미 떠 있는 웹 프로세스는 낡은 지도를 계속 쓰는데, 상태 조회는 파일을 매번
+    읽으므로 **"최신" 이라고 말하면서 조회는 404** 가 된다 — 오류가 아니라 어긋남이라
+    가장 찾기 어렵다.
+    """
+    global _corp_map
+    with _corp_map_lock:
+        _corp_map = None
+    return len(_load_corp_map())
+
+
+def loaded_corp_count() -> int:
+    """지금 이 프로세스가 **실제로 들고 있는** 매핑 수. 파일이 아니라 메모리 쪽이다."""
+    return len(_load_corp_map())
 
 
 def get_corp_code(stock_code: str) -> str:
@@ -735,7 +781,9 @@ DEFAULT_PUBLIC_TYPES: Tuple[str, ...] = ("A", "B", "I")
 
 
 def fetch_disclosures(code: str, months: int = 12, limit: int = 100,
-                      types: Optional[Tuple[str, ...]] = DEFAULT_PUBLIC_TYPES) -> dict:
+                      types: Optional[Tuple[str, ...]] = DEFAULT_PUBLIC_TYPES,
+                      *, bgn_de: str = "", end_de: str = "",
+                      use_cache: bool = True) -> dict:
     """최근 `months` 개월 공시 목록을 돌려준다. (CORP-TP 의 이벤트 타임라인용)
 
     `types` 는 받아 올 공시유형이다. 기본값은 정기공시·주요사항보고·거래소공시로,
@@ -744,6 +792,21 @@ def fetch_disclosures(code: str, months: int = 12, limit: int = 100,
 
     DART 는 유형을 한 번에 하나만 받으므로 유형 수만큼 호출하고 날짜순으로 합친다.
     (3종이면 0.5초 안팎이다)
+
+    `bgn_de`·`end_de`(`YYYYMMDD`)
+        구간을 **직접** 못 박는다. `bgn_de` 를 주면 `months` 를 이기고,
+        `end_de` 를 비우면 오늘이다. 둘이 함께 있어야 **창을 반으로 쪼개** 다시 물을 수 있다 —
+        어느 유형이 100건 상한에 걸렸을 때 그것이 유일한 회수 방법이다.
+        ⚠️ 이것이 없으면 표현할 수 있는 가장 좁은 창이 **31일**이다(`months` 하한이 1).
+        증분 수집은 "지난번에 본 날 다음부터" 를 물어야 하는데 그 단위가 한 달이면
+        같은 공시를 매번 수십 건씩 다시 받는다. 창이 좁아진다고 호출 **수**가 줄지는
+        않는다 — 줄어드는 것은 돌려받는 행 수와 100건 상한에 걸릴 확률이다.
+
+    `use_cache=False`
+        저장해 둔 값을 쓰지 않고 반드시 새로 받는다.
+        ⚠️ 캐시 열쇠에 **날짜가 없고** TTL 이 24시간이라(`CACHE_TTL`), 배치·버튼이 캐시를
+        타면 그 날 두 번째 실행부터는 **네트워크를 아예 안 타고 같은 답**을 준다.
+        오류가 뜨지 않으므로 "왜 새 공시가 안 담기지" 로만 드러난다. 수집 경로는 끈다.
     """
     corp_code, corp_name = resolve_corp(code)
     months = max(1, min(int(months), 60))
@@ -752,11 +815,19 @@ def fetch_disclosures(code: str, months: int = 12, limit: int = 100,
     wanted = tuple(t for t in (types or ()) if t in PUBLIC_TYPES) or ("",)   # ""=필터 없음
 
     today = datetime.now(KST)
-    begin = today - timedelta(days=months * 31)          # 달 길이를 넉넉히 잡는다
-    return _cached(("disc", corp_code, months, limit, wanted),
-                   lambda: _fetch_disclosures_uncached(
-                       corp_code, corp_name,
-                       begin.strftime("%Y%m%d"), today.strftime("%Y%m%d"), limit, wanted))
+    begin_text = (bgn_de or "").strip()
+    if not (len(begin_text) == 8 and begin_text.isdigit()):
+        begin_text = (today - timedelta(days=months * 31)).strftime("%Y%m%d")
+    end_text = (end_de or "").strip()
+    if not (len(end_text) == 8 and end_text.isdigit()):
+        end_text = today.strftime("%Y%m%d")
+
+    produce = lambda: _fetch_disclosures_uncached(          # noqa: E731 (아래 두 갈래가 같은 것을 쓴다)
+        corp_code, corp_name, begin_text, end_text, limit, wanted)
+    if not use_cache:
+        return produce()
+    # ⚠️ 열쇠에 `begin_text` 를 넣는다. `months` 만 넣으면 `bgn_de` 가 달라도 같은 칸을 친다.
+    return _cached(("disc", corp_code, begin_text, end_text, limit, wanted), produce)
 
 
 def _fetch_disclosures_uncached(corp_code: str, corp_name: str, bgn_de: str,
@@ -764,6 +835,10 @@ def _fetch_disclosures_uncached(corp_code: str, corp_name: str, bgn_de: str,
     started = time.monotonic()
     rows: List[Dict] = []
     total_available = 0
+    # ⚠️ **유형별로 따로 세어 둔다.** 아래에서 셋을 합친 뒤에는 어느 유형이 100건 상한에
+    #    걸렸는지 알 수 없다 — `total_count` 가 합계라서 "A 가 잘렸다" 와 "셋이 골고루
+    #    나왔다" 가 같은 숫자로 보인다. 증분 수집은 잘린 유형만 창을 좁혀 다시 물어야 한다.
+    by_type: List[Dict] = []
 
     for public_type in types:
         params = {
@@ -779,9 +854,19 @@ def _fetch_disclosures_uncached(corp_code: str, corp_name: str, bgn_de: str,
             params["pblntf_ty"] = public_type
 
         payload = _call("list.json", params)
-        total_available += int(payload.get("total_count") or 0)
+        type_total = int(payload.get("total_count") or 0)
+        total_available += type_total
+        items = payload.get("list") or []
+        by_type.append({
+            "code": public_type,
+            "name": PUBLIC_TYPES.get(public_type, "전체"),
+            "count": len(items),
+            "total_count": type_total,
+            # 이 유형만 놓고 봤을 때 DART 가 가진 것보다 적게 받았는가.
+            "truncated": type_total > len(items),
+        })
 
-        for item in payload.get("list") or []:
+        for item in items:
             rcept_no = item.get("rcept_no", "")
             rows.append({
                 "rcept_no": rcept_no,
@@ -802,7 +887,10 @@ def _fetch_disclosures_uncached(corp_code: str, corp_name: str, bgn_de: str,
     # 유형별로 따로 받았으므로 다시 최신순으로 합친다. 접수번호는 같은 날 안에서도
     # 시간순으로 커지므로 2차 정렬 열쇠로 쓴다.
     rows.sort(key=lambda r: (r["date"], r["rcept_no"]), reverse=True)
-    truncated = len(rows) > limit
+    # ⚠️ 두 가지가 서로 다른 잘림이다 — ① 유형을 합친 뒤 `limit` 로 자른 것,
+    #    ② 어느 한 유형이 DART 쪽에서 이미 잘려 온 것. ②는 창을 좁혀 다시 묻지 않으면
+    #    **영영 못 받는다.** 하나로 뭉치면 그 차이가 사라진다.
+    truncated = len(rows) > limit or any(t["truncated"] for t in by_type)
     rows = rows[:limit]
 
     return {
@@ -812,6 +900,7 @@ def _fetch_disclosures_uncached(corp_code: str, corp_name: str, bgn_de: str,
         "end": _format_date(end_de),
         "types": [{"code": t, "name": PUBLIC_TYPES.get(t, "전체")} for t in types],
         "total_count": total_available,
+        "by_type": by_type,
         "count": len(rows),
         # 한도에 걸려 잘렸는지 밝힌다. 리포트가 "이게 전부"라고 오해하면 안 된다.
         "truncated": truncated,

@@ -198,6 +198,47 @@ def refresh_api_enabled() -> bool:
     return refresh_api() == ON
 
 
+# ==================================================
+# 3-2. COLLECT_API — 자동 수집을 실행할 수 있게 둘 것인가 (ADR-DS-0020)
+# ==================================================
+# `REFRESH_API` 와 **같은 모양이고 같은 이유**다 — 외부 API(DART)를 부르고 표에 쓰는
+# 경로이므로 돌 수 있는 곳에서 일부러 막는 손잡이가 하나 있어야 한다.
+#
+# ⚠️ **호출 예산은 여기 두지 않는다.** `settings` 는 「환경이 정하는 것」의 집이고
+#    (ADR-DS-0003) 예산은 환경이 아니라 이 서비스의 정책이다
+#    (`app/services/dart_collector.py`). 환경변수로 뚫어 두면 "왜 오늘 한도가 찼지" 의
+#    답이 셸 히스토리에 숨는다. 회차 단위 조정은 `--budget` 이다.
+COLLECT_API_VALUES: tuple[str, ...] = (ON, OFF)
+DEFAULT_COLLECT_API = ON
+
+
+def collect_api() -> str:
+    """자동 수집 실행 경로를 열어 둘 것인가. `on`(기본) 또는 `off`.
+
+    ⚠️ 어휘 밖 값이면 **예외**다 — `refresh_api()`·`store_backend()`·`app_env()` 와 같다.
+    `COLLECT_API=false` 를 조용히 `on` 으로 떨어뜨리면 "껐다고 믿었는데 열려 있는" 상태가
+    되고, 이 손잡이에서 그 거짓 음성은 **외부 API 를 태우는 쪽**이라 방향이 나쁘다.
+    """
+    raw = env("COLLECT_API")
+    if not raw:
+        return DEFAULT_COLLECT_API
+
+    value = raw.lower()
+    if value not in COLLECT_API_VALUES:
+        raise ValueError(
+            f"COLLECT_API 값 '{raw}' 을 모른다. 쓸 수 있는 값은 "
+            f"{', '.join(COLLECT_API_VALUES)} 다.\n"
+            f"  수집을 실행한다   : COLLECT_API={ON} (이 값이 기본이라 지워도 같다)\n"
+            f"  실행 경로를 닫는다 : COLLECT_API={OFF} (상태 조회는 그대로 열려 있다)"
+        )
+    return value
+
+
+def collect_api_enabled() -> bool:
+    """자동 수집을 **실행**할 수 있는가. 상태 조회는 이 값과 무관하게 열려 있다."""
+    return collect_api() == ON
+
+
 def env(name: str, default: str = "") -> str:
     """환경변수 한 개를 읽는다 — **새 코드가 환경을 만지는 유일한 통로.**
 

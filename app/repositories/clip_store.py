@@ -51,6 +51,42 @@ LINK_KINDS: Tuple[str, ...] = ("news", "filing", "post", "video")
 SCREENS: Tuple[str, ...] = ("dashboard", "market", "research", "krx", "kosis",
                             "yf", "stock", "quant", "timeseries")
 
+# `kind` 별로 `payload` 에 반드시 있어야 하는 열쇠. **표가 볼 수 없는 것만 적는다.**
+# `payload` 가 jsonb 라 DB 차원의 타입 검증이 없다 — 공시를 담으면서 `rcept_no` 를
+# 빠뜨려도 표는 받아 주고, 빠졌다는 사실은 **원문을 되찾으려는 순간에야** 드러난다.
+#
+# ⚠️ **원래 `clip_router` 에 있던 표다** (ADR-DS-0019 §4). 여기로 내린 이유는 하나 —
+#    자동 수집(ADR-DS-0020)이 라우터를 거치지 않고 저장소를 직접 부르기 때문이다.
+#    라우터에만 두면 사람이 담는 길은 막히고 **수집기가 담는 길만 뚫려 있게** 된다.
+#    `clip_router` 는 이 이름을 그대로 다시 내보내므로 두 벌이 아니다.
+REQUIRED_PAYLOAD: Dict[str, Tuple[str, ...]] = {
+    "filing": ("rcept_no",),                      # 없으면 DART 원문을 되찾을 수 없다
+    "dataset": ("source", "params"),              # 어떤 조건으로 뽑은 스냅샷인지
+    "report": ("run_id",),                        # 어느 실행의 리포트인지
+}
+
+# ⚠️⚠️ **담아서는 안 되는 호스트.** OpenDART **API** URL 에는 인증키(`crtfc_key`)가
+#      질의로 붙는데, `normalize_url()` 은 그것을 추적 파라미터로 보지 않아 **지우지 않는다.**
+#      그대로 담기면 인증키가 `clip.url`·`url_key` 에 저장되고 `GET /api/clips` 응답으로
+#      **밖으로 나간다.** 공시 원문은 뷰어 주소(`dart.fss.or.kr/dsaf001/main.do?rcpNo=…`)로
+#      담으면 되고 그쪽에는 키가 없다.
+#      수집기 쪽에서도 거르지만 규칙은 **저장소에 둔다** — 그래야 다음 수집기까지 막힌다.
+# ⚠️ **한 호스트만 막으면 나머지 원천이 그대로 뚫린다** — FRED 는 `api_key`, KOSIS 는
+#    `apiKey`, FSS 는 `auth` 를 질의로 싣고 `normalize_url()` 은 셋 다 추적 파라미터로
+#    보지 않아 지우지 않는다. 앞으로 원천이 늘 때 여기 한 줄을 더한다.
+BANNED_URL_HOSTS: Tuple[str, ...] = (
+    "opendart.fss.or.kr",       # DART — crtfc_key
+    "finlife.fss.or.kr",        # 금감원 금융상품 — auth
+    "api.stlouisfed.org",       # FRED — api_key
+    "kosis.kr",                 # KOSIS — apiKey
+    "openapi.data.go.kr",       # 공공데이터포털 — serviceKey
+    "data-dbg.krx.co.kr",       # KRX 정보데이터시스템 — AUTH_KEY 헤더/질의
+)
+
+# 배치 삽입 한 덩어리의 크기. **크게 잡지 않는다** — 한 행의 제약 위반이 그 덩어리를
+# 통째로 롤백시키므로, 크면 멀쩡한 수백 건이 함께 사라진다.
+CHUNK = 500
+
 # 못 쓸 때 **언제 되는지**. 처방이 "무엇을 하라" 로만 끝나면, 그 무엇을 할 수 없는
 # 사람(배포본을 보는 사람)에게는 여전히 막다른 길이다.
 WHEN_IT_WORKS = "보관함은 Postgres 에만 있다 — 배포본은 S6(Supabase) 뒤에 쓸 수 있다."
@@ -116,6 +152,73 @@ def normalize_url(url: Optional[str]) -> Optional[str]:
     query = urlencode(sorted(kept))
 
     return urlunsplit(("", host, path, query, "")).lstrip("/") or host
+
+
+def banned_host(url: Optional[str]) -> str:
+    """담아서는 안 되는 호스트면 그 이름을, 아니면 빈 문자열. (`BANNED_URL_HOSTS` 참조)
+
+    ⚠️ **`urlsplit().hostname` 에만 기대면 두 가지가 새어 나간다.**
+    ① **스킴이 없는 주소** — `opendart.fss.or.kr/api/…?crtfc_key=…` 는 `hostname` 이 `None` 이라
+       빈 문자열이 나와 통과한다.
+    ② **끝점(FQDN) 표기** — `opendart.fss.or.kr.` 은 DNS 상 같은 곳인데 문자열이 달라 통과한다.
+    대소문자·`www.`·포트는 이미 정규화하고 있었는데 이 둘만 빠져 있었다 — 즉 예외가 아니라
+    빠뜨린 것이다. 차단은 **한 겹이 뚫리면 없는 것과 같다.**
+    """
+    text = (url or "").strip()
+    if not text:
+        return ""
+    host = (urlsplit(text).hostname or "").lower()
+    if not host:
+        # 스킴이 없으면 파서가 전부 경로로 읽는다. 앞머리를 호스트로 보고 다시 본다.
+        host = (urlsplit(f"//{text}").hostname or "").lower()
+    host = _WWW.sub("", host).rstrip(".")
+    return host if host in BANNED_URL_HOSTS else ""
+
+
+# ==================================================
+# 1-1. 검증 — 표가 못 보는 것만. **순수 함수라 DB 없이 검사된다**
+# ==================================================
+def validation_errors(*, kind: str, screen: str, title: str,
+                      url: Optional[str] = None, note: Optional[str] = None,
+                      payload: Optional[Dict] = None) -> List[str]:
+    """담을 수 없는 이유를 전부 모아 돌려준다. 담을 수 있으면 빈 목록.
+
+    ⚠️ **DDL 이 이미 거는 것을 두 벌로 걸지 않는다.** `clip_kind_ck`(일곱 값)와
+    `clip_link_needs_url_ck`(링크형은 URL 필수)는 표가 지킨다 — 여기서 같은 것을 먼저 보는
+    것은 *두 벌*이 아니라 **같은 규칙의 앞단**이고, 그렇게 해야 사람이 읽을 수 있는 422 가
+    나오며 DB 까지 갔다 오지 않는다. 동치인지는 `tests/test_clip.py` 가 DDL 파일을
+    직접 읽어 붙든다.
+
+    ⚠️ **예외를 던지지 않고 목록을 돌려준다.** 배치 수집은 한 줄이 나빠도 나머지를
+    담아야 하는데, 예외면 호출하는 쪽이 줄마다 try 로 감싸게 된다.
+    """
+    payload = payload or {}
+    problems: List[str] = []
+
+    if kind not in KINDS:
+        problems.append(f"kind 는 {' · '.join(KINDS)} 중 하나다. 받은 값: {kind!r}")
+    if screen not in SCREENS:
+        problems.append(f"screen 은 {' · '.join(SCREENS)} 중 하나다. 받은 값: {screen!r}")
+    if not (title or "").strip():
+        problems.append("title 이 비었다")
+    if kind in LINK_KINDS and not (url or "").strip():
+        problems.append(f"{kind} 는 링크형이라 url 이 있어야 한다")
+    if kind == "memo" and not (note or "").strip():
+        # 메모인데 내용이 없으면 담을 것이 없다. 제목만 남은 빈 행이 쌓인다.
+        problems.append("memo 는 note 가 있어야 한다")
+
+    host = banned_host(url)
+    if host:
+        problems.append(
+            f"{host} 주소는 담지 않는다 — API 주소에는 인증키가 질의로 붙어 있어 "
+            "그대로 저장되고 목록 응답으로 새어 나간다. 원문은 뷰어 주소로 담는다")
+
+    missing = [k for k in REQUIRED_PAYLOAD.get(kind, ()) if k not in payload]
+    if missing:
+        problems.append(
+            f"{kind} 의 payload 에 {' · '.join(missing)} 이(가) 없다. "
+            f"필요한 열쇠: {' · '.join(REQUIRED_PAYLOAD[kind])}")
+    return problems
 
 
 # ==================================================
@@ -326,6 +429,161 @@ def resolve_security(code: Optional[str]) -> Tuple[Optional[int], Optional[str]]
         {"code": code.strip()},
     )
     return (rows[0][0], rows[0][1]) if rows else (None, None)
+
+
+def resolve_securities(codes: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+    """여러 종목코드를 **한 왕복에** 푼다 — `{code: {security_id, industry_code, corp_code}}`.
+
+    `resolve_security()` 를 350번 부르면 왕복이 350번이다. 다리의 루프가 하나라
+    (`db.py` §2-1) 그 직렬화가 그대로 시간이 된다.
+
+    ⚠️ **`corp_code` 를 함께 준다.** 수집기는 종목코드가 아니라 DART 고유번호로 물어야
+    하는데, 그것을 따로 찾으면 왕복이 한 번 더 늘거나 파일을 또 읽는다.
+    ⚠️ 없는 코드는 **결과에 안 들어간다.** 빈 dict 를 채워 두면 "찾았는데 값이 없다" 와
+    "못 찾았다" 가 같은 모양이 된다.
+    """
+    wanted = [c.strip() for c in codes if (c or "").strip()]
+    if not wanted:
+        return {}
+    rows = _fetch(
+        "SELECT code, security_id, industry_code, corp_code FROM securities "
+        "WHERE code = ANY(:codes) AND NOT is_delisted",
+        {"codes": wanted},
+    )
+    return {r[0]: {"security_id": r[1], "industry_code": r[2], "corp_code": r[3]}
+            for r in rows}
+
+
+def existing_url_keys(kind: str, url_keys: Sequence[str]) -> set:
+    """이미 담겨 있는 `url_key` 만 골라 돌려준다.
+
+    ⚠️ **`ON CONFLICT DO NOTHING` 만으로는 몇 건이 새로 담겼는지 알 수 없다.**
+    executemany 에는 `RETURNING` 을 붙일 수 없어서(`_write` 가 `.fetchall()` 을 하는 것과
+    같은 이유) 삽입 전에 미리 세어 두는 것이 유일한 방법이다.
+    """
+    wanted = [k for k in url_keys if k]
+    if not wanted:
+        return set()
+    rows = _fetch(
+        "SELECT url_key FROM clip WHERE kind = :kind AND url_key = ANY(:keys)",
+        {"kind": kind, "keys": wanted},
+    )
+    return {r[0] for r in rows}
+
+
+def create_many(rows: Sequence[Dict[str, Any]], *, chunk: int = CHUNK) -> Dict[str, Any]:
+    """여러 건을 한꺼번에 담는다 — `{created, duplicate, invalid, folded, problems}`.
+
+    `rows` 한 줄은 `create()` 와 같은 열쇠를 쓴다(`kind`·`screen`·`title`·`url`·`source`·
+    `occurred_at`·`code`·`industry_code`·`note`·`tags`·`payload`).
+
+    ⚠️ **`create()` 를 반복해 부르지 않는다.** 그쪽은 한 건마다 왕복이 셋이다
+    (종목 조회 · INSERT · 재조회). 350종목 × 수십 건이면 수만 번이 된다.
+
+    ⚠️ **한 줄이 나빠도 배치가 죽지 않는다.** 검증에 걸린 줄은 `invalid` 로 세고 버린다 —
+    예외로 만들면 공시 하나 때문에 그 종목 전체가 사라진다.
+
+    ⚠️ **배치 안의 중복을 먼저 접는다**(`folded`). 같은 공시가 유형 A 와 I 에 함께 잡히는
+    일이 실제로 있는데, 미리 세어 둔 `existing` 은 그것을 못 잡고 `ON CONFLICT` 가 조용히
+    흡수한다. 그러면 **숫자만 틀린다** — `created` 가 실제보다 크게 나온다.
+    """
+    created = duplicate = invalid = folded = 0
+    problems: List[str] = []
+    prepared: Dict[Any, Dict[str, Any]] = {}      # 열쇠: (kind, url_key) · url_key 없으면 고유객체
+    ordered: List[Dict[str, Any]] = []
+
+    codes = {(r.get("code") or "").strip() for r in rows if (r.get("code") or "").strip()}
+    resolved = resolve_securities(sorted(codes)) if codes else {}
+
+    for row in rows:
+        errors = validation_errors(
+            kind=row.get("kind", ""), screen=row.get("screen", ""),
+            title=row.get("title", ""), url=row.get("url"),
+            note=row.get("note"), payload=row.get("payload"))
+        if errors:
+            invalid += 1
+            if len(problems) < 20:            # 로그가 배치 크기만큼 길어지지 않게 한다
+                problems.append(f"{row.get('title', '')[:40]} — {errors[0]}")
+            continue
+
+        url_key = normalize_url(row.get("url"))
+        found = resolved.get((row.get("code") or "").strip(), {})
+        given_industry = row.get("industry_code")
+        params = {
+            "kind": row["kind"], "screen": row["screen"],
+            "title": (row.get("title") or "").strip()[:500],
+            "url": row.get("url"), "url_key": url_key, "source": row.get("source"),
+            "occurred_at": row.get("occurred_at"),
+            "security_id": found.get("security_id"),
+            # 산업은 `create()` 와 **같은 규칙**이다 — 직접 준 값이 있으면 manual 로 잠근다.
+            "industry_code": given_industry or found.get("industry_code"),
+            "industry_source": "manual" if given_industry else "auto",
+            "note": row.get("note"), "tags": list(row.get("tags") or ()),
+            "payload": _json(row.get("payload") or {}),
+        }
+        key = (params["kind"], url_key) if url_key else object()
+        if key in prepared:
+            folded += 1
+            continue
+        prepared[key] = params
+        ordered.append(params)
+
+    if not ordered:
+        return {"created": 0, "duplicate": 0, "invalid": invalid,
+                "folded": folded, "problems": problems}
+
+    # 이미 담긴 것을 `kind` 별로 미리 센다. `url_key` 가 없는 줄(메모·스냅샷)은 세지 않는다 —
+    # 부분 유니크에 안 걸려 언제나 새로 담기는 것이 DDL 이 의도한 동작이다.
+    by_kind: Dict[str, List[str]] = {}
+    for params in ordered:
+        if params["url_key"]:
+            by_kind.setdefault(params["kind"], []).append(params["url_key"])
+    already = {(k, key) for k, keys in by_kind.items() for key in existing_url_keys(k, keys)}
+    duplicate = len(already)
+
+    for start in range(0, len(ordered), max(1, chunk)):
+        _insert_chunk(ordered[start:start + max(1, chunk)])
+
+    created = len(ordered) - duplicate
+    if created + duplicate + invalid + folded != len(rows):
+        # 검산이 안 맞으면 세는 법이 틀린 것이다. 조용히 넘기면 화면 숫자만 거짓이 된다.
+        problems.append(
+            f"⚠️ 계수가 맞지 않는다 — 받은 {len(rows)} ≠ "
+            f"새로 {created} + 중복 {duplicate} + 못 담음 {invalid} + 접음 {folded}")
+    return {"created": created, "duplicate": duplicate, "invalid": invalid,
+            "folded": folded, "problems": problems}
+
+
+def _insert_chunk(params: Sequence[Dict[str, Any]]) -> None:
+    """한 덩어리를 넣는다. **`RETURNING` 을 붙이지 않는다.**
+
+    ⚠️ `_write()` 를 쓰지 않는 이유가 그것이다 — 그쪽은 `.fetchall()` 을 하는데
+    executemany 결과셋에는 그럴 것이 없다.
+    """
+    async def go():
+        async with db.begin() as conn:
+            await conn.execute(text(
+                """
+                INSERT INTO clip (kind, screen, title, url, url_key, source, occurred_at,
+                                  security_id, industry_code, industry_source, note, tags,
+                                  payload)
+                VALUES (:kind, :screen, :title, :url, :url_key, :source, :occurred_at,
+                        :security_id, :industry_code, :industry_source, :note, :tags,
+                        CAST(:payload AS jsonb))
+                ON CONFLICT (kind, url_key) WHERE url_key IS NOT NULL DO NOTHING
+                """), list(params))
+
+    try:
+        db.run_sync(go())
+    except OSError as exc:
+        raise db.unreachable(exc, what="자료 보관함(Postgres)", extra=(WHEN_IT_WORKS,)) from exc
+
+
+def count_filings() -> Dict[str, Any]:
+    """담긴 공시가 몇 건이고 가장 최근 것이 언제인가. 화면 카드가 쓴다."""
+    rows = _fetch("SELECT count(*), max(occurred_at) FROM clip WHERE kind = 'filing'")
+    total, latest = (rows[0][0], rows[0][1]) if rows else (0, None)
+    return {"count": int(total or 0), "latest": latest.isoformat() if latest else None}
 
 
 def create(*, kind: str, screen: str, title: str, url: Optional[str] = None,

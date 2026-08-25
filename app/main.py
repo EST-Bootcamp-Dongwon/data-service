@@ -35,6 +35,7 @@ from app.core import paths
 from app.core.api_docs import API_DESCRIPTION, TAGS_METADATA
 from app.routers import page_router  # 화면 (HTML)
 from app.routers.clip_router import router as clip_router  # 자료 보관함 (/api/clips/...)
+from app.routers.collect_router import router as collect_router  # 자료 수집 (/api/collect/...)
 from app.routers.dashboard_router import (
     router as dashboard_router,  # 대시보드 집계 (/api/dashboard/...)
 )
@@ -152,6 +153,7 @@ app.add_middleware(
 app.include_router(user_router)
 app.include_router(krx_router)
 app.include_router(clip_router)
+app.include_router(collect_router)
 app.include_router(kosis_router)
 app.include_router(fred_router)
 app.include_router(search_router)

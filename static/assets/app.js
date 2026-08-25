@@ -33,19 +33,15 @@ window.App = (() => {
     return body;
   }
 
-  /** POST 요청 (JSON 본문 선택). */
-  async function post(path, payload) {
-    const res = await fetch(API_BASE + path, {
-      method: 'POST',
-      headers: payload ? { 'Content-Type': 'application/json' } : {},
-      body: payload ? JSON.stringify(payload) : undefined,
-    });
-    const text = await res.text();
-    let body;
-    try { body = JSON.parse(text); } catch { body = text; }
-    if (!res.ok) throw new Error((body && body.detail) || `HTTP ${res.status}`);
-    return body;
-  }
+  /** POST 요청 (JSON 본문 선택).
+   *
+   * ⚠️ **`send` 에 위임한다.** 예전에는 여기서 따로 오류를 만들었는데, 그쪽에만
+   *    "`detail` 이 객체일 수 있다" 는 수정이 들어가 있었다 — 그래서 자료 보관함의
+   *    `503`(`{reason, hints}`)이 `post` 로 오면 화면에 **"[object Object]"** 가 뜨고
+   *    처방이 통째로 사라졌다. 수집 API 가 `503`·`429`·`404` 를 내는 첫 POST 경로라
+   *    지금 드러난다. 오류 처리는 한 곳에만 둔다.
+   */
+  const post = (path, payload) => send('POST', path, payload);
 
   /** JSON 본문을 실어 보내는 요청 (PATCH·DELETE·PUT). `get`·`post` 와 오류 처리가 같다. */
   async function send(method, path, payload) {

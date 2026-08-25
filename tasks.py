@@ -326,6 +326,53 @@ def _chain():
 
 
 @task(help={
+  "top": "시총 상위 몇 종목까지 (안 주면 스크립트 기본값)",
+  "code": "한 종목만. 주면 --top 을 무시한다",
+  "months": "진행 지점이 없는 종목의 최초 조회 창 (안 주면 스크립트 기본값)",
+  "budget": "이 회차에 쓸 호출 상한. 0 이면 남은 예산 전부",
+  "dry-run": "네트워크 없이 예상 호출만 센다",
+  "check": "수집하지 않고 능력·예산·매핑 나이만 확인한다",
+})
+def collect(c, top=0, code="", months=0, budget=0, dry_run=False, check=False):
+  """DART 공시를 자료 보관함(clip)에 담는다 (ADR-DS-0020).
+
+      invoke collect                    # 시총 상위 350 (약 3분 반 · 1,000호출 남짓)
+      invoke collect --code 005930      # 한 종목만
+      invoke collect --dry-run          # 예상 호출만 센다 (네트워크 없음)
+      invoke collect --check            # 능력·예산·매핑 나이만
+
+  ⚠️ **`invoke check` 에 묶지 않는다.** 검증 명령이 외부 API 를 부르고 표에 쓰면
+  그 명령을 더는 신뢰할 수 없다 (`invoke refresh`·`invoke hooks` 와 같은 이유).
+
+  ⚠️ **갱신 사슬과 다른 축이다.** `invoke refresh` 는 시세(SQLite)를 따라잡히고
+  이쪽은 보관함(Postgres)에 담는다. 순서 의존이 없어 사슬에 얹지 않았다 (ADR-DS-0020 §1).
+
+  ⚠️ **인자를 여기 다시 적지 않는다** — 수집 정책의 정본은
+  `app/services/dart_collector.py` 이고 이 태스크는 `scripts/collect_dart.py` 를 부르기만 한다.
+  """
+  import sys
+  python = sys.executable or "python3"
+  parts = [python, "scripts/collect_dart.py"]
+  if check:
+    parts.append("--check")
+  else:
+    # ⚠️ **안 준 값은 안 넘긴다.** 여기서 `--top 350` 을 늘 붙이면 스크립트의 기본값
+    #    (`collector.TOP_N_DEFAULT`)이 한 번도 안 쓰이고, 그 상수를 고쳐도 `invoke collect`
+    #    만 옛 값으로 남는다 — docstring 이 "인자를 여기 다시 적지 않는다" 고 한 이유다.
+    if code:
+      parts += ["--code", code]
+    elif top:
+      parts += ["--top", str(top)]
+    if months:
+      parts += ["--months", str(months)]
+    if budget:
+      parts += ["--budget", str(budget)]
+    if dry_run:
+      parts.append("--dry-run")
+  c.run(" ".join(parts), pty=False, warn=True)
+
+
+@task(help={
   "days": "수집할 거래일 수 (기본 30). 오래 쉬었으면 250 까지 올린다",
   "check": "아무것도 바꾸지 않고 지금 무엇이 얼마나 낡았는지만 잰다",
   "skip-pg": "Postgres 재적재를 건너뛴다",
