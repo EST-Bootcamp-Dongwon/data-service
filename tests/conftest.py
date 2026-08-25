@@ -84,6 +84,16 @@ def isolate_env(request, monkeypatch):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("DATABASE_URL", UNREACHABLE_URL)
+    # ⭐ **S5 부터는 이 한 줄이 더 필요하다** (ADR-DS-0018).
+    #    `STORE_BACKEND` 를 지우기만 하면 이제 `local` 의 기본값인 `postgres` 로 떨어지고,
+    #    바로 윗줄이 붙을 수 없는 주소를 꽂아 두었으므로 읽기 경로를 타는 검사가 전부
+    #    `RuntimeError` 로 죽는다(실측 11건 — test_source_vocabulary 전부).
+    #    "지우는 것만으로는 부족하다" 가 `DATABASE_URL` 에 이어 여기서도 참이 됐다.
+    #
+    #    ⚠️ **기본값을 검사에서 재현하지 않는 것이 의도다.** 검사 묶음에는 실 DB 가 없어
+    #    `postgres` 를 재도 잴 수 없다. 대신 기본값 자체는 `test_krx_pg.py` §3 이
+    #    `monkeypatch` 로 환경을 만들어 직접 본다 — 그쪽이 정본이다.
+    monkeypatch.setenv("STORE_BACKEND", "sqlite")
 
     yield
 

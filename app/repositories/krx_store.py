@@ -267,11 +267,15 @@ def sync(days: int = 250, workers: int = 6, end: Optional[str] = None,
 #
 # ⭐ **정본 저장소는 스위치가 정한다** (전환 S4 · ADR-DS-0015).
 #
-# 아래 여덟 함수가 `STORE_BACKEND` 를 보고 갈린다 — `_cache_is_empty` · `latest_date` ·
-# `available_dates` · `snapshot_tiered` · `series_tiered` · `window` · `stats`, 그리고
-# `tier()` 는 `_cache_is_empty()` 를 통해 따라온다. **여덟은 한 벌이다.** 하나만 남겨 두면
-# 로컬 SQLite 를 지운 개발자 셸에서 Postgres 는 꽉 차 있는데 `tier()` 만 `bundle` 을 내는
-# 어긋난 상태가 된다.
+# 아래 아홉 함수가 `STORE_BACKEND` 를 보고 갈린다 — `_cache_is_empty` · `latest_date` ·
+# `available_dates` · `snapshot_tiered` · `series_tiered` · `window` · `stats` ·
+# **`lookup_security`**, 그리고 `tier()` 는 `_cache_is_empty()` 를 통해 따라온다.
+# **아홉은 한 벌이다.** 하나만 남겨 두면 로컬 SQLite 를 지운 개발자 셸에서 Postgres 는
+# 꽉 차 있는데 `tier()` 만 `bundle` 을 내는 어긋난 상태가 된다.
+#
+# ⭐ `lookup_security` 는 **S5 에 늘었다** (ADR-DS-0018). S4 때는 이 자리에 없었고
+#   `stock_service` 가 읽기 표면을 우회해 SQLite 를 직접 열고 있었다 — 스위치가 안 닿는
+#   경로가 하나 남아 있었다는 뜻이다. 기본값을 뒤집기 전에 그것부터 여기로 들였다.
 #
 # `snapshot()`·`series()`·`universe()`·`closes_matrix()`·`source_tag()` 는 **분기하지 않는다.**
 # 전부 모듈 전역 이름으로 위 함수들을 부르므로 자동으로 따라온다. 거기까지 분기를 넣으면
@@ -518,6 +522,53 @@ def series(code: str, days: int = 250, end: Optional[str] = None) -> List[Dict]:
     인덱스(idx_code_date) 덕분에 69만 행 중 해당 종목만 곧바로 찾아낸다.
     """
     return series_tiered(code, days=days, end=end)[0]
+
+
+def lookup_security(code_or_name: str) -> Optional[Dict]:
+    """종목코드 또는 한글 종목명으로 종목 하나를 찾는다 — `{code, name, market}`. 없으면 None.
+
+    **아홉 번째 이음매다** (전환 S5 · ADR-DS-0018). 앞선 여덟과 달리 이것은 S4 에 없었다 —
+    `stock_service._lookup_krx()` 가 읽기 표면을 **우회해** `connect()` 로 SQLite 에 생 SQL
+    세 개를 던지고 있었기 때문이다. 그대로 두면 `STORE_BACKEND=postgres` 를 켜도
+    **한글 종목명 검색만** SQLite 를 계속 봐서, 두 저장소가 갈린 날 그 화면만 조용히 낡는다.
+
+    ## 찾는 순서
+
+    ① 6자리 숫자면 코드로 · ② 아니면 이름이 정확히 같은 것 · ③ 그것도 없으면 앞부분이 같은 것
+    ("에코프로비" → "에코프로비엠"). ②③ 은 `거래일 DESC, 거래대금 DESC` 로 하나를 고른다 —
+    "삼성" 처럼 여러 개가 걸릴 때 가장 대표적인 종목이 나오게 하려는 것이다.
+
+    ⚠️ **예외를 삼키지 않는다.** 못 찾은 것(`None`)과 못 읽은 것(예외)은 다르다.
+    폴백할지 말지는 부르는 쪽이 정한다 — `stock_service` 는 종목 마스터(JSON)로 내려간다.
+    여기서 삼키면 DB 장애가 "그런 종목 없음" 으로 위장돼 야후 단독 경로로 조용히 강등된다.
+
+    ⚠️ **축약본으로 내려가지 않는다.** 다른 이음매와 다른 점이다. 부르는 쪽의 아랫단이
+    `stock_master.json`(전 종목 · 커밋된다)이고 축약본 DB(150거래일 · 커밋 안 된다)보다
+    이 용도에는 넓다. 사다리를 여기에 또 만들면 두 벌이 된다.
+    """
+    needle = code_or_name.strip()
+    if not needle:
+        return None
+
+    if _postgres():
+        return krx_pg.lookup_security(needle)
+
+    init_db()
+    with connect() as conn:
+        if krx_pg.CODE_PATTERN.fullmatch(needle):
+            row = conn.execute(
+                "SELECT code, name, market FROM daily_price WHERE code = ? "
+                "ORDER BY bas_dd DESC LIMIT 1", (needle,)).fetchone()
+        else:
+            # 이름 검색 — 정확히 일치하는 것을 먼저 찾고, 없으면 앞부분이 같은 종목을 쓴다.
+            row = conn.execute(
+                "SELECT code, name, market FROM daily_price WHERE name = ? "
+                "ORDER BY bas_dd DESC, value DESC LIMIT 1", (needle,)).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT code, name, market FROM daily_price WHERE name LIKE ? "
+                    "ORDER BY bas_dd DESC, value DESC LIMIT 1", (f"{needle}%",)).fetchone()
+    return dict(row) if row else None
 
 
 def universe(bas_dd: Optional[str] = None, market: Optional[str] = None) -> List[Dict]:

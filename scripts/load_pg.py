@@ -847,8 +847,11 @@ async def run(args: argparse.Namespace) -> int:
         print()
         print("   다시 돌려도 안전하다 — 이 스크립트는 같은 행을 두 번 넣지 않는다.")
         return 1
-    print("✅ 원본과 적재본이 전부 일치한다. S3 완료 조건을 채웠다.")
-    print("   다음은 S4 (읽기 어댑터 + STORE_BACKEND 스위치) 다. 읽기 경로는 아직 SQLite 다.")
+    print("✅ 원본과 적재본이 전부 일치한다.")
+    # ⚠️ 이 줄은 **전환 단계가 바뀔 때마다 낡는다.** 실제로 S4·S5 를 지나며 두 번 낡았다.
+    #    다음 걸음을 여기 적지 않는 것이 그 되풀이를 끊는 방법이다 — 순서의 정본은
+    #    `docs/decisions/0011-storage-migration-order.md` 의 표 하나다.
+    print("   로컬 읽기 경로는 S5 부터 Postgres 다(ADR-DS-0018). 쓰기는 아직 SQLite 다 — S8.")
     return 0
 
 

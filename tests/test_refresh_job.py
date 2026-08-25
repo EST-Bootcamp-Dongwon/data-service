@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 
 import pytest
@@ -71,6 +72,59 @@ def test_tasks_py_does_not_redefine_the_chain():
         assert step.script not in source, (
             f"tasks.py 가 {step.script} 를 직접 적고 있다 — 사슬 정본은 refresh_job.STEPS 다"
         )
+
+
+# ==================================================
+# 1-1. 사슬이 다루는 저장소 — 쓰기 측(SQLite)에 못 박혀 있는가 (S5 · ADR-DS-0018)
+# ==================================================
+def test_chain_pins_the_write_side_store():
+    """⭐ 사슬 자식은 **SQLite** 를 본다. 다섯 단계가 전부 그쪽을 다루기 때문이다.
+
+    S5 가 로컬 읽기 기본값을 `postgres` 로 뒤집으면서 그 값이 자식까지 새어 들었다.
+    이 못이 빠지면 `build_market_snapshot.py` 가 Postgres 를 읽어 **직전 회차** 자료로
+    스냅샷을 만든다 — 예외도 안 나고 날짜로만 드러난다. 가장 비싼 종류의 고장이다.
+    """
+    assert job.CHAIN_ENV["STORE_BACKEND"] == "sqlite"
+
+
+def test_both_runners_apply_the_same_pin():
+    """⚠️ **한 표를 둘이 읽는가.** 화면(`_run_step`)과 셸(`tasks.py`) 양쪽이다.
+
+    한쪽만 못 박으면 "화면으로 갱신하면 맞고 셸로 갱신하면 틀리다" 가 된다.
+    그 어긋남은 재현이 어렵고 오래 간다 — 이 사슬이 이미 그래서 24거래일 밀렸다.
+    """
+    runner = inspect.getsource(job._run_step)
+    assert "CHAIN_ENV" in runner, "화면 경로가 사슬 환경을 안 씌운다"
+
+    tasks_source = (PROJECT_ROOT / "tasks.py").read_text(encoding="utf-8")
+    # 사슬 스크립트를 띄우는 줄만 고른다 — 주석에 이름이 나오는 것과 섞이면 안 된다.
+    launches = [line.strip() for line in tasks_source.splitlines()
+                if "c.run(" in line and "{command}" in line]
+    assert launches, "tasks.py 에서 사슬을 띄우는 줄을 못 찾았다"
+    for line in launches:
+        assert "chain_env_prefix()" in line, (
+            f"사슬 환경을 안 씌우고 띄우는 줄이 있다 — {line}"
+        )
+    # 값을 tasks.py 에 **다시 적지** 않았는가 — 그것이 두 벌의 시작이다.
+    assert "STORE_BACKEND=sqlite" not in tasks_source, (
+        "tasks.py 가 값을 직접 적고 있다 — 정본은 refresh_job.CHAIN_ENV 다"
+    )
+
+
+def test_the_pin_reaches_the_child_environment(monkeypatch):
+    """못이 실제로 자식 환경까지 도착하는가. 상수만 맞고 안 씌우면 뜻이 없다."""
+    monkeypatch.setenv("STORE_BACKEND", "postgres")     # 개발자 셸이 뒤집어 둔 상태
+    seen = {}
+
+    def fake_popen(command, **kwargs):
+        seen.update(kwargs.get("env") or {})
+        raise OSError("여기까지만 본다")
+
+    monkeypatch.setattr(job.subprocess, "Popen", fake_popen)
+    job._run_step(job._Job(mode="check", days=1, skip_pg=True), job.STEPS[0])
+    assert seen.get("STORE_BACKEND") == "sqlite", (
+        "개발자 셸의 STORE_BACKEND 가 자식까지 그대로 새어 들었다"
+    )
 
 
 # ==================================================

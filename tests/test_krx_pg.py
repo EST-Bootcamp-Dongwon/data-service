@@ -196,9 +196,29 @@ def test_postgres_branch_never_calls_init_db():
 # ==================================================
 # 3. 스위치 — 어휘 · 기본값 · 읽는 시점
 # ==================================================
-def test_default_is_sqlite(monkeypatch):
-    """**기본은 sqlite 다.** 뒤집는 것은 S5 의 일이다 (ADR-DS-0011 §2)."""
+def test_default_is_postgres_on_local(monkeypatch):
+    """⭐ **로컬 기본값이 `postgres` 다** — S5 가 뒤집었다 (ADR-DS-0018).
+
+    S5 의 완료 조건이 "**로컬** 화면 10개가 Postgres 로만 돈다" 이므로 여기가 그 실질이다.
+    """
     monkeypatch.delenv("STORE_BACKEND", raising=False)
+    monkeypatch.setenv("APP_ENV", "local")
+    assert settings.store_backend() == "postgres"
+    assert settings.uses_postgres_store() is True
+
+
+@pytest.mark.parametrize("marker", ["APP_ENV", "VERCEL", "VERCEL_ENV"])
+def test_default_is_sqlite_on_vercel(monkeypatch, marker):
+    """⚠️ **배포본 기본값은 아직 `sqlite` 다. 뒤집는 것은 S6 다** (ADR-DS-0011).
+
+    배포본에는 `DATABASE_URL` 이 없고, 거기서 `database_url()` 은 기본값으로 대신하지 않고
+    **예외를 던진다.** 그래서 한 값으로 뒤집으면 배포본 화면 10개가 그대로 500 이 된다.
+    자동 감지(`VERCEL`·`VERCEL_ENV`)로 들어와도 같아야 한다 — `APP_ENV` 를 한 번
+    빠뜨리는 것이 이 레포가 이미 아는 기본 사고 지점이다(ADR-DS-0003 §3).
+    """
+    monkeypatch.delenv("STORE_BACKEND", raising=False)
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.setenv(marker, "vercel" if marker == "APP_ENV" else "1")
     assert settings.store_backend() == "sqlite"
     assert settings.uses_postgres_store() is False
 
@@ -229,8 +249,14 @@ def test_typos_raise_instead_of_falling_back(monkeypatch, typo):
 
 
 def test_empty_value_is_the_default(monkeypatch):
-    """`STORE_BACKEND=` 처럼 비워 두는 구성이 흔하다. 없는 것과 같게 본다."""
+    """`STORE_BACKEND=` 처럼 비워 두는 구성이 흔하다. 없는 것과 같게 본다.
+
+    "없는 것과 같다" 는 **환경별 기본값**을 뜻한다 — 한 값으로 굳어 있지 않다.
+    """
     monkeypatch.setenv("STORE_BACKEND", "   ")
+    monkeypatch.setenv("APP_ENV", "local")
+    assert settings.store_backend() == "postgres"
+    monkeypatch.setenv("APP_ENV", "vercel")
     assert settings.store_backend() == "sqlite"
 
 
@@ -258,15 +284,17 @@ SEAMS = [
     ("series_tiered", "series", lambda: krx_store.series_tiered("005930")),
     ("window", "window", lambda: krx_store.window(days=5)),
     ("stats", "stats", lambda: krx_store.stats()),
+    # S5 에 늘었다 (ADR-DS-0018). 그전에는 `stock_service` 가 읽기 표면을 우회했다.
+    ("lookup_security", "lookup_security", lambda: krx_store.lookup_security("삼성전자")),
 ]
 
 
 @pytest.mark.parametrize("store_name, adapter_name, call", SEAMS,
                          ids=[s[0] for s in SEAMS])
 def test_postgres_backend_reaches_the_adapter(monkeypatch, store_name, adapter_name, call):
-    """스위치를 켜면 이음매 일곱이 전부 어댑터를 부른다.
+    """스위치를 켜면 이음매 여덟이 전부 어댑터를 부른다 (`tier()` 는 첫째를 통해 따라온다).
 
-    **일곱은 한 벌이다.** 하나만 안 넘어가면, 로컬 SQLite 를 지운 개발자 셸에서
+    **여덟은 한 벌이다.** 하나만 안 넘어가면, 로컬 SQLite 를 지운 개발자 셸에서
     Postgres 는 꽉 차 있는데 `tier()` 만 `bundle` 을 내는 어긋난 상태가 된다.
     """
     monkeypatch.setenv("STORE_BACKEND", "postgres")
@@ -298,6 +326,62 @@ def test_sqlite_backend_never_touches_the_adapter(monkeypatch, store_name, adapt
     call()
 
 
+def test_lookup_security_answers_none_without_asking_either_store(monkeypatch):
+    """빈 입력은 저장소를 건드리기 전에 `None` 이다.
+
+    공백만 친 자동완성 요청이 파티션 14개를 훑는 질의로 번지면 안 된다.
+    """
+    monkeypatch.setenv("STORE_BACKEND", "postgres")
+
+    def explode(*args, **kwargs):
+        raise AssertionError("빈 입력인데 어댑터를 불렀다")
+
+    monkeypatch.setattr(krx_pg, "lookup_security", explode)
+    assert krx_store.lookup_security("") is None
+    assert krx_store.lookup_security("   ") is None
+
+
+def test_lookup_security_keeps_the_trading_value_tiebreak():
+    """이름이 겹칠 때 **거래대금 큰 쪽**을 고르는 근거가 SQL 에 남아 있는가.
+
+    ⚠️ 이것이 이 함수의 가장 조용한 고장 지점이다. 이름은 `securities`, 거래대금은 `ohlcv`
+    라 둘을 이어야 하는데, `securities` 만 보도록 "단순화" 하면 정렬 근거가 사라져
+    힙 순서가 나온다 — "삼성" 이 삼성전자가 아니라 삼성공조를 가리키게 되고 **오류는 안 뜬다.**
+    SQLite 쪽은 `daily_price` 한 표라 `ORDER BY bas_dd DESC, value DESC` 로 공짜였다.
+    """
+    source = inspect.getsource(krx_pg.lookup_security)
+    assert "ohlcv" in source, "이름 검색이 ohlcv 를 안 본다 — 동점 처리 근거가 사라졌다"
+    assert "ORDER BY last.trade_date DESC, last.value DESC" in source, (
+        "거래일·거래대금 정렬이 없다. SQLite 와 다른 종목을 고르게 된다"
+    )
+    assert "NOT s.is_delisted" in source, (
+        "상장폐지 제외가 빠졌다 — S8 이 폐지 종목을 채우면 행이 두 배가 된다"
+    )
+
+
+def test_lookup_security_returns_exactly_three_keys():
+    """돌려주는 모양이 `{code, name, market}` 셋인가.
+
+    `stock_service` 가 이 딕셔너리를 그대로 응답에 실어 나른다. 키가 늘면 계약이 조용히
+    넓어지고, 줄면 `resolved["market"]`(stock_service.py:276)이 `KeyError` 로 500 이 된다.
+    """
+    assert krx_pg._to_security([]) is None
+    got = krx_pg._to_security([("005930", "삼성전자", "KOSPI")])
+    assert got == {"code": "005930", "name": "삼성전자", "market": "KOSPI"}
+
+
+def test_stock_service_goes_through_the_seam():
+    """`stock_service._lookup_krx` 가 이음매를 거치는가 — 우회로 되돌아가지 않았는가.
+
+    여기서 걸리면 `STORE_BACKEND` 가 안 닿는 경로가 다시 생긴 것이다.
+    """
+    from app.services import stock_service
+
+    source = inspect.getsource(stock_service._lookup_krx)
+    assert "store.lookup_security(" in source, "이음매를 안 거친다"
+    assert "daily_price" not in source, "생 SQL 이 돌아왔다"
+
+
 def test_derived_readers_follow_without_their_own_branch():
     """`snapshot`·`series`·`universe`·`closes_matrix`·`source_tag` 는 분기하지 않는다.
 
@@ -310,32 +394,59 @@ def test_derived_readers_follow_without_their_own_branch():
 
 
 # ==================================================
-# 5. 아직 SQLite 를 직접 읽는 곳 — S5 가 갚아야 할 빚
+# 5. 아직 SQLite 를 직접 읽는 곳 — 하나 남았고, 그것은 의도된 것이다
 # ==================================================
-# ⚠️ 이 둘은 읽기 표면을 **우회한다.** `krx_store.connect()` 를 열고 `daily_price` 에
-#    생 SQL 을 던지므로, `STORE_BACKEND=postgres` 로 켜도 **계속 SQLite 를 읽는다.**
-#    예외도 안 나고 화면도 정상으로 보인다 — 두 저장소가 같은 자료를 갖고 있는 동안은.
+# S4 때는 둘이었고 **S5 가 하나를 갚았다** (ADR-DS-0018).
 #
-#    S4 의 완료 조건(계약 보존)은 그래서 지금 그대로 만족된다. 그러나 **S5 에서 기본값을
-#    뒤집으면** SQLite 가 뒤처지는 순간 한글 종목명 검색만 조용히 옛 자료를 본다.
-#    목록을 얼려 두어 **모르는 사이에 늘어나지 않게** 한다.
+#   갚은 것 — `app/services/stock_service.py`
+#     종목명·코드 해석이 생 SQL 세 개를 던지고 있었다. 서빙 경로라 스위치가 안 닿으면
+#     두 저장소가 갈린 날 한글 종목명 검색만 조용히 옛 자료를 본다.
+#     이제 아홉 번째 이음매 `krx_store.lookup_security()` 를 거친다.
+#
+#   남긴 것 — `scripts/build_stock_master.py` ★ **빚이 아니다. 사슬 순서상 옳다**
+#     갱신 사슬(`refresh_job.STEPS`)에서 이것은 **4단계**이고 Postgres 적재(`load_pg.py`)는
+#     **5단계**다. 그 시점에 Postgres 에는 이번 회차 자료가 아직 없다 — 뒤집으면
+#     **직전 회차** 자료로 마스터를 만든다(24거래일 밀린 날이면 24일치가 틀린다).
+#     결정적인 것은 `--skip-pg` 다. 그 플래그는 `needs_db=True` 인 단계만 건너뛰므로,
+#     2~4단계가 Postgres 를 읽으면 **DB 없이 도는 갱신이 통째로 깨진다.**
+#     ⇒ 이 우회는 S8(쓰기 경로 전환)이 SQLite 를 없앨 때 자연히 사라진다. 그전엔 옳다.
+#
+# 목록을 얼려 두는 이유는 그대로다 — **모르는 사이에 늘어나지 않게** 한다.
 CONNECT_BYPASSERS = {
-    "app/services/stock_service.py",        # :144-159 종목명·코드 해석 (생 SQL 3개)
-    "scripts/build_stock_master.py",        # :44-54 자동완성 마스터 빌드
+    "scripts/build_stock_master.py",        # :44-54 자동완성 마스터 빌드 (사슬 4단계 · 의도됨)
 }
+
+
+def _calls_store_connect(source: str) -> bool:
+    """이 파일이 `<...>store.connect()` 를 **실제로 호출**하는가.
+
+    ⚠️ **본문 검색이 아니라 AST 다.** 원래는 `"store.connect()" in text` 였는데,
+    S5 에서 우회를 걷어내며 *왜 걷어냈는지*를 docstring 에 적자 그 산문이 스스로 걸렸다
+    (`krx_pg.py` · `stock_service.py`). 낱말을 피해 산문을 쓰는 것은 본말전도다 —
+    검사기가 코드를 보게 고치는 쪽이 맞다. 덤으로 주석으로 위장한 우회도 못 숨는다.
+
+    `krx_store` 자신은 `connect()` 를 **맨 이름**으로 부르므로 여기 안 걸린다.
+    """
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if (isinstance(func, ast.Attribute) and func.attr == "connect"
+                and isinstance(func.value, ast.Name) and func.value.id.endswith("store")):
+            return True
+    return False
 
 
 def test_the_list_of_sqlite_bypassers_has_not_grown():
     """읽기 표면을 우회해 `daily_price` 를 직접 읽는 파일이 늘어나지 않았는가.
 
-    늘어났다면 그 파일도 S5 의 대상이다. 여기서 걸리면 목록에 더하고 **왜인지 적는다** —
-    지우기만 하면 이 검사가 장식이 된다.
+    새로 생겼다면 그 파일은 `STORE_BACKEND` 가 안 닿는 경로다. 여기서 걸리면 목록에 더하고
+    **왜 그래도 되는지** 적는다 — 지우기만 하면 이 검사가 장식이 된다.
     """
     found = set()
     for folder in ("app", "scripts"):
         for path in (PROJECT_ROOT / folder).rglob("*.py"):
-            text = path.read_text(encoding="utf-8")
-            if "daily_price" in text and "store.connect()" in text:
+            if _calls_store_connect(path.read_text(encoding="utf-8")):
                 found.add(path.relative_to(PROJECT_ROOT).as_posix())
 
     assert found == CONNECT_BYPASSERS, (

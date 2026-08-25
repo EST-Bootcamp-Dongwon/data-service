@@ -129,38 +129,29 @@ def _lookup_master(needle: str) -> Optional[dict]:
 def _lookup_krx(code_or_name: str) -> Optional[dict]:
     """종목코드 또는 한글 종목명으로 종목 하나를 찾는다.
 
-    찾는 순서는 **KRX 캐시(DB) → 종목 마스터(JSON)** 다.
-    DB 가 더 최신이고 거래대금까지 있어 이름이 겹칠 때 대표 종목을 고를 수 있으므로 먼저 본다.
-    DB 가 없는 환경(Codespaces·배포 서버)에서는 마스터가 같은 일을 한다.
+    찾는 순서는 **시세 저장소 → 종목 마스터(JSON)** 다.
+    저장소가 더 최신이고 거래대금까지 있어 이름이 겹칠 때 대표 종목을 고를 수 있으므로 먼저 본다.
+    저장소를 못 읽는 환경(Codespaces·배포 서버)에서는 마스터가 같은 일을 한다.
 
-    어느 쪽도 못 읽어도 조회 전체가 실패하면 안 되므로,
-    예외는 삼키고 `None` 을 돌려준다 (야후 단독으로도 동작해야 한다).
+    ⚠️ **읽기 표면(`krx_store.lookup_security`)을 거친다** (전환 S5 · ADR-DS-0018).
+    예전에는 이 함수가 `store.connect()` 로 SQLite 를 직접 열고 생 SQL 세 개를 던졌다.
+    그러면 `STORE_BACKEND=postgres` 를 켜도 **이 경로만** SQLite 를 계속 봐서,
+    두 저장소가 갈린 날 한글 종목명 검색만 조용히 옛 자료를 가리킨다.
+
+    어느 쪽도 못 읽어도 조회 전체가 실패하면 안 되므로 (야후 단독으로도 동작해야 한다)
+    **예외는 여기서** 삼키고 마스터로 내려간다. 이음매 쪽은 삼키지 않는다 —
+    못 찾은 것과 못 읽은 것을 구분해 두고, 폴백할지는 부르는 쪽인 이곳이 정한다.
     """
     needle = code_or_name.strip()
     if not needle:
         return None
 
     try:
-        with store.connect() as conn:
-            if CODE_PATTERN.fullmatch(needle):
-                row = conn.execute(
-                    "SELECT code, name, market FROM daily_price WHERE code = ? "
-                    "ORDER BY bas_dd DESC LIMIT 1", (needle,)).fetchone()
-            else:
-                # 이름 검색 — 정확히 일치하는 것을 먼저 찾고, 없으면 앞부분이 같은 종목을 쓴다.
-                # 거래대금이 큰 순으로 골라 "삼성" 처럼 여러 개 걸리는 입력에서
-                # 가장 대표적인 종목이 나오게 한다.
-                row = conn.execute(
-                    "SELECT code, name, market FROM daily_price WHERE name = ? "
-                    "ORDER BY bas_dd DESC, value DESC LIMIT 1", (needle,)).fetchone()
-                if row is None:
-                    row = conn.execute(
-                        "SELECT code, name, market FROM daily_price WHERE name LIKE ? "
-                        "ORDER BY bas_dd DESC, value DESC LIMIT 1", (f"{needle}%",)).fetchone()
-        if row:
-            return dict(row)
+        hit = store.lookup_security(needle)
+        if hit:
+            return hit
     except Exception:
-        pass             # 캐시를 못 읽어도 마스터·야후 경로로 계속 간다
+        pass             # 저장소를 못 읽어도 마스터·야후 경로로 계속 간다
 
     return _lookup_master(needle)
 

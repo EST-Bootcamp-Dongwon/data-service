@@ -344,9 +344,15 @@ def refresh(c, days=30, check=False, skip_pg=False):
   ⚠️ **같은 사슬을 화면에서도 돌릴 수 있다** — 대시보드 '자료 갱신' 패널
   (ADR-DS-0017). 정의가 한 곳(`app/services/refresh_job.STEPS`)이라 둘은 갈라지지 않는다.
   """
+  import os
   import sys
   job = _chain()
   python = sys.executable or "python3"
+  # ⚠️ **이 프로세스도 DB 를 본다** — 마지막 `_refresh_summary()` 가 화면이 읽을 저장소를
+  #    그대로 재기 때문이다(S5 부터 그것이 Postgres 다). 기본 `DATABASE_URL` 의
+  #    `@db:5432` 는 compose 네트워크 안쪽 이름이라 호스트 셸에서 `gaierror` 로 죽는다.
+  #    이미 값이 있으면 손대지 않는다 (`host_database_url()` 의 계약).
+  os.environ["DATABASE_URL"] = job.host_database_url()
   mode = "확인" if check else "갱신"
   total = job.TOTAL_STEPS
   print(f"── 자료 {mode} — 전체 {total}단계 ──\n")
@@ -368,13 +374,16 @@ def refresh(c, days=30, check=False, skip_pg=False):
         print("      ⚠️ 안 띄우면 SQLite 만 최신이 되고 Postgres 는 그 자리에 남는다.\n")
         continue
       print(f"[{index}/{total}] {step.label}")
-      c.run(f"DATABASE_URL={url} {python} {command}", pty=False)
+      c.run(f"{job.chain_env_prefix()}DATABASE_URL={url} {python} {command}", pty=False)
       print()
       continue
 
     mark = " (git 에 올라간다 → 배포본에 반영됨)" if step.in_git else ""
     print(f"[{index}/{total}] {step.label}{mark}")
-    c.run(f"{python} {command}", pty=False)
+    # ⚠️ `chain_env_prefix()` 를 빼면 안 된다 — 사슬은 쓰기 측(SQLite)에서 도는데
+    #    S5 부터 로컬 읽기 기본값이 `postgres` 라, 없으면 스냅샷이 직전 회차 자료로
+    #    조용히 만들어진다 (ADR-DS-0018 · `refresh_job.CHAIN_ENV` 가 정본).
+    c.run(f"{job.chain_env_prefix()}{python} {command}", pty=False)
     print()
 
   if not check:
@@ -396,8 +405,12 @@ def _refresh_summary(check: bool) -> None:
   """
   summary = _chain().data_summary()
   print("\n── 지금 상태 ──")
-  print(f"  KRX 시세   : {summary['krx']['text']}")
-  print(f"  시장 스냅샷 : {summary['snapshot']['text']}")
+  for label, key in (("KRX 시세  ", "krx"), ("시장 스냅샷", "snapshot")):
+    part = summary[key]
+    print(f"  {label} : {part['text']}")
+    # 실패했을 때의 처방은 버리지 않는다 — 한 줄 요약 아래에 들여 쓴다.
+    for line in (part.get("detail") or "").splitlines():
+      print(f"    {line.strip()}")
 
   if not check:
     print("\n⚠️ 배포본에 반영하려면 커밋·push 가 남았다 (push 가 곧 Vercel 배포다):")

@@ -346,8 +346,13 @@ def _data_status() -> List[dict]:
                 if stats.get("days") else "")
 
         if mode == "db":
-            grade, grade_text = "good", "원본 캐시"
-            detail = f"{span} · {stats.get('db_size_mb')}MB"
+            # ⚠️ `db` 는 이제 **두 저장소**를 뜻한다 — 로컬 Postgres(S5) 또는 SQLite 캐시.
+            #    `mode` 값 자체는 건드리지 않는다(화면 두 곳이 정확비교한다 · 낱말 정리는 S7).
+            #    대신 **어느 쪽을 읽었는지**를 밝힌다. S5 직후 사람이 가장 먼저 묻는 것이
+            #    "스위치가 실제로 먹었나" 이고, 그 답이 카드에 없으면 로그를 뒤져야 한다.
+            #    `db_path` 는 Postgres 면 `data_service.ohlcv`, SQLite 면 파일 경로다.
+            grade, grade_text = "good", "원본 저장소"
+            detail = f"{span} · {stats.get('db_size_mb')}MB · {stats.get('db_path')}"
         elif mode == "bundle":
             grade, grade_text = "good", "배포 번들"
             calendar_days = stats.get("calendar_days") or 0

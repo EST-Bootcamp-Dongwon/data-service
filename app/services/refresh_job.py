@@ -130,6 +130,29 @@ STEPS: Tuple[Step, ...] = (
     ),
 )
 
+# ⭐ **사슬은 쓰기 측에서 돈다. 쓰기 측은 S8 전까지 SQLite 다** (ADR-DS-0018).
+#
+# 다섯 단계가 전부 SQLite 를 다룬다 — 1은 거기에 쓰고, 2·3·4는 거기서 읽고, 5는 거기서
+# Postgres 로 옮긴다. 그런데 S5 가 **로컬 읽기** 기본값을 `postgres` 로 뒤집으면서 그 값이
+# 자식 프로세스까지 새어 들어갔다. 실측으로 드러난 두 가지 (2026-08-25):
+#
+#   ① `fetch_krx.py --status` 가 `store.stats()` 에서 곧장 죽는다.
+#      자식에게는 기본 `DATABASE_URL` 의 `@db:5432` 가 안 풀린다 — 시끄러운 고장이다.
+#   ② `build_market_snapshot.py` 는 **죽지 않는다.** `krx_store` 읽기 함수를 쓰므로
+#      Postgres 를 읽어 **직전 회차** 자료로 스냅샷을 만든다. 오류는 안 뜨고 날짜만 틀린다.
+#      ①보다 ②가 훨씬 위험하다 — 이 레포가 이미 24거래일을 그렇게 잃었다.
+#
+# ⚠️ **한 표를 둘이 읽는다.** `_run_step()`(화면)과 `tasks.py`(셸)가 같은 값을 쓴다.
+#    두 벌로 적으면 한쪽만 고쳐진 채 오래 간다 — 이 사슬이 정확히 그래서 밀렸다.
+# ⚠️ **S8 이 쓰기를 Postgres 로 옮길 때 이 표를 지운다.** 그때는 사슬도 Postgres 쪽이다.
+CHAIN_ENV: Dict[str, str] = {"STORE_BACKEND": settings.SQLITE}
+
+
+def chain_env_prefix() -> str:
+    """셸 한 줄 앞에 붙일 `KEY=VALUE ` 꼴. `tasks.py` 가 `c.run()` 에 쓴다."""
+    return "".join(f"{key}={value} " for key, value in CHAIN_ENV.items())
+
+
 TOTAL_STEPS = len(STEPS)
 
 # 수집 구간 상한. `fetch_krx.py` 자신의 기본값은 250 이고, 사슬의 기본값은 30 이다
@@ -597,7 +620,8 @@ def _run_step(job: _Job, step: Step) -> Tuple[int, float, bool]:
     #   PYTHONUNBUFFERED — 없으면 파이프에 물린 자식의 출력이 블록 단위로 뭉쳐서
     #                      진행 로그가 끝날 때 한꺼번에 쏟아진다 (진행 표시의 뜻이 사라진다).
     #   PYTHONIOENCODING — 윈도우 콘솔 기본 인코딩(cp949)에서 한글 출력이 죽는 것을 막는다.
-    overrides = {"PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
+    #   CHAIN_ENV      — 사슬이 다루는 저장소를 못 박는다. 아래 표 참조.
+    overrides = {"PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8", **CHAIN_ENV}
     if step.needs_db:
         overrides["DATABASE_URL"] = host_database_url()
     child_env = settings.subprocess_env(**overrides)
@@ -721,6 +745,17 @@ def reset_process_caches() -> List[str]:
 # ==================================================
 # 7. 사람이 실제로 보는 두 숫자
 # ==================================================
+def _failure(error: Exception) -> Dict:
+    """오류를 **한 줄 요약 + 나머지**로 가른다.
+
+    S5 부터 저장소 실패 메시지가 여러 줄이다 — 무엇을 해야 하는지까지 담기 때문이다
+    (`krx_pg._fetch`). 그것을 통째로 `text` 에 넣으면 "한 줄 요약" 이 다섯 줄이 되어
+    마지막 판정이 다시 스크롤 위로 사라진다. 처방은 버리지 않고 `detail` 로 옮긴다.
+    """
+    lines = str(error).splitlines() or [""]
+    return {"text": f"확인 실패 — {lines[0]}", "detail": "\n".join(lines[1:]).rstrip()}
+
+
 def data_summary() -> Dict:
     """끝에 다시 찍는 두 줄 — KRX 최신 거래일, 스냅샷 기준일·낡음.
 
@@ -742,7 +777,7 @@ def data_summary() -> Dict:
                      f"· {stats.get('days')}거래일 · {stats.get('rows'):,}행"),
         }
     except Exception as error:
-        krx = {"ok": False, "text": f"확인 실패 — {error}"}
+        krx = {"ok": False, **_failure(error)}
 
     try:
         snap = snapshot_store.stats()
@@ -760,6 +795,6 @@ def data_summary() -> Dict:
                         if snap.get("generated_at") else "")),
         }
     except Exception as error:
-        snapshot = {"ok": False, "text": f"확인 실패 — {error}"}
+        snapshot = {"ok": False, **_failure(error)}
 
     return {"krx": krx, "snapshot": snapshot}

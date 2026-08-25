@@ -101,14 +101,28 @@ SQLITE = "sqlite"
 POSTGRES = "postgres"
 STORE_BACKENDS: tuple[str, ...] = (SQLITE, POSTGRES)
 
-# ⚠️ **기본은 `sqlite` 다. 뒤집는 것은 S5 의 일이다** (ADR-DS-0011 §2).
-# push 가 곧 배포라(GitLab→Vercel) 기본값을 바꾸는 커밋과 어댑터 커밋이 같으면
-# 어댑터에 결함이 있을 때 되돌릴 단위가 "전부"뿐이 된다.
-DEFAULT_STORE_BACKEND = SQLITE
+# ⭐ **기본값이 환경마다 다르다. 그것이 S5 의 정의다** (ADR-DS-0011 §1 · ADR-DS-0018).
+#
+#   로컬  → `postgres`   S5 가 뒤집은 값. 완료 조건이 "**로컬** 화면 10개가 Postgres 로만 돈다" 다
+#   배포본 → `sqlite`    아직 `DATABASE_URL` 이 없다. 그것을 주는 것이 **S6**(Supabase) 다
+#
+# ⚠️ **한 값으로 뒤집으면 배포본이 죽는다.** 배포본에서 `database_url()` 은 기본값으로
+#    대신하지 않고 예외를 던지므로(§2), 거기서 `postgres` 로 읽으면 화면 10개가 500 이 된다.
+#    "로컬만 뒤집는다" 는 조심이 아니라 **S5 와 S6 의 경계 그 자체**다.
+#
+# ⚠️ 그래도 **되돌리는 단위는 환경변수 한 줄이다** — `STORE_BACKEND=sqlite`.
+#    사람이 적은 값이 언제나 이긴다(`app_env()` 와 같은 순서).
+DEFAULT_STORE_BACKEND_LOCAL = POSTGRES
+DEFAULT_STORE_BACKEND_VERCEL = SQLITE
+
+
+def default_store_backend() -> str:
+    """`STORE_BACKEND` 가 없을 때 쓸 값. 환경이 정한다 — 위 표 참조."""
+    return DEFAULT_STORE_BACKEND_VERCEL if is_vercel() else DEFAULT_STORE_BACKEND_LOCAL
 
 
 def store_backend() -> str:
-    """시세 읽기 경로가 쓸 저장소. `sqlite`(기본) 또는 `postgres`.
+    """시세 읽기 경로가 쓸 저장소. `postgres`(로컬 기본) 또는 `sqlite`(배포본 기본).
 
     **`app_env()` 와 같은 자리에 같은 모양으로 둔다** — 어휘 밖 값이면 예외를 던진다.
     오타(`postgre`·`pg`)를 조용히 기본값으로 떨어뜨리면 "스위치를 켰다고 믿었는데
@@ -121,15 +135,16 @@ def store_backend() -> str:
     """
     raw = env("STORE_BACKEND")
     if not raw:
-        return DEFAULT_STORE_BACKEND
+        return default_store_backend()
 
     value = raw.lower()
     if value not in STORE_BACKENDS:
         # 막다른 길로 만들지 않는다 — 무엇을 해야 하는지까지 알려준다.
         raise ValueError(
             f"STORE_BACKEND 값 '{raw}' 을 모른다. 쓸 수 있는 값은 {', '.join(STORE_BACKENDS)} 다.\n"
-            f"  지금까지처럼 SQLite 로 읽기 : STORE_BACKEND={SQLITE} (이 값이 기본이라 지워도 같다)\n"
-            f"  Postgres 로 읽기          : STORE_BACKEND={POSTGRES} (DATABASE_URL 도 함께 필요하다)"
+            f"  SQLite 로 읽기   : STORE_BACKEND={SQLITE} (배포본의 기본값)\n"
+            f"  Postgres 로 읽기 : STORE_BACKEND={POSTGRES} "
+            f"(로컬의 기본값 — DATABASE_URL 과 뜬 DB 가 함께 필요하다)"
         )
     return value
 

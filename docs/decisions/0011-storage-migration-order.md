@@ -36,7 +36,7 @@ ADR-DS-0002 가 "파일 캐시를 Postgres 로 옮긴다"를 정했고 `sql/init
    | **S2** | 엔진 계층 — `app/core/db.py` + `sqlalchemy[asyncio]`·`asyncpg` | 실 DB 없이 `invoke check` 초록 · 아래 §S2 재현 절차가 (a)(c) 0건 · (b) 실패 | ☑ 2026-08-23 |
    | **S3** | 일회성 적재기 — `scripts/load_pg.py` (SQLite → Postgres) | 780,484행이 들어가고 행수·합계가 원본과 일치 | ☑ 2026-08-23 (ADR-DS-0014) |
    | **S4** | 읽기 어댑터 + `STORE_BACKEND` 스위치 (**기본은 `sqlite`**) | 스위치를 켠 상태로 계약 스냅샷 51경로가 그대로 | ☑ 2026-08-25 (ADR-DS-0015) |
-   | **S5** | 로컬 기본값 뒤집기 (`STORE_BACKEND=postgres`) | 로컬 화면 10개가 Postgres 로만 돈다 | ☐ |
+   | **S5** | 로컬 기본값 뒤집기 (`STORE_BACKEND=postgres`) | 로컬 화면 10개가 Postgres 로만 돈다 | ☑ 2026-08-25 (ADR-DS-0018) |
    | **S6** | Supabase (core 유니버스만 · ADR-CT-0010) | 배포본이 DB 를 읽는다 | ☐ |
    | **S7** | `bundle`·`snapshot` 폐기 + 출처 어휘 정리 | `tier()` 3단 분기 제거 · `test_source_vocabulary.py` 개정 | ☐ |
    | **S8** | 쓰기 경로 — 수집이 Postgres 에 적재한다 | `ohlcv_sync_log` 의 `rows=0` 규칙이 살아 있다 | ☐ |

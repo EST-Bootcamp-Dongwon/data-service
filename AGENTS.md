@@ -157,14 +157,21 @@
   검증 상대: `docker compose --profile pooler up -d` (transaction 모드 풀러 · 6543).
   재현 절차 (a)(b)(c)는 ADR-DS-0011 의 "S2 재현 절차" 에 있다 — **(c)를 빼면 검증이 아니다.**
 - **읽기 어댑터는 `app/repositories/krx_pg.py`이고 스위치는 `STORE_BACKEND`다**
-  (ADR-DS-0015 · 전환 S4, 2026-08-25). **기본은 `sqlite` 다 — 뒤집는 것은 S5 다.**
+  (ADR-DS-0015 · 전환 S4·S5, 2026-08-25). ⭐ **기본값이 환경마다 다르다** (ADR-DS-0018) —
+  **로컬은 `postgres`(S5 가 뒤집었다) · 배포본은 `sqlite`**(`DATABASE_URL` 이 없다. S6 이 준다).
+  한 값으로 뒤집으면 배포본에서 `database_url()` 이 예외를 던져 **화면 10개가 500** 이 된다.
   `settings.store_backend()` 가 정본이고 어휘 밖 값이면 **예외**다(`app_env()` 와 같은 모양).
+  되돌리는 단위는 여전히 환경변수 한 줄이다 — `STORE_BACKEND=sqlite`.
   ⚠️ **상수가 아니라 함수인 것이 뜻을 가진다.** 모듈 상수로 두면 import 시점에 얼어붙어
   검사가 스위치를 못 뒤집는다 — `krx_store.DB_PATH` 가 실제로 그렇게 굳어 있어
   `KRX_DB_PATH` 를 `monkeypatch.setenv` 해도 아무 효과가 없다(실측).
-  - **이음매는 여덟이고 한 벌이다** — `_cache_is_empty`·`latest_date`·`available_dates`·
-    `snapshot_tiered`·`series_tiered`·`window`·`stats`, 그리고 `tier()` 가 따라온다.
+  - **이음매는 아홉이고 한 벌이다** — `_cache_is_empty`·`latest_date`·`available_dates`·
+    `snapshot_tiered`·`series_tiered`·`window`·`stats`·**`lookup_security`**, 그리고
+    `tier()` 가 따라온다. (S4 때는 여덟이었고 **S5 가 `lookup_security` 를 들였다**.)
     하나만 남기면 SQLite 를 지운 셸에서 Postgres 는 꽉 찼는데 `tier()` 만 `bundle` 을 낸다.
+    ⚠️ `lookup_security` 의 이름 검색은 **`ohlcv` 를 이어야 한다** — 이름은 `securities`,
+    거래대금은 `ohlcv` 에 있다. `securities` 만 보면 정렬 근거가 사라져 "삼성" 이
+    삼성전자가 아닌 것을 가리키는데 **오류는 안 뜬다**.
     `snapshot`·`series`·`universe`·`closes_matrix`·`source_tag` 는 **분기하지 않는다**(자동으로 따라온다).
   - **경계에서 셋을 되돌린다** — `change_rate` 는 `Decimal`→`float`, 날짜는 `date`→문자열
     (**`date` 키는 `YYYY-MM-DD`, `bas_dd`·`latest_date`·`stats` 는 `YYYYMMDD`**),
@@ -175,14 +182,23 @@
     `dashboard_data.py:328-345` 의 경고 배지가 동시에 깨진다. 낱말 정리는 S7 이다.
   - **접속 실패를 빈 결과로 삼키지 않는다.** 빈 결과셋은 축약본 폴백이고 예외는 올라간다.
     삼키면 DB 장애가 "그 날짜에 자료 없음"으로 위장돼 화면이 조용히 강등된다.
-  - ⚠️ **읽기 표면을 우회하는 곳이 둘 남아 있다** — `stock_service.py:144-159` 와
-    `scripts/build_stock_master.py:44-54` 가 `store.connect()` 로 SQLite 에 생 SQL 을 던진다.
-    스위치를 켜도 그 둘은 계속 SQLite 를 읽는다. **S5 가 갚아야 할 빚이고**,
-    `tests/test_krx_pg.py` 가 목록을 얼려 두어 모르는 사이에 늘지 않게 한다.
+    ⚠️ 다만 **막다른 길로 두지도 않는다** (ADR-DS-0018). `_fetch()` 가 `OSError` 만 잡아
+    처방 넉 줄(띄우기·URL·되돌리기)을 붙여 **다시 던진다** — 기본값이 `postgres` 가 되면서
+    "DB 를 안 띄우고 앱을 켠다" 가 새 clone 의 첫 경험이 됐기 때문이다.
+  - ✅ **읽기 표면을 우회하는 곳은 이제 하나이고, 그것은 의도된 것이다** (ADR-DS-0018).
+    `stock_service.py` 는 S5 가 이음매로 들였다. 남은 `scripts/build_stock_master.py:51` 은
+    갱신 사슬의 **4단계**이고 Postgres 적재는 **5단계**라, 뒤집으면 직전 회차 자료로
+    마스터를 만든다. 결정적으로 `--skip-pg` 가 깨진다(그 플래그는 `needs_db` 단계만
+    건너뛴다). **S8 이 쓰기를 옮길 때 자연히 사라진다.**
+    `tests/test_krx_pg.py` 가 목록을 얼려 두고, 검사기는 산문이 아니라 **AST** 를 본다.
   - 검증: 함수 24항목 중 23 일치 · HTTP 20경로 중 19 완전 일치(나머지 하나는 야후 라이브라
     저장소와 무관) · 48 동시 요청에서 Postgres 48/48. 전부 ADR-DS-0015 "검증" 절에 있다.
 - **검사는 환경을 씻고 돈다** — `tests/conftest.py` 의 autouse `isolate_env` (ADR-DS-0015 §5).
   위험한 여섯을 지우고 `DATABASE_URL` 을 **붙을 수 없는 주소**(`127.0.0.1:1`)로 덮는다.
+  ⚠️ **`STORE_BACKEND` 도 `sqlite` 로 덮는다** (ADR-DS-0018). S4 까지는 지우기만 해도
+  `sqlite` 로 떨어졌지만 S5 부터는 `postgres` 로 떨어져 읽기 경로를 타는 검사가 전부 죽는다
+  (실측 11건). 그래서 검사 묶음은 **새 기본값을 재현하지 않는다** — 기본값 자체는
+  `tests/test_krx_pg.py` §3 이 `monkeypatch` 로 환경을 만들어 직접 본다.
   ⚠️ 지우기만 하면 `local` 로 떨어져 기본값 `@db:5432` 를 쓰는데, compose 를 띄워 둔
   기계에서는 그것이 실재하는 DB 다. 실 DB 가 필요하면 `@pytest.mark.realdb` 로 빠져나간다.
 - **OHLC는 `integer`.** 국내 주가는 원 단위 정수라 `numeric`이 필요 없다(25% 절약).
@@ -239,6 +255,12 @@
   - ⚠️ **컨테이너에서는 막힌다** — `.dockerignore` 가 `scripts/` 를 뺀다. 이미지에 넣지
     않기로 한 이유(uid 1001 이 쓴 파일을 호스트 사용자가 커밋해야 한다)는 ADR-DS-0017 에 있다.
   - **커밋하지 않는다.** `FORBIDDEN_IN_CHAIN` 이 그 약속을 검사 가능한 사실로 붙든다.
+  - ⭐ **사슬은 쓰기 측(SQLite)에 못 박혀 있다** — `refresh_job.CHAIN_ENV` (ADR-DS-0018).
+    다섯 단계가 전부 SQLite 를 다루는데 S5 가 **읽기** 기본값을 뒤집으면서 그 값이 자식까지
+    새어 들었다. `fetch_krx.py --status` 는 시끄럽게 죽지만 `build_market_snapshot.py` 는
+    **안 죽고 직전 회차 자료로 스냅샷을 만든다** — 날짜로만 드러난다. 아래쪽이 훨씬 비싸다.
+    ⚠️ **한 표를 둘이 읽는다** — `_run_step()`(화면)과 `tasks.py`(셸). `tasks.py` 에 값을
+    다시 적지 않는다. **S8 이 쓰기를 옮길 때 이 표를 지운다.**
 - **응답에 상한을 건다** — Vercel 요청·응답 본문 4.5MB 한도 (ADR-DS-0004).
   목록형은 `page`+`size`, **시계열형은 구간 상한 + 잘림 고지**(`meta.row_truncated`).
   시계열을 페이지로 자르면 이동평균이 페이지 경계에서 깨진다.

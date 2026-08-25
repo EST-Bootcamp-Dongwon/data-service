@@ -41,10 +41,10 @@
 | 원천 | **9종** — 클라이언트는 [`app/clients/`](app/clients) 에 하나씩 있다 |
 | 엔드포인트 | **55개** · 라우터 15파일 ([§7 API 목록](#7-api-목록)) |
 | 화면 | **10개** ([§6 화면](#6-화면)) |
-| 시세 저장소 | SQLite (`data/krx_cache.db`) — **282거래일 · 780,484행 · 2,870종목 · 118MB** (20250609~20260731, 2026-08-22 실측) |
-| 저장계층 전환 | Postgres 로 옮기는 중. 아홉 걸음 중 **S4 완료** — 읽기 어댑터가 섰고 `STORE_BACKEND=postgres` 로 켜면 화면이 Postgres 로 돈다. **기본값은 아직 `sqlite`**(뒤집는 것은 S5) → [ADR-DS-0011](docs/decisions/0011-storage-migration-order.md) · [ADR-DS-0014](docs/decisions/0014-one-shot-loader.md) · [ADR-DS-0015](docs/decisions/0015-read-adapter.md) |
+| 시세 저장소 | **로컬은 Postgres** (`ohlcv`·`securities`) — **297거래일 · 821,928행 · 2,875종목 · 111.9MB** (20250609~20260824, 2026-08-25 실측). 쓰기는 아직 SQLite 캐시(129MB)를 거친다 — S8 |
+| 저장계층 전환 | Postgres 로 옮기는 중. 아홉 걸음 중 **S5 완료** — **로컬 화면은 이제 Postgres 로 읽는다**(SQLite 파일을 치우고 화면 10개 + API 18경로 전부 200 으로 확인). 배포본은 아직 `sqlite` 다 — `DATABASE_URL` 을 주는 것이 S6 → [ADR-DS-0011](docs/decisions/0011-storage-migration-order.md) · [ADR-DS-0015](docs/decisions/0015-read-adapter.md) · [ADR-DS-0018](docs/decisions/0018-flip-read-path-to-postgres.md) |
 | 수집 보관함 | `clip` 표 DDL 은 섰고 **쓰는 코드는 아직 없다** → [ADR-DS-0008](docs/decisions/0008-clip-store.md) |
-| 검증 | `invoke check` 하나 — **263 tests** · 이미지 553MB |
+| 검증 | `invoke check` 하나 — **275 tests** · 이미지 553MB |
 | 배포 | Vercel ([§15 배포·공유](#15-배포--공유-)) |
 
 > ⚠️ 목업이 아니다. 화면에 보이는 시세·거래대금·시가총액은 전부 KRX 가 준 실제 값이다.
@@ -408,12 +408,16 @@ invoke refresh --skip-pg      # 로컬 Postgres 를 안 띄웠을 때
 | 2 | `build_krx_bundle.py` | `krx_bundle.db` · `krx_derived.json` | 뒤엣것만 ✅ | 뒤엣것만 |
 | 3 | `build_market_snapshot.py` | `market_snapshot.json.gz` | ✅ | ✅ |
 | 4 | `build_stock_master.py` | `stock_master.json` | ✅ | ✅ |
-| 5 | `load_pg.py` | Postgres `ohlcv`·`securities` | — | S6 이후 |
+| 5 | `load_pg.py` | Postgres `ohlcv`·`securities` | — | 로컬 화면 ✅ · 배포본은 S6 |
 
 - **커밋은 하지 않는다.** push 가 곧 Vercel 배포라 그 시점은 사람이 정한다.
   갱신이 끝나면 명령이 커밋 절차를 한 줄로 다시 알려 준다.
-- **5단계는 건너뛸 수 있다.** DB 에 못 붙으면 알리고 넘어간다 — Postgres 는 아직 읽기
-  기본값이 아니다(S5 전). 다만 건너뛰면 SQLite 만 최신이 되고 **두 저장소가 갈린다.**
+- **5단계는 건너뛸 수 있다.** DB 에 못 붙으면 알리고 넘어간다. ⚠️ 다만 **S5 부터는
+  건너뛴 대가가 바로 보인다** — 로컬 화면이 Postgres 를 읽으므로, 건너뛰면 SQLite 만
+  최신이 되고 **화면은 옛 자료를 그대로 본다.**
+- ⚠️ **사슬 자신은 SQLite 에서 돈다**(`refresh_job.CHAIN_ENV`). 다섯 단계가 전부 쓰기 측을
+  다루기 때문이다 — 읽기 기본값이 여기까지 새어 들면 3단계가 **직전 회차** 자료로
+  스냅샷을 만든다. 이 못은 S8(쓰기 경로 전환)이 뺀다 (ADR-DS-0018).
 - ⚠️ **`invoke check` 에 묶지 않았다.** 검증 명령이 외부 API 를 부르고 파일을 고치면
   그 명령을 더는 신뢰할 수 없다 (ADR-DS-0016 · `invoke hooks` 와 같은 이유).
 
@@ -1294,10 +1298,10 @@ WSL과 Windows 호스트 간 네트워크가 분리돼 있을 수 있다.
 ([ADR-DS-0012 §8](docs/decisions/0012-collection-scope-and-ia.md)).
 
 ```
-~~S3 적재기~~ → ~~S4 읽기 어댑터~~ → **S5 기본값 뒤집기** → clip_store + 공시·보고서 수집 → 화면 → 뉴스 → 커뮤니티·동영상
+~~S3 적재기~~ → ~~S4 읽기 어댑터~~ → ~~S5 기본값 뒤집기~~ → **S6 Supabase** → clip_store + 공시·보고서 수집 → 화면 → 뉴스 → 커뮤니티·동영상
 ```
 
-### 저장계층 — 아홉 걸음 중 S5 부터
+### 저장계층 — 아홉 걸음 중 S6 부터
 
 걸음별 완료 조건은 [ADR-DS-0011](docs/decisions/0011-storage-migration-order.md) 의 표가 정본이다.
 
@@ -1306,18 +1310,22 @@ WSL과 Windows 호스트 간 네트워크가 분리돼 있을 수 있다.
 | S1 | 적합성 자 — SQLite 원본이 목표 DDL 을 통과하는지 잰다 | ☑ |
 | S2 | 엔진 계층 `app/core/db.py` + 커넥션 전략 실측 | ☑ |
 | S3 | 일회성 적재기 `scripts/load_pg.py` (780,484행) | ☑ |
-| S4 | 읽기 어댑터 `krx_pg.py` + `STORE_BACKEND` 스위치 (기본 `sqlite`) | ☑ |
-| **S5** | **로컬 기본값 뒤집기** (`STORE_BACKEND=postgres`) | ☐ **다음** |
-| S6~S9 | Supabase · bundle 폐기 · 쓰기 경로 · 잔가지 | ☐ |
+| S4 | 읽기 어댑터 `krx_pg.py` + `STORE_BACKEND` 스위치 | ☑ |
+| S5 | 로컬 기본값 뒤집기 — **로컬 화면이 Postgres 로 읽는다** | ☑ |
+| **S6** | **Supabase — 배포본이 DB 를 읽는다** | ☐ **다음** |
+| S7~S9 | bundle 폐기·어휘 정리 · 쓰기 경로 · 잔가지 | ☐ |
 
-지금 상태에서 Postgres 로 읽어 보려면 스위치만 켜면 된다:
+**로컬에서는 DB 를 띄우기만 하면 된다.** 읽기 기본값이 `postgres` 다 (ADR-DS-0018).
 
 ```bash
 docker compose --profile local-db up -d
-STORE_BACKEND=postgres APP_ENV=local \
-  DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/data_service \
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/data_service \
   uvicorn app.main:app --port 8000
 ```
+
+옛 저장소로 되돌리려면 한 줄이면 된다 — `STORE_BACKEND=sqlite`.
+**배포본의 기본값은 그쪽이다**(아직 `DATABASE_URL` 이 없다. 그것이 S6 이다).
+⚠️ DB 를 안 띄우고 켜면 화면이 500 이 되는데, 오류 메시지에 **처방 넉 줄**이 함께 나온다.
 
 ### 수집 — 공시·보고서부터
 

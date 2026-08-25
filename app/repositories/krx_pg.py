@@ -46,13 +46,14 @@ PK 를 곧장 탄다. 실측 (2026-08-25 · 005930 · 250행):
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import text
 
-from app.core import db
+from app.core import db, settings
 
 # `krx_store.snapshot()`/`series()` 가 돌려주는 키와 **순서**. `SELECT *` 를 쓰던 자리라
 # 컬럼을 명시하지 않으면 키 집합이 조용히 달라진다.
@@ -79,6 +80,12 @@ WINDOW_COLUMNS: Dict[str, str] = {
     # ⚠️ 그 거래일 값이다. `securities.listed_shares`(최신)가 아니다 — ADR-DS-0010.
     "listed_shares": "o.listed_shares",
 }
+
+# 국내 종목코드는 6자리 숫자다. 코드 검색과 이름 검색은 질의가 아예 달라 먼저 가른다.
+# ⚠️ **정의는 여기 하나다.** `krx_store.lookup_security()` 가 이 값을 그대로 쓴다.
+#    두 벌로 두면 한쪽만 고쳐진 채 오래 간다 — 이 레포가 갱신 사슬에서 이미 겪은 고장이다.
+#    `krx_store` 가 `krx_pg` 를 import 하는 방향이라(반대는 순환) 낮은 쪽인 이곳이 자리다.
+CODE_PATTERN = re.compile(r"^\d{6}$")
 
 # 종목 속성은 `securities` 에, 시세는 `ohlcv` 에 있다. 둘을 잇는 조각을 한 곳에 둔다.
 _JOIN = "ohlcv o JOIN securities s ON s.security_id = o.security_id AND NOT s.is_delisted"
@@ -151,7 +158,21 @@ def _fetch(sql: str, params: Optional[Dict] = None) -> List[Any]:
             result = await conn.execute(text(sql), params or {})
             return result.fetchall()
 
-    return db.run_sync(go())
+    try:
+        return db.run_sync(go())
+    except OSError as exc:
+        # ⚠️ **삼키는 것이 아니라 길을 여는 것이다.** 예외는 그대로 올라간다 —
+        #    바꾸는 것은 메시지뿐이다. S5 에서 로컬 기본값이 `postgres` 가 되면서
+        #    "DB 를 안 띄우고 앱을 켠다" 가 새 clone 의 **첫 경험**이 됐다. 그때 화면에
+        #    `[Errno 111] Connect call failed` 만 남으면 원인이 저장소 전환으로 안 보인다.
+        #    (`OSError` 만 잡는다 — 인증 실패·DB 이름 오타는 asyncpg 가 더 정확히 말한다.)
+        raise RuntimeError(
+            f"시세 저장소(Postgres)에 못 붙었다: {exc}\n"
+            f"  붙는 곳: {settings.database_settings().safe_url()}\n"
+            "  DB 를 띄운다      : docker compose --profile local-db up -d\n"
+            "  호스트 셸이라면   : DATABASE_URL 의 @db:5432 를 @localhost:5432 로 바꾼다\n"
+            "  SQLite 로 되돌린다: STORE_BACKEND=sqlite (S5 이전과 같아진다)"
+        ) from exc
 
 
 def is_empty() -> bool:
@@ -318,3 +339,76 @@ def stats() -> Dict:
         "mode": "db",
         "notes": [],
     }
+
+
+def lookup_security(code_or_name: str) -> Optional[Dict]:
+    """종목코드 또는 한글 종목명으로 종목 하나를 찾는다 — `{code, name, market}`.
+
+    `krx_store.lookup_security()` 의 짝이다 (전환 S5 · ADR-DS-0018).
+    원래 `stock_service._lookup_krx()` 가 `store.connect()` 로 SQLite 에 생 SQL 세 개를
+    던지던 자리다. 그 우회가 남아 있으면 스위치를 켜도 **한글 종목명 검색만** 계속
+    옛 저장소를 봐서, 두 저장소가 갈린 날 그 화면만 조용히 낡는다.
+
+    ## 찾는 순서 — SQLite 와 같아야 한다
+
+    ① 6자리 숫자면 코드로 · ② 아니면 이름이 정확히 같은 것 · ③ 그것도 없으면 앞부분이 같은 것.
+    ②③ 은 `ORDER BY 거래일 DESC, 거래대금 DESC` 로 하나를 고른다 — "삼성" 처럼 여러 개가
+    걸리는 입력에서 가장 대표적인 종목이 나오게 하려는 것이다.
+
+    ⚠️ **동점 처리에 `ohlcv` 가 필요하다.** SQLite 는 `daily_price` 한 표에 이름과 거래대금이
+    같이 있어 정렬이 공짜였다. 여기서는 이름이 `securities`, 거래대금이 `ohlcv` 라 이어야 한다.
+    이 두 줄을 빼고 `securities` 만 보면 **정렬 근거가 사라져** 힙 순서가 나온다 —
+    "삼성" 이 삼성전자가 아니라 삼성공조를 가리키게 되고, 오류는 뜨지 않는다.
+
+    ⚠️ **`JOIN LATERAL` 로 종목마다 최근 한 줄만 본다.** `WHERE s.name = :needle` 로 잇고
+    통째로 정렬하면 후보 종목의 **전 구간**(297거래일)을 읽고 버린다. 이쪽은 머리말의
+    "`security_id` 를 먼저 푼다" 와 같은 모양이라 파티션마다 PK 를 곧장 탄다.
+
+    ⚠️ **`LIKE` 의 `%`·`_` 를 이스케이프하지 않는다.** SQLite 쪽도 안 한다 — 여기서 한쪽만
+    바꾸면 같은 입력에 두 저장소가 다른 답을 낸다. 이 함수의 계약은 "같은 답" 이 먼저다.
+    (한글 종목명에는 그 글자가 없어 실제로 갈리는 입력이 없다. 바꾸려면 양쪽을 같이 바꾼다.)
+    """
+    needle = code_or_name.strip()
+    if not needle:
+        return None
+
+    if CODE_PATTERN.fullmatch(needle):
+        rows = _fetch(
+            "SELECT code, name, market FROM securities "
+            "WHERE code = :code AND NOT is_delisted LIMIT 1",
+            {"code": needle},
+        )
+        return _to_security(rows)
+
+    # 정확히 일치 → 앞부분 일치. 앞엣것이 걸리면 뒤는 묻지 않는다 (SQLite 와 같다).
+    for clause, value in (("s.name = :needle", needle), ("s.name LIKE :needle", f"{needle}%")):
+        rows = _fetch(
+            f"""
+            SELECT c.code, c.name, c.market
+            FROM (
+                SELECT s.security_id, s.code, s.name, s.market
+                FROM securities s
+                WHERE {clause} AND NOT s.is_delisted
+            ) c
+            JOIN LATERAL (
+                SELECT o.trade_date, o.value
+                FROM ohlcv o
+                WHERE o.security_id = c.security_id
+                ORDER BY o.trade_date DESC
+                LIMIT 1
+            ) last ON true
+            ORDER BY last.trade_date DESC, last.value DESC
+            LIMIT 1
+            """,
+            {"needle": value},
+        )
+        if rows:
+            return _to_security(rows)
+    return None
+
+
+def _to_security(rows: List[Any]) -> Optional[Dict]:
+    """`(code, name, market)` 한 줄을 `krx_store` 와 같은 모양의 딕셔너리로."""
+    if not rows:
+        return None
+    return {"code": rows[0][0], "name": rows[0][1], "market": rows[0][2]}
