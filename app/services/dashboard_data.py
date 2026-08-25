@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from app.clients import fred_data
+from app.core import settings
 from app.core.trading_calendar import to_iso
 from app.repositories import krx_store, snapshot_store, tmp_cache
 
@@ -337,9 +338,20 @@ def _data_status() -> List[dict]:
                       "그보다 앞선 구간은 없습니다.")
         else:
             grade, grade_text = "warning", "라이브 조회"
-            detail = ("원본 캐시도 배포용 축약본도 없어 요청할 때 KRX 를 직접 부릅니다. "
-                      "하루치 전 종목은 되지만 여러 날치가 필요한 화면(`/quant` · 캔들)은 막힙니다. "
-                      "`python3 scripts/build_krx_bundle.py` 로 축약본을 만들 수 있습니다.")
+            # ⚠️ 처방이 환경마다 다르다. 예전에는 배포본에도 "축약본을 만드세요" 라고 띄웠는데,
+            #    **배포본에서는 그 처방을 따를 수가 없다** — git 연동 배포는 `.gitignore` 된
+            #    `krx_bundle.db`(30MB)를 애초에 옮기지 못한다(`.vercelignore` 2026-08-17 주석).
+            #    따를 수 없는 처방을 띄우면 "돌렸는데 왜 그대로냐"로 시간을 버린다.
+            if settings.app_env() == settings.VERCEL:
+                detail = ("배포본에는 시세 저장소가 실리지 않아 요청할 때 KRX 를 직접 부릅니다. "
+                          "하루치 전 종목은 되지만 여러 날치가 필요한 화면(`/quant` · 캔들)은 막힙니다. "
+                          "git 연동 배포는 `.gitignore` 된 축약본(30MB)을 옮기지 못하므로 "
+                          "다시 만들어도 이 상태는 그대로입니다 — Postgres 전환이 이것을 해소합니다 "
+                          "(ADR-DS-0011 S6).")
+            else:
+                detail = ("원본 캐시도 배포용 축약본도 없어 요청할 때 KRX 를 직접 부릅니다. "
+                          "하루치 전 종목은 되지만 여러 날치가 필요한 화면(`/quant` · 캔들)은 막힙니다. "
+                          "`invoke refresh` 로 수집부터 축약본까지 한 번에 만들 수 있습니다.")
 
         rows.append({"key": "krx-cache", "label": "KRX 시세", "ok": True,
                      "grade": grade, "grade_text": grade_text, "detail": detail})
@@ -365,9 +377,17 @@ def _data_status() -> List[dict]:
                 "key": "snapshot", "label": "시장 스냅샷", "ok": True,
                 "grade": "warning" if snap.get("stale") else "good",
                 "grade_text": f"{behind}거래일 전" if snap.get("stale") else "최신",
+                # **마지막으로 만든 시각**을 함께 싣는다. 기준일만 보이면 "자료가 그날까지
+                # 있다"와 "그날 이후로 아무도 안 돌렸다"가 구별되지 않는다 — 실제로 그 둘을
+                # 못 가려서 24일치가 조용히 밀렸다(2026-08-01 → 08-25).
+                # 처방도 함께 싣는다. 이쪽은 KRX 카드와 달리 **배포본에서도 유효하다** —
+                # 스냅샷은 git 에 커밋되므로 로컬에서 다시 만들어 push 하면 배포본까지 간다.
                 "detail": f"기준일 {snap['as_of']} · {snap['count']:,}종목 ({markets}) · "
                           f"{snap['size_kb']}KB"
-                          + (f" — {snap['gap']['message']}" if snap.get("gap") else ""),
+                          + (f" · 마지막 생성 {snap['generated_at']}" if snap.get("generated_at") else "")
+                          + (f" — {snap['gap']['message']} "
+                             "`invoke refresh` 로 다시 만든 뒤 커밋·push 하면 배포본까지 반영됩니다."
+                             if snap.get("gap") else ""),
             })
     except Exception as error:
         rows.append({"key": "snapshot", "label": "시장 스냅샷", "ok": False,

@@ -293,3 +293,136 @@ def openapi(c):
   )
   paths = len(app.openapi()["paths"])
   print(f"docs/openapi.json 갱신 — 경로 {paths}개")
+
+
+# ==================================================
+# 갱신 — 자료를 최신 거래일까지 따라잡힌다
+# ==================================================
+# ⚠️ **검증이 아니라 운영 명령이다.** `invoke check` 에 묶지 않는다 — 검증 명령이 외부 API 를
+#    부르고 파일을 고치기 시작하면 그 명령을 더는 신뢰할 수 없다. `invoke hooks` 를 check 에
+#    묶지 않은 것과 같은 이유다 (ADR-DS-0013).
+#
+# **왜 명령이 필요한가.** 갱신은 원래 스크립트 다섯 개를 **순서대로** 돌리는 일이었고, 그
+# 순서는 README 여기저기와 사람 머릿속에만 있었다. 그래서 2026-08-01 이후 24일 동안 아무도
+# 돌리지 않았고 배포본 스냅샷이 17거래일 뒤처졌다. 하나만 빼먹어도 조용히 어긋난다 —
+# 예를 들어 `fetch_krx` 만 돌리면 로컬 화면은 최신인데 **배포본은 그대로 낡아 있다**
+# (배포본이 읽는 것은 커밋되는 `market_snapshot.json.gz` 쪽이기 때문이다).
+#
+# 순서가 뜻을 가진다. 파생물 셋은 전부 `data/krx_cache.db` 를 읽으므로 **수집이 먼저**다.
+REFRESH_STEPS = (
+  # (표시 이름, 갱신 명령, 확인만 하는 명령, 산출물이 git 에 올라가는가)
+  ("KRX 시세 수집",   "scripts/fetch_krx.py --days {days}",  "scripts/fetch_krx.py --status",        False),
+  ("배포용 축약본",    "scripts/build_krx_bundle.py",         "scripts/build_krx_bundle.py --check",   True),
+  ("시장 스냅샷",     "scripts/build_market_snapshot.py",    "scripts/build_market_snapshot.py --check", True),
+  ("종목 마스터",     "scripts/build_stock_master.py",       "scripts/build_stock_master.py --check", True),
+)
+
+
+def _host_database_url() -> str:
+  """호스트 셸에서 쓸 `DATABASE_URL`.
+
+  ⚠️ `settings.DEFAULT_LOCAL_DATABASE_URL` 은 `@db:5432` 다. 그것은 **compose 네트워크
+  안쪽의 이름**이라 호스트 셸에서는 절대 풀리지 않는다 — `socket.gaierror: Name or service
+  not known` 으로 죽는데, 스택이 asyncpg 안쪽에서 40줄 나와서 원인이 "DB 가 안 떴나" 로
+  보인다. compose 가 5432 를 호스트로 내보내므로 여기서는 `localhost` 로 바꿔 준다.
+
+  이미 `DATABASE_URL` 이 있으면 **손대지 않는다** — Supabase 를 가리키고 있을 수 있고,
+  그 경우 원격 차단은 `load_pg.py` 가 판단할 몫이다(`--allow-remote`).
+  """
+  import os
+  existing = os.environ.get("DATABASE_URL")
+  if existing:
+    return existing
+  return "postgresql+asyncpg://postgres:postgres@localhost:5432/data_service"
+
+
+def _postgres_reachable(url: str) -> bool:
+  """그 주소에 실제로 붙을 수 있는지 TCP 로만 두드려 본다 (1초).
+
+  붙지 못하면 적재를 **건너뛰되 막지는 않는다.** Postgres 는 아직 읽기 경로의 기본값이
+  아니라(S5 전), DB 를 안 띄운 셸에서도 시세 갱신 자체는 끝까지 돌아야 한다.
+  """
+  import socket
+  from urllib.parse import urlparse
+  parsed = urlparse(url.replace("postgresql+asyncpg://", "postgresql://"))
+  host, port = parsed.hostname or "localhost", parsed.port or 5432
+  try:
+    with socket.create_connection((host, port), timeout=1):
+      return True
+  except OSError:
+    return False
+
+
+@task(help={
+  "days": "수집할 거래일 수 (기본 30). 오래 쉬었으면 250 까지 올린다",
+  "check": "아무것도 바꾸지 않고 지금 무엇이 얼마나 낡았는지만 잰다",
+  "skip-pg": "Postgres 재적재를 건너뛴다",
+})
+def refresh(c, days=30, check=False, skip_pg=False):
+  """자료를 최신 거래일까지 따라잡힌다 — 수집 → 축약본 → 스냅샷 → 마스터 → Postgres.
+
+      invoke refresh                # 최근 30거래일 중 없는 날짜만 (약 4분)
+      invoke refresh --days 250     # 오래 쉬었을 때
+      invoke refresh --check        # 재기만 한다 (외부 호출 없음)
+      invoke refresh --skip-pg      # DB 를 안 띄웠을 때
+
+  ⚠️ **커밋하지 않는다.** 세 산출물(`market_snapshot.json.gz` · `krx_derived.json` ·
+  `stock_master.json`)은 git 에 올라가고 push 가 곧 Vercel 배포다. 배포 시점은 사람이 정한다.
+  """
+  import sys
+  python = sys.executable or "python3"
+  mode = "확인" if check else "갱신"
+  total = len(REFRESH_STEPS) + 1                       # 마지막 한 단계는 Postgres 재적재다
+  print(f"── 자료 {mode} — 전체 {total}단계 ──\n")
+
+  for index, (label, run_cmd, check_cmd, in_git) in enumerate(REFRESH_STEPS, start=1):
+    mark = " (git 에 올라간다 → 배포본에 반영됨)" if in_git else ""
+    print(f"[{index}/{total}] {label}{mark}")
+    command = check_cmd if check else run_cmd.format(days=days)
+    c.run(f"{python} {command}", pty=False)
+    print()
+
+  # ── Postgres 재적재 ──────────────────────
+  # `krx_store.sync()` 는 SQLite 에만 쓴다(쓰기 경로 전환은 S8). 그래서 수집한 뒤 이것을
+  # 돌리지 않으면 두 저장소가 갈리고, S5 로 스위치를 뒤집는 순간 화면이 옛 자료를 본다.
+  if skip_pg:
+    print(f"[{total}/{total}] Postgres 재적재 — 건너뜀 (--skip-pg)")
+  else:
+    url = _host_database_url()
+    if not _postgres_reachable(url):
+      print(f"[{total}/{total}] Postgres 재적재 — 건너뜀. DB 에 붙을 수 없다.")
+      print("      띄우려면: docker compose --profile local-db up -d")
+      print("      ⚠️ 안 띄우면 SQLite 만 최신이 되고 Postgres 는 그 자리에 남는다.")
+    else:
+      print(f"[{total}/{total}] Postgres 재적재")
+      flag = "--verify-only" if check else ""
+      c.run(f"DATABASE_URL={url} {python} scripts/load_pg.py {flag}".rstrip(), pty=False)
+
+  _refresh_summary(check)
+
+
+def _refresh_summary(check: bool) -> None:
+  """끝에 사람이 실제로 보는 두 숫자를 다시 찍는다 — 최신 거래일과 스냅샷 기준일."""
+  import sys
+  sys.path.insert(0, str(PROJECT_ROOT))
+  from app.repositories import krx_store, snapshot_store
+
+  print("\n── 지금 상태 ──")
+  try:
+    stats = krx_store.stats()
+    print(f"  KRX 시세   : {stats.get('mode')} · {stats.get('last_date')} 까지 "
+          f"· {stats.get('days')}거래일 · {stats.get('rows'):,}행")
+  except Exception as error:
+    print(f"  KRX 시세   : 확인 실패 — {error}")
+  try:
+    snap = snapshot_store.stats()
+    behind = snap.get("trading_days_behind")
+    verdict = f"{behind}거래일 전" if snap.get("stale") else "최신"
+    print(f"  시장 스냅샷 : 기준일 {snap.get('as_of')} · {snap.get('count'):,}종목 · {verdict}")
+  except Exception as error:
+    print(f"  시장 스냅샷 : 확인 실패 — {error}")
+
+  if not check:
+    print("\n⚠️ 배포본에 반영하려면 커밋·push 가 남았다 (push 가 곧 Vercel 배포다):")
+    print("   git status --short && git add data/ && git commit && "
+          "git push origin main && git push gitlab main")

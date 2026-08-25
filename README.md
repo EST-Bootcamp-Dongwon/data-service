@@ -389,6 +389,34 @@ python3 scripts/fetch_krx.py --status        # 받지 않고 현재 캐시 상�
 - `data/krx_cache.db` 는 `.gitignore` 대상이다 (약 118MB, 언제든 재생성 가능).
 - `data/` 폴더가 없으면 처음 실행할 때 자동으로 만들어진다.
 
+### 그다음부터는 — `invoke refresh` ★
+
+수집은 사슬의 **첫 칸**일 뿐이다. `fetch_krx.py` 만 돌리면 로컬 화면은 최신이 되지만
+**배포본은 그대로 낡아 있다** — 배포본이 읽는 것은 커밋되는 축약 산출물 쪽이기 때문이다.
+전체 사슬은 다섯 단계이고 **순서가 뜻을 가진다**(파생물 셋은 전부 `krx_cache.db` 를 읽는다).
+
+```bash
+invoke refresh                # 최근 30거래일 · 다섯 단계 전부 — 약 4분
+invoke refresh --days 250     # 오래 쉬었을 때
+invoke refresh --check        # 아무것도 바꾸지 않고 무엇이 얼마나 낡았는지만 잰다
+invoke refresh --skip-pg      # 로컬 Postgres 를 안 띄웠을 때
+```
+
+| # | 단계 | 산출물 | git | 배포본에 닿나 |
+|---|---|---|---|---|
+| 1 | `fetch_krx.py` | `data/krx_cache.db` | ❌ | ❌ |
+| 2 | `build_krx_bundle.py` | `krx_bundle.db` · `krx_derived.json` | 뒤엣것만 ✅ | 뒤엣것만 |
+| 3 | `build_market_snapshot.py` | `market_snapshot.json.gz` | ✅ | ✅ |
+| 4 | `build_stock_master.py` | `stock_master.json` | ✅ | ✅ |
+| 5 | `load_pg.py` | Postgres `ohlcv`·`securities` | — | S6 이후 |
+
+- **커밋은 하지 않는다.** push 가 곧 Vercel 배포라 그 시점은 사람이 정한다.
+  갱신이 끝나면 명령이 커밋 절차를 한 줄로 다시 알려 준다.
+- **5단계는 건너뛸 수 있다.** DB 에 못 붙으면 알리고 넘어간다 — Postgres 는 아직 읽기
+  기본값이 아니다(S5 전). 다만 건너뛰면 SQLite 만 최신이 되고 **두 저장소가 갈린다.**
+- ⚠️ **`invoke check` 에 묶지 않았다.** 검증 명령이 외부 API 를 부르고 파일을 고치면
+  그 명령을 더는 신뢰할 수 없다 (ADR-DS-0016 · `invoke hooks` 와 같은 이유).
+
 ---
 
 ## 5. 실행
@@ -1238,7 +1266,7 @@ STORE_BACKEND=postgres APP_ENV=local \
 ### 그 밖에 적어 둔 것
 
 - **사용자도 DB로** — `app/repositories/user_store.py` 는 아직 메모리 리스트다
-- **자동 수집** — 장 마감 후 `scripts/fetch_krx.py --days 1`. ⚠️ CI 를 필수 경로에 두지 않는 것이 이 레포 방침이라 실행처는 따로 정한다
+- **자동 수집** — 갱신 사슬 다섯 단계는 `invoke refresh` 로 묶었다(ADR-DS-0016). 남은 것은 **실행처**다. CI 를 필수 경로에 두지 않는 것이 이 레포 방침이라 지금은 사람이 돌린다 — 2026-08-01 이후 24일 밀린 적이 있으므로 장 마감 후 OS 스케줄러에 거는 것이 다음 후보다
 - **ETF·지수 확장** — `etp/etf_bydd_trd` · `idx/kospi_dd_trd` 를 `MARKET_APIS` 에 추가하면 같은 구조로 붙는다
 - **종목 간 비교** — 지금은 한 번에 한 종목이다. `?compare=000660` 처럼 하나 더 받아 같은 100 기준 축에 겹치면 상대 강도를 볼 수 있다
 - **거시지표 시차 분석** — 상관계수를 시차별(lag 1~10일)로 계산해 가장 높은 시차를 찾는다
