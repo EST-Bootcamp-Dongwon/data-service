@@ -232,9 +232,39 @@ ADR-DS-0003 rev.2 는 로컬 pgbouncer 실측이었고, 이제 표명이 실물�
 - `/api/clips/status` → **`available: true`** (보관함 잠금 풀림)
 - `/api/collect/dart/status` → **`available: true`** (수집 잠금 풀림)
 
+### 실제 배포본 — 모의가 아니라 실물에서
+
+위 스모크는 로컬에서 배포본 환경을 **흉내 낸** 것이다. 배포 뒤 진짜 프로덕션을 다시 쟀다.
+
+배포 전 (`mode` 가 `live` 였다 — ADR-DS-0016 이 말한 저장소 부재):
+
+```
+mode  : live
+cache : {"rows": 0, "days": 0, "codes": 0, "db_path": "krx_cache.db", "db_size_mb": 0.0}
+```
+
+배포 후 (`https://api-test-sable-phi.vercel.app`):
+
+```
+mode  : db
+cache : {"rows": 103663, "days": 297, "codes": 350,
+         "first_date": "20250609", "last_date": "20260824",
+         "db_path": "postgres.ohlcv", "db_size_mb": 15.4}
+```
+
+- 화면 11 + API 9 = **20/20 이 200** · `/api/krx/stocks` 의 `source` = **`krx-db`**
+- `/api/clips/status` → `available: true` · `/api/collect/dart/status` → `available: true`
+- `DART_API_KEY` 는 **이미 Vercel 에 있었다**(24일 전 등록). 배포본 수집이 실제로 돈다.
+
+⚠️ **`DATABASE_URL` 은 Production 스코프에만 넣었다.** 이 레포는 main 직커밋이라 preview
+배포가 생기지 않기 때문이다. 브랜치를 파는 날 preview 는 `DATABASE_URL` 없이 뜬다 —
+그때는 화면이 열리고 시세만 비는 모양이 된다(§8 의 실측과 같다).
+
 ### 검사
 
-`invoke check` 초록. `tests/test_load_pg.py` 38개(+2) · `tests/test_krx_pg.py` 55개(+1).
+`invoke check` 초록 (**396 tests** · +5). `tests/test_load_pg.py` 38개(+2) ·
+`tests/test_krx_pg.py` 55개(+3 — 되돌림이 살아 있는지 보는 검사를 새로 넣었다).
+`invoke docs-check` 초록. **계약은 60경로 그대로** — S6 은 공개 계약을 바꾸지 않았다.
 
 ## 기각한 대안
 
