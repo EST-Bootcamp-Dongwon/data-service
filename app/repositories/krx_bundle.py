@@ -213,6 +213,23 @@ def derived() -> Dict:
     return _derived
 
 
+def reload() -> Dict:
+    """파생 JSON 을 메모리에서 버리고 다시 읽는다. (재빌드 직후에 쓴다)
+
+    평소에는 필요 없다 — 배포본의 파생 JSON 은 읽기 전용이라 도중에 바뀌지 않는다.
+    **로컬에서 `build_krx_bundle.py` 를 돌린 직후만** 다르다. 그때 이것을 부르지 않으면
+    거래일 캘린더가 옛것으로 남아, 새로 받은 날짜를 `preprocess` 가 **휴장일로** 본다
+    (ADR-DS-0017 — 화면 갱신 버튼이 이 함수를 부른다).
+
+    번들 DB(`krx_bundle.db`) 는 대상이 아니다. 조회마다 새로 열고 닫으므로
+    파일이 바뀌면 다음 조회부터 자동으로 새것을 본다.
+    """
+    global _derived
+    with _lock:
+        _derived = None
+    return derived()
+
+
 def trading_days(limit: int = 0) -> List[str]:
     """실제 개장일 목록 (`YYYY-MM-DD`, **오름차순**). `limit` 을 주면 최근 그만큼만.
 

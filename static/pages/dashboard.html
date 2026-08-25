@@ -38,6 +38,27 @@
     .tile-label .ico { margin-right: 5px; }
     .tile-sub code { font-family: var(--mono); font-size: 0.92em; }
 
+    /* 자료 갱신 패널 (ADR-DS-0017) — 낡음을 알리는 카드 바로 아래에 그것을 고치는 버튼을 둔다 */
+    .rf-controls { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: flex-end; margin-bottom: var(--sp-3); }
+    .rf-controls label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--t-sm); color: var(--muted); }
+    .rf-controls .inline { flex-direction: row; align-items: center; gap: 6px; }
+    .rf-actions { display: flex; gap: var(--sp-2); margin-left: auto; }
+    /* 못 하는 이유 — 감추지 않고 그 자리에 적는다. 처방까지 함께 나온다 */
+    .rf-blocked {
+      border: 1px dashed var(--border); border-left: 3px solid var(--st-warning);
+      border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: var(--sp-3);
+      font-size: var(--t-md);
+    }
+    .rf-blocked ul { margin: 6px 0 0; padding-left: 18px; font-size: var(--t-xs); color: var(--muted); }
+    .rf-blocked li { margin: 2px 0; }
+    /* 두 숫자 — `invoke refresh` 가 끝에 찍는 것과 같은 값이다 */
+    .rf-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-3); }
+    .rf-fact { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; }
+    .rf-fact b { display: block; font-size: var(--t-xs); color: var(--muted); font-weight: 600; }
+    .rf-fact span { font-family: var(--mono); font-size: var(--t-sm); }
+    .rf-log { max-height: 260px; overflow-y: auto; margin: var(--sp-3) 0 0; }
+    .rf-note { font-size: var(--t-xs); color: var(--muted); margin: var(--sp-3) 0 0; }
+
     /* 카드 밖 소제목 — `.card h2` 규칙이 닿지 않는 자리라 여기서 맞춘다 */
     .sec-head { font-size: var(--t-lg); margin: var(--sp-5) 0 var(--sp-3); }
 
@@ -113,6 +134,47 @@
     <h2>데이터 상태</h2>
     <p class="hint">인증키와 캐시 현황. <b>키 값은 서버가 응답에 담지 않는다</b> — 출처와 길이만 확인한다.</p>
     <div class="status-list" id="statusBody"><div class="empty">불러오는 중…</div></div>
+  </section>
+
+  <!-- ── ②-1 자료 갱신 (ADR-DS-0017) ───────────
+       낡음을 **알리는** 카드 바로 아래에 그것을 **고치는** 버튼을 둔다.
+       ADR-DS-0016 이 남긴 숙제가 실행처였고, 사람이 실행처라면 사람이 이미 보고 있는
+       자리가 가장 짧다. 셸 명령(`invoke refresh`)과 **같은 사슬**을 부른다. -->
+  <section class="card" id="refresh">
+    <h2>자료 갱신 <span class="muted">— 수집 → 축약본 → 스냅샷 → 마스터 → Postgres</span></h2>
+    <p class="hint"><code>invoke refresh</code> 와 <b>같은 사슬</b>을 돌린다.
+      순서가 뜻을 가진다 — 2~4단계가 전부 시세 캐시를 읽으므로 수집이 먼저다.
+      <b>커밋은 하지 않는다</b> — push 가 곧 배포라 그 시점은 사람이 정한다.</p>
+
+    <div id="rfBlocked" hidden></div>
+
+    <div class="rf-facts" id="rfFacts"></div>
+
+    <div class="rf-controls" id="rfControls">
+      <label>수집 구간
+        <select id="rfDays">
+          <option value="5">최근 5거래일 — 며칠 쉬었을 때</option>
+          <option value="30" selected>최근 30거래일 — 기본 (약 4분)</option>
+          <option value="90">최근 90거래일</option>
+          <option value="250">최근 250거래일 — 오래 쉬었을 때 (20분 이상)</option>
+        </select>
+      </label>
+      <label class="inline"><input type="checkbox" id="rfSkipPg" /> Postgres 재적재 건너뛰기</label>
+      <div class="rf-actions">
+        <button class="ghost" id="rfCheckBtn" type="button">확인만</button>
+        <button id="rfRunBtn" type="button">지금 갱신</button>
+        <button class="ghost" id="rfCancelBtn" type="button" hidden>중단</button>
+      </div>
+    </div>
+
+    <div class="prog" id="rfProg" hidden>
+      <div class="prog-track"><i class="prog-fill" id="rfProgFill"></i></div>
+      <span class="prog-pct" id="rfProgPct">0%</span>
+    </div>
+
+    <div class="states" id="rfSteps"></div>
+    <pre class="out rf-log" id="rfLog" hidden></pre>
+    <p class="rf-note" id="rfNote"></p>
   </section>
 
   <!-- ── ③ 시장 카드 그리드 ─────────────────── -->
@@ -247,8 +309,170 @@
     }
   }
 
+  // ==================================================
+  // 자료 갱신 패널 (ADR-DS-0017)
+  // ==================================================
+  // 상태 조회는 **어디서든** 200 으로 온다. 실행할 수 없는 곳(배포본 등)에서는
+  // `available:false` 와 이유가 함께 오므로, 버튼을 감추는 대신 잠그고 이유를 적는다.
+  // 그것이 ADR-DS-0016 §4 가 정한 원칙이다 — 따를 수 없는 처방을 띄우지 않는다.
+  const Refresh = (() => {
+    const POLL_MS = 2000;          // 사슬이 분 단위라 2초면 충분하고, 로그가 끊겨 보이지 않는다
+    const el = (id) => document.getElementById(id);
+    let timer = null;
+    let lastJobId = '';            // 작업이 끝난 **순간**을 한 번만 잡아 대시보드를 다시 그린다
+
+    // 단계 상태 → 행 클래스 + 글리프. 색만으로 뜻을 전하지 않는다 (app.css U3 규칙)
+    const STEP_LOOK = {
+      wait:      ['wait', '·'],
+      now:       ['now',  '▶'],
+      done:      ['done', '✓'],
+      skipped:   ['warn', '—'],
+      failed:    ['bad',  '✕'],
+      cancelled: ['warn', '⊘'],
+    };
+
+    function stepsHtml(status) {
+      const job = status.job;
+      // 작업이 아직 없으면 사슬 **설명**을 그대로 그린다. 무엇이 돌 것인지가 먼저 보여야 한다.
+      const rows = job ? job.steps : status.chain.map((c) => ({ ...c, state: 'wait', seconds: 0 }));
+      return rows.map((row, i) => {
+        const [cls, ico] = STEP_LOOK[row.state] || STEP_LOOK.wait;
+        const time = row.seconds ? `${row.seconds.toFixed(1)}s` : '';
+        const flag = row.in_git ? '<span class="tag">git</span>' : '';
+        return `<div class="state-row ${cls}">
+          <span class="st-ico" aria-hidden="true">${ico}</span>
+          <span class="st-name">${i + 1}. ${esc(row.label)}</span>
+          <span class="st-role">${flag}</span>
+          <span class="st-note">${esc(row.note || '')}</span>
+          <span class="st-time">${time}</span>
+        </div>`;
+      }).join('');
+    }
+
+    function blockedHtml(status) {
+      const items = (status.hints || []).map((h) => `<li>${esc(h)}</li>`).join('');
+      return `<b>${esc(status.reason)}</b>${items ? `<ul>${items}</ul>` : ''}`;
+    }
+
+    function factsHtml(status) {
+      const d = status.data || {};
+      const cards = [
+        ['KRX 시세', d.krx],
+        ['시장 스냅샷', d.snapshot],
+      ];
+      return cards.map(([label, fact]) => `<div class="rf-fact">
+        <b>${esc(label)}</b><span>${esc((fact && fact.text) || '확인 실패')}</span>
+      </div>`).join('');
+    }
+
+    /** 상태 하나를 화면에 반영한다. 그리기만 하고 판단하지 않는다. */
+    function paint(status) {
+      const job = status.job;
+      const running = !!(job && job.running);
+
+      el('rfFacts').innerHTML = factsHtml(status);
+      el('rfSteps').innerHTML = stepsHtml(status);
+
+      const blocked = el('rfBlocked');
+      blocked.hidden = status.available;
+      if (!status.available) {
+        blocked.className = 'rf-blocked';
+        blocked.innerHTML = blockedHtml(status);
+      }
+
+      // 실행할 수 없거나 이미 돌고 있으면 잠근다. 중단 버튼은 그 반대다.
+      const locked = !status.available || running;
+      el('rfRunBtn').disabled = locked;
+      el('rfCheckBtn').disabled = locked;
+      el('rfDays').disabled = locked;
+      el('rfSkipPg').disabled = locked;
+      el('rfCancelBtn').hidden = !running;
+
+      const prog = el('rfProg');
+      prog.hidden = !job;
+      if (job) {
+        const pct = Math.round((job.done_steps / job.total_steps) * 100);
+        el('rfProgFill').style.width = `${pct}%`;
+        el('rfProgPct').textContent = `${pct}%`;
+      }
+
+      const log = el('rfLog');
+      log.hidden = !(job && job.log.length);
+      if (job && job.log.length) {
+        const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 24;
+        log.textContent = job.log.join('\n');
+        if (stick) log.scrollTop = log.scrollHeight;   // 사람이 위를 읽고 있으면 끌어내리지 않는다
+      }
+
+      el('rfNote').textContent = job
+        ? `${job.mode === 'check' ? '확인' : '갱신'} ${job.id} · ${job.state} · ` +
+          `${job.seconds.toFixed(0)}초 · ${job.message}`
+        : `환경 ${status.app_env} · 저장소 ${status.store_backend} · ` +
+          `Postgres ${status.postgres_reachable ? '연결 가능' : '연결 불가 (5단계는 건너뜁니다)'}`;
+
+      // 끝난 순간에 딱 한 번 — 카드가 옛 숫자를 그대로 들고 있으면 갱신이 실패로 보인다.
+      if (job && !running && job.id !== lastJobId) {
+        lastJobId = job.id;
+        if (job.mode === 'run') load();
+      }
+      return running;
+    }
+
+    async function poll() {
+      try {
+        const running = paint(await App.get('/api/refresh/status'));
+        clearTimeout(timer);
+        // 도는 동안만 계속 묻는다. 끝나면 멈춘다 — 가만히 있는 화면이 서버를 두드릴 이유가 없다.
+        if (running) timer = setTimeout(poll, POLL_MS);
+      } catch (error) {
+        el('rfNote').textContent = `상태를 읽지 못했습니다 — ${error.message}`;
+      }
+    }
+
+    async function send(path, payload) {
+      el('rfNote').textContent = '보내는 중…';
+      try {
+        paint(await App.post(path, payload));
+        clearTimeout(timer);
+        timer = setTimeout(poll, POLL_MS);
+      } catch (error) {
+        // 409(이미 돎)·503(못 함) 둘 다 여기로 온다. 서버가 준 문장을 그대로 보여 준다.
+        el('rfNote').textContent = error.message;
+        poll();
+      }
+    }
+
+    function body(check) {
+      return {
+        days: Number(el('rfDays').value),
+        check,
+        skip_pg: el('rfSkipPg').checked,
+      };
+    }
+
+    function bind() {
+      el('rfRunBtn').addEventListener('click', () => {
+        const days = el('rfDays').value;
+        // 되돌릴 수 없는 일은 아니지만(다시 돌리면 고쳐진다) 수 분이 걸리고 외부 API 를
+        // 부른다. 실수로 250거래일을 누르는 것을 한 번 막는다.
+        if (!confirm(`최근 ${days}거래일을 갱신합니다. 몇 분 걸릴 수 있습니다.\n` +
+                     '커밋은 하지 않습니다 — 끝나면 커밋 절차를 로그에 적어 드립니다.')) return;
+        send('/api/refresh/run', body(false));
+      });
+      el('rfCheckBtn').addEventListener('click', () => send('/api/refresh/run', body(true)));
+      el('rfCancelBtn').addEventListener('click', () => {
+        if (confirm('중단하면 지금 단계의 산출물이 반쯤 쓰였을 수 있습니다.\n' +
+                    '다시 돌리면 고쳐집니다. 중단할까요?')) send('/api/refresh/cancel');
+      });
+    }
+
+    return { bind, poll };
+  })();
+
   document.getElementById('reloadBtn').addEventListener('click', load);
+  Refresh.bind();
   load();
+  Refresh.poll();
 })();
 </script>
 </body>

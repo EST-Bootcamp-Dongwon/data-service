@@ -139,6 +139,50 @@ def uses_postgres_store() -> bool:
     return store_backend() == POSTGRES
 
 
+# ==================================================
+# 3-1. REFRESH_API — 화면에서 갱신을 실행할 수 있게 둘 것인가 (ADR-DS-0017)
+# ==================================================
+# `invoke refresh` 와 **같은 사슬**을 화면 버튼이 부른다. 그 버튼은 외부 API 를 부르고
+# 파일을 고치므로, 켜고 끄는 손잡이가 하나 있어야 한다.
+#
+# ⚠️ **환경 분기와는 다른 축이다.** 배포본에서 못 도는 것은 이 값과 무관하게 능력의 문제고
+#    (읽기 전용 파일시스템 · `scripts/` 부재), 이 값은 **돌 수 있는 곳에서 일부러 막는**
+#    손잡이다. README §5 가 `--host 0.0.0.0` 을 안내하므로 LAN 에 열어 두는 경우가 실제로 있다.
+ON = "on"
+OFF = "off"
+REFRESH_API_VALUES: tuple[str, ...] = (ON, OFF)
+
+# 기본은 켜짐이다. 로컬 개발 도구이고, 꺼 두면 "버튼이 왜 없지" 를 먼저 만나기 때문이다.
+DEFAULT_REFRESH_API = ON
+
+
+def refresh_api() -> str:
+    """화면 갱신 API 를 열어 둘 것인가. `on`(기본) 또는 `off`.
+
+    `store_backend()` · `app_env()` 와 **같은 모양**이다 — 어휘 밖 값이면 예외다.
+    `REFRESH_API=false` 를 조용히 기본값(`on`)으로 떨어뜨리면 "껐다고 믿었는데 열려 있는"
+    상태가 되는데, 이 손잡이에서 그 거짓 음성은 방향이 나쁜 쪽이다.
+    """
+    raw = env("REFRESH_API")
+    if not raw:
+        return DEFAULT_REFRESH_API
+
+    value = raw.lower()
+    if value not in REFRESH_API_VALUES:
+        raise ValueError(
+            f"REFRESH_API 값 '{raw}' 을 모른다. 쓸 수 있는 값은 "
+            f"{', '.join(REFRESH_API_VALUES)} 다.\n"
+            f"  화면에서 갱신을 실행한다 : REFRESH_API={ON} (이 값이 기본이라 지워도 같다)\n"
+            f"  실행 경로를 닫는다       : REFRESH_API={OFF} (상태 조회는 그대로 열려 있다)"
+        )
+    return value
+
+
+def refresh_api_enabled() -> bool:
+    """화면에서 갱신을 **실행**할 수 있는가. 상태 조회는 이 값과 무관하게 열려 있다."""
+    return refresh_api() == ON
+
+
 def env(name: str, default: str = "") -> str:
     """환경변수 한 개를 읽는다 — **새 코드가 환경을 만지는 유일한 통로.**
 
@@ -149,6 +193,23 @@ def env(name: str, default: str = "") -> str:
     인증키는 여기가 아니라 `app/core/secrets.py` 로 읽는다 (파일 폴백이 필요하다).
     """
     return os.getenv(name, default).strip()
+
+
+def subprocess_env(**overrides: str) -> dict[str, str]:
+    """자식 프로세스에 넘길 환경 한 벌 (ADR-DS-0017).
+
+    **왜 여기 있나.** 이 모듈이 환경을 읽는 유일한 통로이고
+    (`tests/test_settings.py` §5 가 그 목록을 얼려 둔다), 환경을 **자식에게 건네는 것**도
+    같은 축의 일이다. 갱신 실행기가 `os.environ.copy()` 를 직접 부르면 통로가 하나 더 생긴다.
+
+    - 지금 프로세스의 환경을 통째로 물려준다. 인증키(`KRX_API_KEY` 등)가 그대로 따라가야
+      자식 스크립트가 뜬다 — 골라 담으면 키 하나가 빠졌을 때 자식이 **401 로** 죽는다.
+    - `overrides` 는 위에 얹는다. **빈 값은 얹지 않는다** — 빈 문자열로 덮으면
+      "정의는 됐는데 비어 있다"가 되어 `env()` 의 규약(빈 값 = 없음)과 어긋난다.
+    """
+    child = dict(os.environ)
+    child.update({name: value for name, value in overrides.items() if value})
+    return child
 
 
 def app_env() -> str:

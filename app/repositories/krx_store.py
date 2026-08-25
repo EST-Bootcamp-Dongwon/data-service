@@ -454,6 +454,20 @@ def snapshot_live(bas_dd: str = "", market: Optional[str] = None) -> Tuple[List[
     return [], (bas_dd or ""), "live"
 
 
+def clear_live_cache() -> int:
+    """라이브 조회 메모리 캐시를 비운다. 버린 항목 수를 돌려준다.
+
+    수집을 막 끝낸 직후에 부른다 (ADR-DS-0017). 그전에 원본이 비어 있어 라이브로 답한
+    응답이 10분(`LIVE_CACHE_TTL`) 동안 남아 있으면, **캐시는 방금 찼는데 화면은 계속
+    `krx-live-memo`** 라고 말한다. 값 자체는 같은 KRX 자료라 틀리지 않지만, 출처 배지가
+    저장소 상태를 잘못 전한다 (ADR-DS-0009 — 배지는 "무엇을 근거로 말하는가" 다).
+    """
+    with _live_lock:
+        dropped = len(_live_cache)
+        _live_cache.clear()
+    return dropped
+
+
 def series_tiered(code: str, days: int = 250,
                   end: Optional[str] = None) -> Tuple[List[Dict], str]:
     """`series()` 와 같되 **어느 층에서 나왔는지**를 함께 돌려준다 — `(행 목록, tier)`.

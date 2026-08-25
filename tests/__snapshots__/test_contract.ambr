@@ -88,6 +88,8 @@
       'samples',
       'window',
     ]),
+    'GET /api/refresh/status': list([
+    ]),
     'GET /api/research/glossary': list([
       'limit',
       'q',
@@ -181,6 +183,10 @@
     'POST /api/krx/sync': list([
       'days',
     ]),
+    'POST /api/refresh/cancel': list([
+    ]),
+    'POST /api/refresh/run': list([
+    ]),
     'POST /api/research/export/html': list([
     ]),
     'POST /api/research/export/md': list([
@@ -216,6 +222,7 @@
     'GET /api/krx/stocks',
     'GET /api/krx/stocks/{code}/ohlcv',
     'GET /api/portfolio/frontier',
+    'GET /api/refresh/status',
     'GET /api/research/glossary',
     'GET /api/research/industries',
     'GET /api/research/industries/resolve',
@@ -242,6 +249,8 @@
     'GET /api/yf/quote',
     'GET /health',
     'POST /api/krx/sync',
+    'POST /api/refresh/cancel',
+    'POST /api/refresh/run',
     'POST /api/research/export/html',
     'POST /api/research/export/md',
     'POST /api/research/runs',

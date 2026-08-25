@@ -78,6 +78,25 @@ def _cache_write(name: str, payload: dict) -> None:
         pass
 
 
+def invalidate() -> int:
+    """캐시 파일을 지운다. 지운 파일 수를 돌려준다. (재빌드 직후에 쓴다)
+
+    `summary()` 는 **데이터 상태 카드까지 통째로** 캐시한다(5분). 그래서 갱신이 끝난 뒤
+    이것을 부르지 않으면, 자료는 최신인데 카드는 최대 5분 동안 `17거래일 전` 을 계속
+    말한다 — 갱신을 방금 누른 사람에게는 **실패로 보인다** (ADR-DS-0017).
+
+    캐시 모듈과 마찬가지로 예외를 밖으로 내보내지 않는다. 못 지워도 TTL 이 곧 지운다.
+    """
+    removed = 0
+    for name in ("ticker", "summary"):
+        try:
+            (CACHE_DIR / f"{name}.json").unlink()
+            removed += 1
+        except OSError:
+            pass                              # 없으면 지울 것도 없다
+    return removed
+
+
 def _now_kst() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
 
@@ -349,9 +368,13 @@ def _data_status() -> List[dict]:
                           "다시 만들어도 이 상태는 그대로입니다 — Postgres 전환이 이것을 해소합니다 "
                           "(ADR-DS-0011 S6).")
             else:
+                # 로컬에는 **누를 수 있는 버튼**이 같은 화면 아래에 있다 (ADR-DS-0017).
+                # 셸 명령을 먼저 적지 않는 이유 — 지금 이 카드를 보고 있는 사람은 브라우저
+                # 앞에 있고, 터미널로 옮겨 가는 것이 처방의 절반을 차지한다.
                 detail = ("원본 캐시도 배포용 축약본도 없어 요청할 때 KRX 를 직접 부릅니다. "
                           "하루치 전 종목은 되지만 여러 날치가 필요한 화면(`/quant` · 캔들)은 막힙니다. "
-                          "`invoke refresh` 로 수집부터 축약본까지 한 번에 만들 수 있습니다.")
+                          "아래 **자료 갱신**에서 바로 실행하거나, 셸에서 `invoke refresh` 를 "
+                          "돌리면 수집부터 축약본까지 한 번에 만들어집니다.")
 
         rows.append({"key": "krx-cache", "label": "KRX 시세", "ok": True,
                      "grade": grade, "grade_text": grade_text, "detail": detail})
@@ -386,7 +409,11 @@ def _data_status() -> List[dict]:
                           f"{snap['size_kb']}KB"
                           + (f" · 마지막 생성 {snap['generated_at']}" if snap.get("generated_at") else "")
                           + (f" — {snap['gap']['message']} "
-                             "`invoke refresh` 로 다시 만든 뒤 커밋·push 하면 배포본까지 반영됩니다."
+                             + ("아래 **자료 갱신** 또는 `invoke refresh` 로 다시 만든 뒤 "
+                                "커밋·push 하면 배포본까지 반영됩니다."
+                                if settings.app_env() != settings.VERCEL else
+                                "`invoke refresh` 로 로컬에서 다시 만든 뒤 커밋·push 하면 "
+                                "배포본까지 반영됩니다.")
                              if snap.get("gap") else ""),
             })
     except Exception as error:

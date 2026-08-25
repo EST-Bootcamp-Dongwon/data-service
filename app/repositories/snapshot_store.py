@@ -66,10 +66,17 @@ def load() -> Dict:
 
 
 def reload() -> Dict:
-    """메모리에 올려 둔 스냅샷을 버리고 다시 읽는다. (재빌드 직후 로컬에서 쓴다)"""
-    global _snapshot
+    """메모리에 올려 둔 스냅샷을 버리고 다시 읽는다. (재빌드 직후 로컬에서 쓴다)
+
+    ⚠️ **종목코드 색인(`_code_index`)까지 함께 버려야 한다.** 스냅샷만 비우면
+    `get(code)` 가 계속 옛 행을 돌려준다 — 파일은 새것인데 한 종목만 옛날 값이라
+    화면에서 보고 알아채기가 매우 어렵다. (ADR-DS-0017 에서 화면 갱신 버튼이
+    이 함수를 부르기 시작하면서 드러난 구멍이다.)
+    """
+    global _snapshot, _code_index
     with _lock:
         _snapshot = None
+        _code_index = None
     return load()
 
 

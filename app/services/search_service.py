@@ -122,6 +122,19 @@ def get_index() -> List[dict]:
     return _index
 
 
+def reload() -> int:
+    """마스터 파일을 다시 읽어 색인을 새로 만든다. 돌려주는 값은 올라간 종목 수.
+
+    `stock_master.json` 은 `scripts/build_stock_master.py` 가 다시 쓴다. 색인은 기동 때
+    한 번만 올라오므로, 그 뒤로는 **서버를 껐다 켜야만** 신규 상장 종목이 검색됐다.
+    화면에서 갱신을 돌릴 수 있게 되면서(ADR-DS-0017) 그 재기동이 필요 없어야 한다.
+    """
+    global _index
+    with _lock:
+        _index = None
+    return len(get_index())
+
+
 def warm_up() -> int:
     """서버 시작 시 미리 읽어 둔다. 첫 검색이 느려지지 않게 하려는 것.
 
