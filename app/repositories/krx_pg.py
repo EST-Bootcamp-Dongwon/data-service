@@ -53,7 +53,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import text
 
-from app.core import db, settings
+from app.core import db
 
 # `krx_store.snapshot()`/`series()` 가 돌려주는 키와 **순서**. `SELECT *` 를 쓰던 자리라
 # 컬럼을 명시하지 않으면 키 집합이 조용히 달라진다.
@@ -166,12 +166,10 @@ def _fetch(sql: str, params: Optional[Dict] = None) -> List[Any]:
         #    "DB 를 안 띄우고 앱을 켠다" 가 새 clone 의 **첫 경험**이 됐다. 그때 화면에
         #    `[Errno 111] Connect call failed` 만 남으면 원인이 저장소 전환으로 안 보인다.
         #    (`OSError` 만 잡는다 — 인증 실패·DB 이름 오타는 asyncpg 가 더 정확히 말한다.)
-        raise RuntimeError(
-            f"시세 저장소(Postgres)에 못 붙었다: {exc}\n"
-            f"  붙는 곳: {settings.database_settings().safe_url()}\n"
-            "  DB 를 띄운다      : docker compose --profile local-db up -d\n"
-            "  호스트 셸이라면   : DATABASE_URL 의 @db:5432 를 @localhost:5432 로 바꾼다\n"
-            "  SQLite 로 되돌린다: STORE_BACKEND=sqlite (S5 이전과 같아진다)"
+        #    공통 처방은 `db.unreachable()` 한 곳에 있고, **되돌리는 법만** 여기서 얹는다.
+        raise db.unreachable(
+            exc, what="시세 저장소(Postgres)",
+            extra=("SQLite 로 되돌린다: STORE_BACKEND=sqlite (S5 이전과 같아진다)",),
         ) from exc
 
 

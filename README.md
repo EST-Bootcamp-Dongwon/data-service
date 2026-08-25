@@ -39,12 +39,12 @@
 |---|---|
 | 프레임워크 | FastAPI 0.141 + Uvicorn 0.52 · Python 3.12 |
 | 원천 | **9종** — 클라이언트는 [`app/clients/`](app/clients) 에 하나씩 있다 |
-| 엔드포인트 | **55개** · 라우터 15파일 ([§7 API 목록](#7-api-목록)) |
+| 엔드포인트 | **62개** · 라우터 16파일 ([§7 API 목록](#7-api-목록)) |
 | 화면 | **10개** ([§6 화면](#6-화면)) |
 | 시세 저장소 | **로컬은 Postgres** (`ohlcv`·`securities`) — **297거래일 · 821,928행 · 2,875종목 · 111.9MB** (20250609~20260824, 2026-08-25 실측). 쓰기는 아직 SQLite 캐시(129MB)를 거친다 — S8 |
 | 저장계층 전환 | Postgres 로 옮기는 중. 아홉 걸음 중 **S5 완료** — **로컬 화면은 이제 Postgres 로 읽는다**(SQLite 파일을 치우고 화면 10개 + API 18경로 전부 200 으로 확인). 배포본은 아직 `sqlite` 다 — `DATABASE_URL` 을 주는 것이 S6 → [ADR-DS-0011](docs/decisions/0011-storage-migration-order.md) · [ADR-DS-0015](docs/decisions/0015-read-adapter.md) · [ADR-DS-0018](docs/decisions/0018-flip-read-path-to-postgres.md) |
-| 수집 보관함 | `clip` 표 DDL 은 섰고 **쓰는 코드는 아직 없다** → [ADR-DS-0008](docs/decisions/0008-clip-store.md) |
-| 검증 | `invoke check` 하나 — **275 tests** · 이미지 553MB |
+| 수집 보관함 | **로컬에서 동작한다** — `/stock` 에서 담기·목록·필터·산업 자동유도 (ADR-DS-0019). ⚠️ **자동 수집은 아직 0개**(사람이 손으로 담는 길만) · Postgres 전용이라 배포본은 S6 뒤 → [ADR-DS-0008](docs/decisions/0008-clip-store.md) · [ADR-DS-0019](docs/decisions/0019-clip-store-and-first-screen.md) |
+| 검증 | `invoke check` 하나 — **309 tests** · 이미지 553MB |
 | 배포 | Vercel ([§15 배포·공유](#15-배포--공유-)) |
 
 > ⚠️ 목업이 아니다. 화면에 보이는 시세·거래대금·시가총액은 전부 KRX 가 준 실제 값이다.
@@ -99,7 +99,7 @@ KRX·KOSIS·DART 를 쓰려면 [§3 환경 구성](#3-환경-구성)에서 키�
 | [4. 시세 캐시 채우기](#4-시세-캐시-채우기-최초-1회) | 최초 1회 · 약 7분 · 그다음은 `invoke refresh` 또는 화면 버튼 |
 | [5. 실행](#5-실행) | 도커 · uvicorn |
 | [6. 화면](#6-화면) | 10개 화면이 각각 무엇을 하나 |
-| [7. API 목록](#7-api-목록) | 엔드포인트 55개 전수표 |
+| [7. API 목록](#7-api-목록) | 엔드포인트 62개 전수표 |
 | [8. 강의 원본과 달라진 점](#8-강의-원본과-달라진-점) | 계보 |
 | [9. KRX OpenAPI 로 알 수 없는 것](#9-krx-openapi로-알-수-없는-것-) | 한계 |
 | [10. 동작 확인 예시](#10-동작-확인-예시) | curl 로 따라 하기 |
@@ -877,6 +877,27 @@ HTML5 `<canvas>` 2D 컨텍스트만으로 만든 게임. 외부 라이브러리 
 > `503`(이 프로세스가 못 한다) · `409`(하나가 돌고 있다) · `422`(`days` 가 어휘 밖).
 > ⚠️ **커밋하지 않는다.** push 가 곧 Vercel 배포라 그 시점은 사람이 정한다.
 
+### 자료 보관함 — `/api/clips/...` ★
+
+| Method | Path | 설명 | 성공 |
+|--------|------|------|------|
+| GET | `/api/clips/status` | 쓸 수 있나 · 못 쓰면 왜인가 · 어휘 목록 | 200 |
+| GET | `/api/clips/facets` | 필터 UI 가 쓸 값 — 종류별 개수 · 연월 · 태그 | 200 |
+| GET | `/api/clips` | 담은 것 목록 (`screen`·`kind`·`code`·`industry`·`year`·`month`·`tag`·`q`) | 200 |
+| POST | `/api/clips` | 한 건 담는다 | 200 |
+| GET | `/api/clips/{clip_id}` | 한 건 | 200 |
+| PATCH | `/api/clips/{clip_id}` | 메모·태그·산업을 고친다 | 200 |
+| DELETE | `/api/clips/{clip_id}` | 한 건 지운다 | 200 |
+
+> ⚠️ **Postgres 전용이라 배포본은 아직 잠겨 있다** (ADR-DS-0019). `DATABASE_URL` 을 주는
+> 것이 S6 이고, 잠금은 **왜·언제**를 함께 말한다. **막는 것은 환경이 아니라 능력이다** —
+> `APP_ENV` 가 아니라 **표에 붙어 보고** 판단하므로 Supabase 를 붙인 날 그대로 살아난다.
+> **`status` 만은 어디서든 200 이다** — 화면이 버튼을 잠글지 정하려면 이유를 받아야 한다.
+> ⚠️ **중복은 오류가 아니다.** 같은 링크를 다시 담으면 기존 것을 돌려주고
+> `created=false` 로 밝힌다. 추적 파라미터·`www.`·끝 슬래시 차이는 정규화가 흡수한다.
+> ⚠️ **본문은 담지 않는다** — 링크·제목·출처·발행일·내 메모까지다 (ADR-DS-0008).
+> 연·월 필터는 **`occurred_at`(자료 날짜)** 기준이고 `saved_at`(담은 시각)이 아니다.
+
 ### KRX 일별 시세 — `/api/krx/...`
 
 | Method | Path | 설명 | 성공 |
@@ -1298,7 +1319,7 @@ WSL과 Windows 호스트 간 네트워크가 분리돼 있을 수 있다.
 ([ADR-DS-0012 §8](docs/decisions/0012-collection-scope-and-ia.md)).
 
 ```
-~~S3 적재기~~ → ~~S4 읽기 어댑터~~ → ~~S5 기본값 뒤집기~~ → **S6 Supabase** → clip_store + 공시·보고서 수집 → 화면 → 뉴스 → 커뮤니티·동영상
+~~S3 적재기~~ → ~~S4 읽기 어댑터~~ → ~~S5 기본값 뒤집기~~ → ~~clip_store + 화면~~ → **공시·보고서 수집** → S6 Supabase → 뉴스 → 커뮤니티·동영상
 ```
 
 ### 저장계층 — 아홉 걸음 중 S6 부터

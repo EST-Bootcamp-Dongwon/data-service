@@ -34,6 +34,7 @@ from app.core import paths
 # /docs 에 표시할 설명 글 (분량이 길어 별도 파일로 뺐다)
 from app.core.api_docs import API_DESCRIPTION, TAGS_METADATA
 from app.routers import page_router  # 화면 (HTML)
+from app.routers.clip_router import router as clip_router  # 자료 보관함 (/api/clips/...)
 from app.routers.dashboard_router import (
     router as dashboard_router,  # 대시보드 집계 (/api/dashboard/...)
 )
@@ -150,6 +151,7 @@ app.add_middleware(
 # include_router 를 호출하는 순간 router 에 정의된 모든 경로가 app 에 붙는다.
 app.include_router(user_router)
 app.include_router(krx_router)
+app.include_router(clip_router)
 app.include_router(kosis_router)
 app.include_router(fred_router)
 app.include_router(search_router)

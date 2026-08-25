@@ -305,6 +305,29 @@
   ⚠️ 전역 규칙(`~/.claude/CLAUDE.md` §7.1)은 "`docs/`는 `.gitignore`"라고 하는데
   **이 레포는 한 단계 다르다** — ADR 이 코드와 같은 커밋에 묶여야 하므로 `docs/`를 커밋한다.
   그래서 여기서는 gitignore 대신 **양쪽 다 보관**이 된다.
+- **자료 보관함은 `app/repositories/clip_store.py` + `app/routers/clip_router.py` 다**
+  (ADR-DS-0019, 2026-08-25). ⭐ **Postgres 전용이라 배포본은 아직 잠겨 있다** —
+  `DATABASE_URL` 을 주는 것이 S6 이고, 그 잠금은 **왜·언제**를 함께 말한다.
+  - **막는 것은 환경이 아니라 능력이다** — `availability()` 는 `APP_ENV` 를 보지 않고
+    **표에 붙어 보고** 판단한다. 그래야 Supabase 를 붙인 날 고치지 않아도 살아난다.
+  - **경로는 배포본에서도 등록하고 실행만 `503`.** ⚠️ 단 `GET /api/clips/status` 만은
+    `503` 을 내지 않는다 — 화면이 버튼을 잠글지 정하려면 이유를 200 으로 받아야 한다.
+  - **`kind` 별 검증은 라우터에 둔다** (`REQUIRED_PAYLOAD`). `payload` 가 jsonb 라 표가
+    못 본다. ⚠️ **DDL 이 이미 거는 것은 다시 걸지 않는다** — `clip_kind_ck`·
+    `clip_link_needs_url_ck` 는 표 소관이고, `tests/test_clip.py` 가 **DDL 파일을 읽어**
+    코드 어휘와 대조해 두 벌이 되지 않게 한다.
+  - **중복은 오류가 아니다.** 같은 링크를 다시 담으면 기존 것을 돌려주고 `created=false`.
+    `url_key` 정규화가 스킴·`www.`·추적 파라미터·프래그먼트를 떼고 질의를 정렬한다.
+    ⚠️ 루트의 `/` 는 남긴다(떼면 서로 다른 사이트가 뭉친다) · **네트워크를 타지 않는다**.
+  - ⚠️ **`reassign_industries()` 의 `WHERE industry_source = 'auto'` 한 줄이
+    `industry_source` 컬럼이 존재하는 이유 전부다.** 빠지면 사람이 고친 값이 조용히 사라진다.
+  - ⚠️ **화면에서는 `onStockResolved()` 를 `render()` 맨 앞에 둔다.** 뒤에 두면 차트
+    라이브러리가 안 뜨는 환경에서 그 예외에 보관함이 **같이 죽는다**(jsdom 실측).
+  - **접속 실패 처방은 `db.unreachable()` 한 곳에서 만든다.** 공통은 그쪽이,
+    **되돌리는 법만** 부르는 쪽이 `extra` 로 얹는다 — 시세는 SQLite 로 되돌아가고
+    보관함은 되돌아갈 곳이 없다.
+  - ⚠️ **자동 수집은 아직 0개다.** 사람이 손으로 담는 길만 열렸다(DART·네이버는 다음).
+    담기 버튼도 `/stock` 하나뿐이다 — 두 번째 화면을 붙일 때 공용 조각으로 뺀다.
 - **`clip.kind`는 일곱 값이다** — `news`·`filing`·`dataset`·`report`·`memo`·`post`·`video`
   (ADR-DS-0014 §8, 2026-08-23). 수집 갈래가 여섯이고 그것이 `kind` 넷으로 접히며
   `dataset`·`report`·`memo`는 갈래가 아니라 **내가 담는 것**이라 원래부터 있었다.

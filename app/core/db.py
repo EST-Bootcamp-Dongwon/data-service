@@ -82,7 +82,7 @@ import threading  # 동기 다리의 전용 루프 스레드 (§2-1)
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Sequence
 from uuid import uuid4
 
 from sqlalchemy import text
@@ -612,6 +612,34 @@ def _failure_hint(db: settings.DatabaseSettings, error: str = "") -> str:
         "로컬 DB 가 떠 있는지 본다:  docker compose --profile local-db up -d\n"
         "이미 떠 있다면 포트 충돌을 본다:  docker compose --profile local-db ps"
     )
+
+
+def unreachable(error: BaseException, *, what: str,
+                extra: Sequence[str] = ()) -> RuntimeError:
+    """접속 실패를 **처방을 붙여** 다시 던질 예외로 만든다 (ADR-DS-0018 · ADR-DS-0019).
+
+    ⚠️ **삼키는 것이 아니다.** 예외는 그대로 올라가고 바뀌는 것은 메시지뿐이다.
+    빈 결과로 바꾸면 DB 장애가 "자료 없음" 으로 위장돼 화면이 조용히 강등된다.
+
+    ⚠️ **여기 한 곳에만 있다.** 처음에는 `krx_pg._fetch()` 안에 있었는데, 자료 보관함이
+    같은 처방을 필요로 하면서 두 벌이 될 뻔했다. 공통은 이쪽이 만들고 **되돌리는 법만**
+    부르는 쪽이 `extra` 로 얹는다 — 그것은 저장소마다 다르다(시세는 SQLite 로 되돌아가고
+    보관함은 되돌아갈 곳이 없다).
+
+    ⚠️ 이 함수는 위층을 부르지 않는다. `extra` 가 문자열인 것이 그 경계다
+    (`tests/test_db.py` §5 가 방향을 검사한다).
+    """
+    target = settings.database_settings()
+    lines = [f"{what}에 못 붙었다: {error}", f"  붙는 곳: {target.safe_url()}"]
+    if target.app_env == settings.VERCEL:
+        # 배포본에는 `docker compose` 가 없다. 따를 수 없는 처방을 띄우면 시간만 버린다.
+        lines.append("  Vercel 프로젝트 설정 → Environment Variables 의 DATABASE_URL 을 확인한다.")
+        lines.append(f"  포트는 {settings.VERCEL_DB_PORT}(transaction 모드 풀러)여야 한다.")
+    else:
+        lines.append("  DB 를 띄운다      : docker compose --profile local-db up -d")
+        lines.append("  호스트 셸이라면   : DATABASE_URL 의 @db:5432 를 @localhost:5432 로 바꾼다")
+    lines += [f"  {line}" for line in extra]
+    return RuntimeError("\n".join(lines))
 
 
 async def ping(timeout: float = PING_TIMEOUT_SECONDS) -> Probe:

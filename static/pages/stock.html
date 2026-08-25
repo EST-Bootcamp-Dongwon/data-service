@@ -240,6 +240,84 @@
   </section>
 
   <!-- ── 터미널에서 확인하기 ───────────────────── -->
+  <!-- ══ 자료 보관함 (ADR-DS-0008 · ADR-DS-0019) ══════════════════════════════
+       ⚠️ 이 패널은 **Postgres 에 붙었을 때만** 살아 있다. 배포본은 아직 못 붙으므로
+          (S6 이 푼다) 잠기고, 왜 잠겼는지와 언제 되는지를 함께 적는다 —
+          따를 수 없는 처방을 띄우지 않는다. -->
+  <section class="card" id="clipCard">
+    <h2>자료 담기 <span class="chip">POST /api/clips</span>
+      <span class="muted" id="clipScope"></span></h2>
+    <p class="hint">
+      지금 보고 있는 종목에 관한 것을 담아 둔다. <b>본문은 담지 않는다</b> —
+      링크·제목·출처·발행일과 내 메모까지다. 산업은 종목에서 자동으로 붙고,
+      직접 고치면 다시 유도해도 덮이지 않는다.
+    </p>
+
+    <div id="clipBlocked" class="hint" hidden
+         style="border-left:3px solid #d9822b;padding-left:10px"></div>
+
+    <div id="clipForm" hidden>
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <label>종류
+          <select id="clipKind">
+            <option value="memo">메모</option>
+            <option value="news">뉴스</option>
+            <option value="filing">공시·보고서</option>
+            <option value="post">커뮤니티</option>
+            <option value="video">동영상</option>
+            <option value="dataset">데이터 스냅샷</option>
+          </select>
+        </label>
+        <label style="flex:1 1 260px">제목
+          <input id="clipTitle" type="text" maxlength="500" placeholder="한 줄로 무엇인지" />
+        </label>
+        <label>자료 날짜
+          <input id="clipDate" type="date" title="자료 자체의 날짜. 담은 시각이 아니다" />
+        </label>
+      </div>
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">
+        <label style="flex:1 1 320px" id="clipUrlWrap">링크
+          <input id="clipUrl" type="url" maxlength="2000" placeholder="https://…" />
+        </label>
+        <label>출처
+          <input id="clipSource" type="text" maxlength="100" placeholder="연합뉴스 · DART" />
+        </label>
+        <label style="flex:1 1 160px">태그
+          <input id="clipTags" type="text" placeholder="실적, 반도체 (쉼표)" />
+        </label>
+      </div>
+      <div class="row" style="gap:8px;align-items:flex-end;margin-top:8px">
+        <label style="flex:1 1 100%">메모
+          <input id="clipNote" type="text" placeholder="왜 담았는지 — 나중에 이걸로 찾는다" />
+        </label>
+      </div>
+      <div class="row" style="gap:8px;margin-top:10px;align-items:center">
+        <button id="btnClipSave">담기</button>
+        <span class="status" id="clipStatus"></span>
+      </div>
+    </div>
+
+    <div id="clipListWrap" hidden style="margin-top:18px">
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+        <strong style="font-size:14px">담아 둔 것</strong>
+        <select id="clipFilterKind"><option value="">종류 전체</option></select>
+        <select id="clipFilterMonth"><option value="">기간 전체</option></select>
+        <select id="clipFilterTag"><option value="">태그 전체</option></select>
+        <label style="margin-left:auto">
+          <input type="checkbox" id="clipAllStocks" /> 이 종목 말고 전부 보기
+        </label>
+      </div>
+      <table style="margin-top:10px">
+        <thead>
+          <tr><th style="width:88px">종류</th><th>제목</th>
+              <th style="width:110px">자료 날짜</th><th style="width:120px">종목·산업</th>
+              <th style="width:60px"></th></tr>
+        </thead>
+        <tbody id="clipBody"></tbody>
+      </table>
+    </div>
+  </section>
+
   <section class="card">
     <h2>터미널에서 같은 API 호출하기</h2>
 <pre class="cmd"><b>curl 'http://127.0.0.1:8000/api/stock/005930'</b>                        # 국내 (코스피)
@@ -324,6 +402,11 @@
   }
 
   function render(data) {
+    // ⚠️ **보관함을 먼저 옮긴다** (ADR-DS-0019). 아래 그리기 중 하나라도 던지면 `search()`
+    //    의 catch 로 빠져 나가는데, 뒤에 두면 그때 보관함이 **같이 죽는다** —
+    //    차트 라이브러리(CDN)가 안 뜬 상태에서 실제로 그랬다(jsdom 실주행 실측).
+    //    담아 두는 것은 차트가 그려지는 것과 아무 상관이 없다.
+    onStockResolved(data);
     renderSummary(data);
     renderTiles(data);
     drawPrice(data);
@@ -876,9 +959,198 @@
     history.replaceState(null, '', `${location.pathname}?${params}`);
   }
 
+  // ==================================================
+  // 6. 자료 보관함 — 담기 · 목록 · 필터 (ADR-DS-0008 · ADR-DS-0019)
+  // ==================================================
+  // ⚠️ **국내 종목일 때만 종목에 묶는다.** 야후 티커(AAPL)는 `securities` 에 없어
+  //    `security_id` 가 NULL 이 되고, 그러면 "이 종목의 자료" 라는 말이 성립하지 않는다.
+  //    담기 자체는 되게 두되(거시 메모도 자료다) 목록은 전체 보기로 떨어뜨린다.
+  const clip = { ready: false, code: null, name: null };
+
+  const KIND_LABEL = {
+    memo: '메모', news: '뉴스', filing: '공시', post: '커뮤니티',
+    video: '동영상', dataset: '스냅샷', report: '리포트',
+  };
+  // URL 이 반드시 있어야 하는 종류. 서버(`clip_router`)·DDL 과 **같은 집합**이다.
+  const LINK_KINDS = new Set(['news', 'filing', 'post', 'video']);
+
+  /** 보관함을 쓸 수 있는지 먼저 묻고, 못 쓰면 이유와 함께 잠근다. */
+  async function initClips() {
+    try {
+      const st = await App.get('/api/clips/status');
+      clip.ready = !!st.available;
+      if (!clip.ready) {
+        // ⚠️ 처방을 버리지 않는다. 배포본에서는 이것이 정상 상태라, "고장" 이 아니라
+        //    "아직" 이라는 것을 사람이 읽을 수 있어야 한다.
+        $('clipBlocked').hidden = false;
+        $('clipBlocked').innerHTML =
+          `<b>지금은 담을 수 없습니다 — ${esc(st.reason)}</b>` +
+          (st.hints || []).map((h) => `<br><code>${esc(h)}</code>`).join('');
+        return;
+      }
+      $('clipForm').hidden = false;
+      $('clipListWrap').hidden = false;
+      $('clipKind').addEventListener('change', syncClipForm);
+      $('btnClipSave').addEventListener('click', saveClip);
+      ['clipFilterKind', 'clipFilterMonth', 'clipFilterTag', 'clipAllStocks']
+        .forEach((id) => $(id).addEventListener('change', loadClips));
+      syncClipForm();
+    } catch (e) {
+      $('clipBlocked').hidden = false;
+      $('clipBlocked').textContent = `보관함 상태를 확인하지 못했습니다 — ${e.message}`;
+    }
+  }
+
+  /** 종류에 따라 링크 칸의 필수 여부를 바꾼다. 서버가 막기 전에 화면이 먼저 알려 준다. */
+  function syncClipForm() {
+    const needsUrl = LINK_KINDS.has($('clipKind').value);
+    $('clipUrlWrap').querySelector('input').required = needsUrl;
+    $('clipUrlWrap').firstChild.textContent = needsUrl ? '링크 (필수)' : '링크';
+  }
+
+  /** 종목이 바뀌면 담기 대상과 목록을 그 종목으로 옮긴다. */
+  function onStockResolved(d) {
+    if (!clip.ready) return;
+    const isKorean = d.market === 'KR' && /^\d{6}$/.test(d.code || '');
+    clip.code = isKorean ? d.code : null;
+    clip.name = d.name || null;
+    $('clipScope').textContent = isKorean
+      ? `— ${d.name} (${d.code})`
+      : '— 해외 종목이라 종목에 묶이지 않습니다 (메모는 담깁니다)';
+    if (!isKorean) $('clipAllStocks').checked = true;
+    if (!$('clipTitle').value) $('clipTitle').value = '';
+    loadFacets();
+    loadClips();
+  }
+
+  /** 담는다. 같은 링크를 다시 담아도 오류가 아니다 — 서버가 기존 것을 돌려준다. */
+  async function saveClip() {
+    const kind = $('clipKind').value;
+    const title = $('clipTitle').value.trim();
+    const note = $('clipNote').value.trim();
+    const url = $('clipUrl').value.trim();
+    if (!title) { setClipStatus('제목을 적어 주세요.', true); return; }
+    if (LINK_KINDS.has(kind) && !url) { setClipStatus('이 종류는 링크가 필요합니다.', true); return; }
+    if (kind === 'memo' && !note) { setClipStatus('메모는 내용이 필요합니다.', true); return; }
+
+    const body = {
+      kind, screen: 'stock', title,
+      url: url || null,
+      source: $('clipSource').value.trim() || null,
+      occurred_at: $('clipDate').value || null,
+      code: clip.code,
+      note: note || null,
+      tags: $('clipTags').value.split(',').map((t) => t.trim()).filter(Boolean),
+      payload: {},
+    };
+    // 공시는 접수번호가 있어야 나중에 DART 원문을 되찾는다. 링크에서 뽑아 본다.
+    if (kind === 'filing') {
+      const hit = /rcpNo=(\d+)/.exec(url) || /(\d{14})/.exec(url);
+      body.payload.rcept_no = hit ? hit[1] : url;
+    }
+    if (kind === 'dataset') {
+      body.payload.source = body.source || 'stock';
+      body.payload.params = { code: clip.code, months: state.months };
+    }
+
+    setClipStatus('담는 중…');
+    try {
+      const saved = await App.post('/api/clips', body);
+      setClipStatus(saved.created ? '담았습니다.' : '이미 담아 둔 것입니다.');
+      ['clipTitle', 'clipUrl', 'clipSource', 'clipTags', 'clipNote']
+        .forEach((id) => { $(id).value = ''; });
+      loadFacets();
+      loadClips();
+    } catch (e) {
+      setClipStatus(e.message, true);
+    }
+  }
+
+  function setClipStatus(text, isError = false) {
+    const el = $('clipStatus');
+    el.textContent = text;
+    el.style.color = isError ? 'var(--down, #c0392b)' : '';
+  }
+
+  /** 필터 선택지를 서버에서 받아 채운다. 없는 값을 고르게 두지 않는다. */
+  async function loadFacets() {
+    if (!clip.ready) return;
+    const scope = $('clipAllStocks').checked ? '' : (clip.code || '');
+    try {
+      const f = await App.get(`/api/clips/facets?screen=stock${scope ? `&code=${scope}` : ''}`);
+      fill($('clipFilterKind'), '종류 전체',
+           f.kinds.map((k) => [k.kind, `${KIND_LABEL[k.kind] || k.kind} (${k.count})`]));
+      fill($('clipFilterMonth'), '기간 전체',
+           f.months.map((m) => [m.month, `${m.month} (${m.count})`]));
+      fill($('clipFilterTag'), '태그 전체',
+           f.tags.map((t) => [t.tag, `${t.tag} (${t.count})`]));
+    } catch { /* 필터가 비어도 목록은 보여야 한다 */ }
+  }
+
+  /** select 를 다시 채우되 **고른 값은 지키다.** 안 지키면 필터를 바꿀 때마다 초기화된다. */
+  function fill(select, head, options) {
+    const keep = select.value;
+    select.innerHTML = `<option value="">${esc(head)}</option>` +
+      options.map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join('');
+    if (options.some(([v]) => v === keep)) select.value = keep;
+  }
+
+  async function loadClips() {
+    if (!clip.ready) return;
+    const params = new URLSearchParams({ screen: 'stock', size: '50' });
+    if (!$('clipAllStocks').checked && clip.code) params.set('code', clip.code);
+    if ($('clipFilterKind').value) params.set('kind', $('clipFilterKind').value);
+    if ($('clipFilterTag').value) params.set('tag', $('clipFilterTag').value);
+    const ym = $('clipFilterMonth').value;
+    if (ym) { params.set('year', ym.slice(0, 4)); params.set('month', ym.slice(5, 7)); }
+
+    try {
+      const page = await App.get(`/api/clips?${params}`);
+      renderClips(page);
+    } catch (e) {
+      $('clipBody').innerHTML =
+        `<tr><td class="empty" colspan="5">${esc(e.message)}</td></tr>`;
+    }
+  }
+
+  function renderClips(page) {
+    if (!page.items.length) {
+      $('clipBody').innerHTML =
+        '<tr><td class="empty" colspan="5">아직 담아 둔 것이 없습니다.</td></tr>';
+      return;
+    }
+    $('clipBody').innerHTML = page.items.map((c) => {
+      const title = c.url
+        ? `<a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">${esc(c.title)}</a>`
+        : esc(c.title);
+      const where = c.code ? `${esc(c.name || '')} <span class="muted">${esc(c.code)}</span>` : '-';
+      const industry = c.industry_code
+        ? `<br><span class="muted" title="${c.industry_source === 'manual' ? '직접 고친 값' : '종목에서 자동 유도'}">${esc(c.industry_code)}${c.industry_source === 'manual' ? ' ✎' : ''}</span>`
+        : '';
+      return `<tr>
+        <td><span class="chip">${esc(KIND_LABEL[c.kind] || c.kind)}</span></td>
+        <td>${title}${c.note ? `<br><span class="muted">${esc(c.note)}</span>` : ''}
+            ${(c.tags || []).map((t) => `<span class="chip">${esc(t)}</span>`).join(' ')}</td>
+        <td>${esc(c.occurred_at || '-')}</td>
+        <td>${where}${industry}</td>
+        <td><button class="ghost" data-clip-del="${c.clip_id}" title="지운다">✕</button></td>
+      </tr>`;
+    }).join('');
+
+    $('clipBody').querySelectorAll('[data-clip-del]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        try {
+          await App.del(`/api/clips/${btn.dataset.clipDel}`);
+          loadFacets();
+          loadClips();
+        } catch (e) { setClipStatus(e.message, true); }
+      });
+    });
+  }
+
   // 첫 진입 — 예시·지표 목록을 만든 뒤 조회한다 (빈 화면으로 시작하지 않도록).
   // 지표 칩을 먼저 만들어야 쿼리스트링으로 켜 둔 지표를 표시할 수 있다.
-  Promise.all([buildExamples(), buildMacroChips()]).then(() => {
+  Promise.all([buildExamples(), buildMacroChips(), initClips()]).then(() => {
     applyQueryString();
     search();
   });

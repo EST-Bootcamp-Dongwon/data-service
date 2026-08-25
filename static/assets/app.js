@@ -47,6 +47,31 @@ window.App = (() => {
     return body;
   }
 
+  /** JSON 본문을 실어 보내는 요청 (PATCH·DELETE·PUT). `get`·`post` 와 오류 처리가 같다. */
+  async function send(method, path, payload) {
+    const res = await fetch(API_BASE + path, {
+      method,
+      headers: payload ? { 'Content-Type': 'application/json' } : {},
+      body: payload ? JSON.stringify(payload) : undefined,
+    });
+    const text = await res.text();
+    let body;
+    try { body = JSON.parse(text); } catch { body = text; }
+    if (!res.ok) {
+      // ⚠️ `detail` 이 객체일 수 있다 — 자료 보관함의 503 은 {reason, hints} 를 담는다.
+      //    문자열로 가정하면 화면에 "[object Object]" 가 뜨고 처방이 통째로 사라진다.
+      const detail = (body && body.detail) ?? `HTTP ${res.status}`;
+      const error = new Error(typeof detail === 'string' ? detail : (detail.reason || `HTTP ${res.status}`));
+      error.detail = detail;
+      error.status = res.status;
+      throw error;
+    }
+    return body;
+  }
+
+  const patch = (path, payload) => send('PATCH', path, payload);
+  const del = (path) => send('DELETE', path);
+
   // ── 표기 ──────────────────────────────
   /** 천 단위 콤마. null·undefined 는 '-' 로. */
   function num(v, digits = 0) {
@@ -162,6 +187,6 @@ window.App = (() => {
     if (window.Shell) Shell.render(current);
   }
 
-  return { API_BASE, get, post, num, signed, won, isoDate, signClass, color, signColor,
+  return { API_BASE, get, post, patch, del, num, signed, won, isoDate, signClass, color, signColor,
            series, draw, debounce, renderNav };
 })();

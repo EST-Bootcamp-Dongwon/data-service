@@ -1,6 +1,8 @@
 # serializer version: 1
 # name: test_query_parameters_are_frozen
   dict({
+    'DELETE /api/clips/{clip_id}': list([
+    ]),
     'GET /api/chart/breadth': list([
       'days',
     ]),
@@ -22,6 +24,26 @@
       'max_points',
       'period',
       'ticker',
+    ]),
+    'GET /api/clips': list([
+      'code',
+      'industry',
+      'kind',
+      'month',
+      'page',
+      'q',
+      'screen',
+      'size',
+      'tag',
+      'year',
+    ]),
+    'GET /api/clips/facets': list([
+      'code',
+      'screen',
+    ]),
+    'GET /api/clips/status': list([
+    ]),
+    'GET /api/clips/{clip_id}': list([
     ]),
     'GET /api/dashboard/summary': list([
     ]),
@@ -180,6 +202,10 @@
     ]),
     'GET /health': list([
     ]),
+    'PATCH /api/clips/{clip_id}': list([
+    ]),
+    'POST /api/clips': list([
+    ]),
     'POST /api/krx/sync': list([
       'days',
     ]),
@@ -201,11 +227,16 @@
 # ---
 # name: test_route_list_is_frozen
   list([
+    'DELETE /api/clips/{clip_id}',
     'GET /api/chart/breadth',
     'GET /api/chart/compare',
     'GET /api/chart/overlay',
     'GET /api/chart/presets',
     'GET /api/chart/series',
+    'GET /api/clips',
+    'GET /api/clips/facets',
+    'GET /api/clips/status',
+    'GET /api/clips/{clip_id}',
     'GET /api/dashboard/summary',
     'GET /api/dashboard/ticker',
     'GET /api/factors/radar',
@@ -248,6 +279,8 @@
     'GET /api/yf/periods',
     'GET /api/yf/quote',
     'GET /health',
+    'PATCH /api/clips/{clip_id}',
+    'POST /api/clips',
     'POST /api/krx/sync',
     'POST /api/refresh/cancel',
     'POST /api/refresh/run',
