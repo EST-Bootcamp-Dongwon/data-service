@@ -51,6 +51,10 @@ LINK_KINDS: Tuple[str, ...] = ("news", "filing", "post", "video")
 SCREENS: Tuple[str, ...] = ("dashboard", "market", "research", "krx", "kosis",
                             "yf", "stock", "quant", "timeseries")
 
+# 못 쓸 때 **언제 되는지**. 처방이 "무엇을 하라" 로만 끝나면, 그 무엇을 할 수 없는
+# 사람(배포본을 보는 사람)에게는 여전히 막다른 길이다.
+WHEN_IT_WORKS = "보관함은 Postgres 에만 있다 — 배포본은 S6(Supabase) 뒤에 쓸 수 있다."
+
 # 응답에 싣는 컬럼과 **순서**. `SELECT *` 를 쓰지 않는 이유는 krx_pg 와 같다 —
 # 컬럼을 명시하지 않으면 키 집합이 조용히 달라진다.
 CLIP_COLUMNS: Tuple[str, ...] = (
@@ -127,10 +131,14 @@ def availability() -> Dict[str, Any]:
     try:
         rows = _fetch("SELECT to_regclass('clip') IS NOT NULL")
     except Exception as error:
+        # ⚠️ **"언제 되는지" 를 여기서 붙인다.** `_fetch()` 는 `OSError` 에만 처방을 얹는데,
+        #    배포본은 그 앞에서 죽는다 — `DATABASE_URL` 이 아예 없어 `settings` 가
+        #    `RuntimeError` 를 던지므로 그 경로를 안 탄다(실측: 배포본 hints 에 이 줄이
+        #    빠져 있었다). 그런데 "언제" 가 가장 필요한 곳이 바로 배포본이다.
         return {
             "available": False,
             "reason": "저장소에 못 붙었다",
-            "hints": str(error).splitlines(),
+            "hints": [*str(error).splitlines(), WHEN_IT_WORKS],
         }
     if not (rows and rows[0][0]):
         return {
@@ -158,7 +166,7 @@ def _fetch(sql: str, params: Optional[Dict] = None) -> List[Any]:
         raise db.unreachable(
             exc, what="자료 보관함(Postgres)",
             # ⚠️ 시세와 달리 **되돌아갈 곳이 없다.** 축약본도 SQLite 표도 없다.
-            extra=("보관함은 Postgres 에만 있다 — 배포본은 S6(Supabase) 뒤에 쓸 수 있다.",),
+            extra=(WHEN_IT_WORKS,),
         ) from exc
 
 
@@ -176,7 +184,7 @@ def _write(sql: str, params: Optional[Dict] = None) -> List[Any]:
     except OSError as exc:
         raise db.unreachable(
             exc, what="자료 보관함(Postgres)",
-            extra=("보관함은 Postgres 에만 있다 — 배포본은 S6(Supabase) 뒤에 쓸 수 있다.",),
+            extra=(WHEN_IT_WORKS,),
         ) from exc
 
 

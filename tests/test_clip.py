@@ -165,6 +165,12 @@ def test_status_answers_200_even_when_the_store_is_unreachable(client):
     assert body["hints"], "무엇을 해야 하는지가 비어 있다 — 막다른 길이다"
     # 화면이 종류·화면 목록을 서버에서 받아야 어휘가 두 벌이 되지 않는다.
     assert set(body["kinds"]) == set(store.KINDS)
+    # ⚠️ **"언제 되는지" 가 반드시 있다.** 처방이 "무엇을 하라" 로만 끝나면, 그 무엇을
+    #    할 수 없는 사람(배포본을 보는 사람)에게는 여전히 막다른 길이다.
+    #    실측 — 배포본은 `DATABASE_URL` 부재로 접속 **전에** 죽어서 이 줄이 빠져 있었다.
+    assert any(store.WHEN_IT_WORKS in h for h in body["hints"]), (
+        f"언제 쓸 수 있는지가 없다: {body['hints']}"
+    )
 
 
 @pytest.mark.parametrize("path", ["/api/clips", "/api/clips/facets", "/api/clips/1"])
