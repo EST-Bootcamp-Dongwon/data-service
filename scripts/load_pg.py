@@ -87,6 +87,7 @@ logging.getLogger(db_module.__name__).propagate = False
 SQLITE_PATH = PROJECT_ROOT / "data" / "krx_cache.db"
 INDUSTRY_MAP_PATH = PROJECT_ROOT / "data" / "industry_map.json"
 CORP_CODE_PATH = PROJECT_ROOT / "data" / "corp_code.json"
+UNIVERSE_CORE_PATH = PROJECT_ROOT / "data" / "universe_core.json"
 
 # KST. `fetch_log.fetched_at` 은 `datetime.now().isoformat()` 이 남긴 **시간대 없는** 문자열이라
 # (krx_store.py:193) 그것을 timestamptz 로 옮기려면 어느 시간대였는지를 정해야 한다.
@@ -113,6 +114,12 @@ LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "db", "data-service-db
 # **이식분과 수집분이 구분된다.**
 IMPORT_NOTE = "S3 이식 (SQLite krx_cache.db)"
 WATERMARK_SOURCE = "krx_ohlcv"
+
+# 유니버스 2단계 (ADR-CT-0010). DDL 의 `universe_tier` CHECK 와 **같은 두 값이어야 한다**
+# (01-schema.sql:46-47). 여기서 새 낱말을 만들면 적재가 CHECK 위반으로 죽는다.
+UNIVERSE_FULL = "full"
+UNIVERSE_CORE = "core"
+UNIVERSES = (UNIVERSE_FULL, UNIVERSE_CORE)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -262,10 +269,40 @@ def load_master_maps() -> tuple[dict[str, Any], dict[str, Any]]:
     return industry, corp
 
 
+def load_core_codes() -> set[str]:
+    """`data/universe_core.json` 의 종목코드 집합. **없으면 때우지 않고 멈춘다.**
+
+    빈 집합으로 떨어지면 `universe_tier` 가 전부 `full` 로 덮여 **사람이 아는 사실이
+    조용히 지워진다.** 그리고 `--universe core` 였다면 "core 0종목" 이 그럴듯한 결과가
+    되어 배포본이 빈 화면이 된다. 없으면 없다고 크게 말한다.
+
+    ⚠️ 이 파일은 **커밋된다.** 새 clone 에도 있으므로 여기서 멈추는 일은 정상 흐름에
+    없다 — 있다면 누가 지운 것이다.
+    """
+    if not UNIVERSE_CORE_PATH.exists():
+        raise SystemExit(
+            f"core 유니버스 목록을 찾지 못했다: {UNIVERSE_CORE_PATH}\n"
+            "  이 파일은 커밋돼 있어야 한다. 다시 만들려면 KRX 계정이 필요하다:\n"
+            "    python3 scripts/build_universe.py\n"
+            "  (`.key` 에 KRX_ID·KRX_PW 가 있어야 한다 — KRX_API_KEY 로는 안 된다)"
+        )
+    payload = json.loads(UNIVERSE_CORE_PATH.read_text(encoding="utf-8"))
+    codes = set(payload.get("codes") or {})
+    if not codes:
+        raise SystemExit(f"{UNIVERSE_CORE_PATH.name} 에 codes 가 비어 있다. 다시 만든다.")
+    return codes
+
+
 def enrich_security(
-    folded: dict[str, Any], industry: dict[str, Any], corp: dict[str, Any]
+    folded: dict[str, Any], industry: dict[str, Any], corp: dict[str, Any],
+    core_codes: set[str],
 ) -> dict[str, Any]:
-    """접힌 종목 한 줄에 마스터 값을 덧칠해 `securities` INSERT 파라미터로 만든다."""
+    """접힌 종목 한 줄에 마스터 값을 덧칠해 `securities` INSERT 파라미터로 만든다.
+
+    ⚠️ `universe_tier` 는 **목록 파일이 정한다.** 시가총액 순위 같은 대용으로 정하지
+    않는다 — 그러면 컬럼이 거짓말을 하고, 다음 사람이 구성종목이라고 믿는다
+    (ADR-DS-0014 · ADR-DS-0020 이 같은 이유로 `core` 라는 낱말을 피했다).
+    """
     code = folded["code"]
     industry_row = industry.get(code) or {}
     corp_row = corp.get(code) or {}
@@ -278,6 +315,7 @@ def enrich_security(
         "industry_code": industry_row.get("industry_code"),
         "fiscal_month": to_fiscal_month(industry_row.get("fiscal_month")),
         "corp_code": corp_row.get("corp_code"),
+        "universe_tier": UNIVERSE_CORE if code in core_codes else UNIVERSE_FULL,
     }
 
 
@@ -301,8 +339,16 @@ def open_readonly() -> sqlite3.Connection:
         ) from exc
 
 
-def source_checksums(conn: sqlite3.Connection) -> dict[str, Any]:
+def source_checksums(conn: sqlite3.Connection, codes: set[str] | None = None) -> dict[str, Any]:
     """원본의 지문. **적재기가 센 값이 아니라 원본을 다시 읽어 낸 값이다.**
+
+    `codes` 를 주면 그 종목만 센다 — `--universe core` 로 부분집합만 적재할 때, 대조의
+    두 변이 **같은 범위**를 봐야 하기 때문이다. 안 맞추면 core 350종목을 옮겨 놓고
+    전종목 합과 비교해 매번 "어긋남 19건" 이 뜬다.
+
+    ⚠️ **`fetch_log` 는 거르지 않는다.** 그 표는 종목이 아니라 **거래일** 단위이고,
+    "KRX 가 그 날 몇 행을 줬나" 를 기록한다. 종목으로 거르면 `rows` 가 뜻을 잃고
+    휴장일 마커(rows=0) 규칙까지 흔들린다 (01-schema.sql §4).
 
     적재 중에 세어 두고 그것과 비교하면, 적재기가 잘못 읽은 경우를 못 잡는다. 대조의
     두 변이 같은 실수를 공유하면 대조가 아니다. 그래서 원본을 **따로 한 번 더** 훑는다.
@@ -311,23 +357,30 @@ def source_checksums(conn: sqlite3.Connection) -> dict[str, Any]:
     잰다). 유일한 실수 컬럼 `change_rate` 만 파이썬에서 Decimal 로 더한다 —
     SQLite 의 `SUM(REAL)` 은 부동소수 누적오차가 있어 대조 기준으로 쓸 수 없다.
     """
+    picked = sorted(codes) if codes else []
+    where = f" WHERE code IN ({','.join('?' * len(picked))})" if picked else ""
+    params = picked
+
     row = conn.execute(
-        """
+        f"""
         SELECT COUNT(*), COUNT(DISTINCT code), COUNT(DISTINCT bas_dd),
                MIN(bas_dd), MAX(bas_dd),
                SUM(open), SUM(high), SUM(low), SUM(close), SUM(change),
                SUM(volume), SUM(value), SUM(market_cap), SUM(listed_shares)
-        FROM daily_price
-        """
+        FROM daily_price{where}
+        """,
+        params,
     ).fetchone()
     zero_bars = conn.execute(
         "SELECT COUNT(*) FROM daily_price WHERE open = 0 AND high = 0 AND low = 0"
+        + (f" AND code IN ({','.join('?' * len(picked))})" if picked else ""),
+        params,
     ).fetchone()[0]
 
     # change_rate 만 파이썬에서 더한다. 적재할 때와 **똑같이** 양자화한 뒤 더해야
     # 대조가 뜻을 가진다 (Postgres 도 numeric(12,4) 로 반올림해 담기 때문이다).
     rate_sum = Decimal(0)
-    for (value,) in conn.execute("SELECT change_rate FROM daily_price"):
+    for (value,) in conn.execute(f"SELECT change_rate FROM daily_price{where}", params):
         converted = to_change_rate(value)
         if converted is not None:
             rate_sum += converted
@@ -435,11 +488,14 @@ async def check_target(conn: Any) -> list[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. 적재
 # ─────────────────────────────────────────────────────────────────────────────
+# ⚠️ `universe_tier` 는 COALESCE 가 아니라 **그대로 덮는다.** 목록 파일이 정본이라
+#    편입·제외가 반영되려면 core→full 로 **내려가는** 갱신도 통해야 한다. COALESCE 로
+#    두면 한 번 core 가 된 종목이 지수에서 빠져도 영원히 core 로 남는다.
 SECURITIES_UPSERT = """
 INSERT INTO securities (code, name, market, sector, listed_shares,
-                        industry_code, fiscal_month, corp_code)
+                        industry_code, fiscal_month, corp_code, universe_tier)
 VALUES (:code, :name, :market, :sector, :listed_shares,
-        :industry_code, :fiscal_month, :corp_code)
+        :industry_code, :fiscal_month, :corp_code, :universe_tier)
 ON CONFLICT (code) WHERE NOT is_delisted DO UPDATE SET
     name          = EXCLUDED.name,
     market        = EXCLUDED.market,
@@ -448,6 +504,7 @@ ON CONFLICT (code) WHERE NOT is_delisted DO UPDATE SET
     industry_code = COALESCE(EXCLUDED.industry_code, securities.industry_code),
     fiscal_month  = COALESCE(EXCLUDED.fiscal_month,  securities.fiscal_month),
     corp_code     = COALESCE(EXCLUDED.corp_code,     securities.corp_code),
+    universe_tier = EXCLUDED.universe_tier,
     updated_at    = now()
 """
 
@@ -485,11 +542,18 @@ ON CONFLICT (source) DO UPDATE SET
 """
 
 
-async def load_securities(conn: Any, sqlite_conn: sqlite3.Connection) -> dict[str, int]:
+async def load_securities(
+    conn: Any, sqlite_conn: sqlite3.Connection,
+    core_codes: set[str], only: set[str] | None = None,
+) -> dict[str, int]:
     """`securities` 를 세우고 `code → security_id` 지도를 돌려준다.
 
     `ohlcv` 가 `security_id` 를 참조하므로 **반드시 먼저** 선다. 코드(text)가 아니라
     정수 키를 쓰는 이유는 01-schema.sql 의 주석에 셋으로 적혀 있다(우선주·코드변경·재사용).
+
+    `only` 를 주면 그 종목만 담는다(`--universe core`). 그래도 `core_codes` 는 따로 받는다 —
+    **거르는 것과 딱지를 붙이는 것은 다른 일**이고, 로컬(full 적재)에서도 core 딱지는
+    붙어야 하기 때문이다.
     """
     from sqlalchemy import text
 
@@ -498,11 +562,14 @@ async def load_securities(conn: Any, sqlite_conn: sqlite3.Connection) -> dict[st
             "SELECT code, bas_dd, name, market, sector, listed_shares FROM daily_price"
         )
     )
+    if only is not None:
+        folded = {code: row for code, row in folded.items() if code in only}
     industry, corp = load_master_maps()
-    params = [enrich_security(row, industry, corp) for row in folded.values()]
+    params = [enrich_security(row, industry, corp, core_codes) for row in folded.values()]
 
     covered = sum(1 for p in params if p["industry_code"])
-    print(f"   종목 {len(params):,}개 · 산업분류가 붙은 것 {covered:,}개")
+    tiered = sum(1 for p in params if p["universe_tier"] == UNIVERSE_CORE)
+    print(f"   종목 {len(params):,}개 · 산업분류가 붙은 것 {covered:,}개 · core 딱지 {tiered:,}개")
 
     for chunk in batched(params, DEFAULT_BATCH):
         await conn.execute(text(SECURITIES_UPSERT), chunk)
@@ -522,17 +589,25 @@ async def load_securities(conn: Any, sqlite_conn: sqlite3.Connection) -> dict[st
 
 
 async def load_ohlcv(
-    conn: Any, sqlite_conn: sqlite3.Connection, mapping: dict[str, int], batch_size: int
+    conn: Any, sqlite_conn: sqlite3.Connection, mapping: dict[str, int], batch_size: int,
+    only: set[str] | None = None,
 ) -> int:
-    """`daily_price` → `ohlcv`. 배치마다 진행을 찍는다."""
+    """`daily_price` → `ohlcv`. 배치마다 진행을 찍는다.
+
+    `only` 를 주면 그 종목의 행만 보낸다. **거르기는 SQL 에서 한다** — 파이썬에서
+    걸러도 결과는 같지만 780,484행을 전부 파이썬으로 끌어올리게 된다.
+    """
     from sqlalchemy import text
 
+    picked = sorted(only) if only else []
+    where = f" WHERE code IN ({','.join('?' * len(picked))})" if picked else ""
     cursor = sqlite_conn.execute(
-        """
+        f"""
         SELECT code, bas_dd, open, high, low, close, change, change_rate,
                volume, value, market_cap, listed_shares
-        FROM daily_price
-        """
+        FROM daily_price{where}
+        """,
+        picked,
     )
     total = 0
     started = time.perf_counter()
@@ -762,9 +837,15 @@ def render_source(source: dict[str, Any]) -> None:
 async def run(args: argparse.Namespace) -> int:
     sqlite_conn = open_readonly()
 
+    core_codes = load_core_codes()
+    # 거르기(`only`)와 딱지(`core_codes`)는 다른 일이다. full 적재에서도 딱지는 붙는다.
+    only = core_codes if args.universe == UNIVERSE_CORE else None
+
     rule("1. 원본")
     started = time.perf_counter()
-    source = source_checksums(sqlite_conn)
+    source = source_checksums(sqlite_conn, only)
+    print(f"   유니버스      {args.universe} "
+          f"({'core 350 만' if only else '전종목 · core 딱지는 붙인다'})")
     render_source(source)
     print(f"   ({time.perf_counter() - started:.0f}초 걸려 읽었다)")
 
@@ -776,8 +857,11 @@ async def run(args: argparse.Namespace) -> int:
                 "SELECT code, bas_dd, name, market, sector, listed_shares FROM daily_price"
             )
         )
-        enriched = [enrich_security(row, industry, corp) for row in folded.values()]
+        if only is not None:
+            folded = {code: row for code, row in folded.items() if code in only}
+        enriched = [enrich_security(row, industry, corp, core_codes) for row in folded.values()]
         print(f"   securities      {len(enriched):,}행 (종목당 1행 · 최신 거래일 속성)")
+        print(f"     core 딱지      {sum(1 for e in enriched if e['universe_tier'] == UNIVERSE_CORE):,}")
         print(f"     산업분류 있음   {sum(1 for e in enriched if e['industry_code']):,}")
         print(f"     DART 고유번호   {sum(1 for e in enriched if e['corp_code']):,}")
         print(f"   ohlcv           {source['ohlcv_rows']:,}행")
@@ -789,13 +873,24 @@ async def run(args: argparse.Namespace) -> int:
         return 0
 
     db = settings.database_settings()
-    if not is_local_target(db.url) and not args.allow_remote:
+    remote = not is_local_target(db.url)
+    if remote and not args.allow_remote:
         rule("판정")
         print("❌ 로컬 Postgres 가 아니다. 780,484행을 여기에 붓지 않는다.")
         print(f"   붙으려던 곳: {db_module.displayable_url(db.url)}")
         print(f"   호스트     : {url_host(db.url) or '(못 읽었다)'}")
         print("   로컬 정본은 full 유니버스이고, 원격(Supabase)은 core 만 두기로 했다")
         print("   (ADR-CT-0007 · ADR-CT-0010). 일부러 그랬다면 --allow-remote 를 붙인다.")
+        return 1
+
+    # ⚠️ `--allow-remote` 는 "원격이어도 좋다" 이지 "전종목을 부어도 좋다" 가 아니다.
+    #    둘을 한 손잡이로 묶으면, core 만 두기로 한 약속이 플래그 하나에 딸려 깨진다.
+    if remote and args.universe == UNIVERSE_FULL:
+        rule("판정")
+        print("❌ 원격에 full 유니버스를 붓지 않는다 (ADR-CT-0007 · ADR-CT-0010).")
+        print(f"   붙으려던 곳: {db_module.displayable_url(db.url)}")
+        print("   원격은 데모용 core 다. 정말 원격이 맞다면:")
+        print("     --universe core --allow-remote")
         return 1
 
     engine = db_module.build_engine()
@@ -823,8 +918,8 @@ async def run(args: argparse.Namespace) -> int:
             load_started = time.perf_counter()
             # ⚠️ 한 트랜잭션이다. 중간에 죽으면 통째로 롤백되어 **반쯤 들어간 상태가 없다.**
             async with engine.begin() as conn:
-                mapping = await load_securities(conn, sqlite_conn)
-                rows = await load_ohlcv(conn, sqlite_conn, mapping, args.batch_size)
+                mapping = await load_securities(conn, sqlite_conn, core_codes, only)
+                rows = await load_ohlcv(conn, sqlite_conn, mapping, args.batch_size, only)
                 log_rows, log_zero = await load_sync_log(conn, sqlite_conn)
                 await load_watermark(conn, source, sqlite_conn)
             print(f"   ohlcv_sync_log {log_rows}행 (rows=0 이 {log_zero} · status='empty')")
@@ -865,6 +960,9 @@ def main() -> int:
                         help="적재하지 않고 이미 들어간 것과 원본을 대조만 한다")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH,
                         help=f"한 번에 보낼 행 수 (기본 {DEFAULT_BATCH:,})")
+    parser.add_argument("--universe", choices=UNIVERSES, default=UNIVERSE_FULL,
+                        help="적재 범위. full=전종목(기본) · core=KOSPI200+KOSDAQ150 350종목. "
+                             "어느 쪽이든 universe_tier 딱지는 목록 파일이 정한다")
     parser.add_argument("--allow-remote", action="store_true",
                         help="로컬이 아닌 DB 에 붓는 것을 허용한다 (기본은 막는다)")
     args = parser.parse_args()

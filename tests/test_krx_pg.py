@@ -208,17 +208,34 @@ def test_default_is_postgres_on_local(monkeypatch):
 
 
 @pytest.mark.parametrize("marker", ["APP_ENV", "VERCEL", "VERCEL_ENV"])
-def test_default_is_sqlite_on_vercel(monkeypatch, marker):
-    """⚠️ **배포본 기본값은 아직 `sqlite` 다. 뒤집는 것은 S6 다** (ADR-DS-0011).
+def test_default_is_postgres_on_vercel(monkeypatch, marker):
+    """⭐ **배포본 기본값도 `postgres` 다 — S6 이 뒤집었다** (ADR-DS-0021).
 
-    배포본에는 `DATABASE_URL` 이 없고, 거기서 `database_url()` 은 기본값으로 대신하지 않고
-    **예외를 던진다.** 그래서 한 값으로 뒤집으면 배포본 화면 10개가 그대로 500 이 된다.
+    S5 까지 이 값은 `sqlite` 였다. 배포본에 `DATABASE_URL` 이 없었고, 거기서
+    `database_url()` 은 기본값으로 대신하지 않고 **예외를 던지기** 때문이다. S6 이
+    Supabase 를 세우고 그 환경변수를 채운 뒤에야 뒤집을 수 있었다 — **순서가 뜻을 가진다.**
+
     자동 감지(`VERCEL`·`VERCEL_ENV`)로 들어와도 같아야 한다 — `APP_ENV` 를 한 번
     빠뜨리는 것이 이 레포가 이미 아는 기본 사고 지점이다(ADR-DS-0003 §3).
     """
     monkeypatch.delenv("STORE_BACKEND", raising=False)
     monkeypatch.delenv("APP_ENV", raising=False)
     monkeypatch.setenv(marker, "vercel" if marker == "APP_ENV" else "1")
+    assert settings.store_backend() == "postgres"
+    assert settings.uses_postgres_store() is True
+
+
+@pytest.mark.parametrize("marker", ["APP_ENV", "VERCEL", "VERCEL_ENV"])
+def test_deployment_can_still_be_rolled_back_with_one_env_var(monkeypatch, marker):
+    """⚠️ 되돌리는 단위가 살아 있는가. **기본값을 뒤집은 커밋이 지켜야 할 것이다.**
+
+    push 가 곧 배포라(GitLab→Vercel) 배포본만 SQLite 로 되돌려야 하는 순간이 온다.
+    그때 손이 닿는 곳은 Vercel 환경변수 한 줄뿐이다 — 코드를 고쳐 다시 배포하는 것은
+    되돌림이 아니라 또 한 번의 배포다.
+    """
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.setenv(marker, "vercel" if marker == "APP_ENV" else "1")
+    monkeypatch.setenv("STORE_BACKEND", "sqlite")
     assert settings.store_backend() == "sqlite"
     assert settings.uses_postgres_store() is False
 
@@ -257,7 +274,7 @@ def test_empty_value_is_the_default(monkeypatch):
     monkeypatch.setenv("APP_ENV", "local")
     assert settings.store_backend() == "postgres"
     monkeypatch.setenv("APP_ENV", "vercel")
-    assert settings.store_backend() == "sqlite"
+    assert settings.store_backend() == "postgres"   # S6 이후 두 환경이 같다
 
 
 def test_switch_is_read_at_call_time_not_at_import(monkeypatch):

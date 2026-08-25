@@ -101,19 +101,26 @@ SQLITE = "sqlite"
 POSTGRES = "postgres"
 STORE_BACKENDS: tuple[str, ...] = (SQLITE, POSTGRES)
 
-# ⭐ **기본값이 환경마다 다르다. 그것이 S5 의 정의다** (ADR-DS-0011 §1 · ADR-DS-0018).
+# ⭐ **이제 두 환경이 같은 값이다 — 그것이 S6 의 정의다** (ADR-DS-0011 §1 · ADR-DS-0021).
 #
-#   로컬  → `postgres`   S5 가 뒤집은 값. 완료 조건이 "**로컬** 화면 10개가 Postgres 로만 돈다" 다
-#   배포본 → `sqlite`    아직 `DATABASE_URL` 이 없다. 그것을 주는 것이 **S6**(Supabase) 다
+#   로컬  → `postgres`   S5 가 뒤집었다 (ADR-DS-0018)
+#   배포본 → `postgres`   S6 가 뒤집었다. Supabase 에 core 350종목이 서 있다
 #
-# ⚠️ **한 값으로 뒤집으면 배포본이 죽는다.** 배포본에서 `database_url()` 은 기본값으로
-#    대신하지 않고 예외를 던지므로(§2), 거기서 `postgres` 로 읽으면 화면 10개가 500 이 된다.
-#    "로컬만 뒤집는다" 는 조심이 아니라 **S5 와 S6 의 경계 그 자체**다.
+# ⚠️ **배포본에는 `DATABASE_URL` 이 반드시 있어야 한다.** 거기서 `database_url()` 은
+#    기본값으로 대신하지 않고 **예외를 던진다**(§2). 그 환경변수가 없는 채로 이 기본값이
+#    `postgres` 면 **화면 HTML 은 뜨고 시세 API 가 500** 이다 (실측 — ADR-DS-0021 §8).
+#    겉보기로는 "화면은 열리는데 비어 있다" 라서 500 페이지보다 알아채기 어렵다.
+#    S5 까지 이 값이 `sqlite` 였던 이유가 그것이고,
+#    **S6 이 먼저 한 일이 환경변수를 채운 것**이다. 순서가 뜻을 가진다.
 #
-# ⚠️ 그래도 **되돌리는 단위는 환경변수 한 줄이다** — `STORE_BACKEND=sqlite`.
+# ⚠️ **값이 같아졌다고 상수를 하나로 합치지 않는다.** 배포는 push 가 곧 배포라
+#    (GitLab→Vercel) 배포본만 되돌려야 하는 순간이 온다. 둘로 두면 그 되돌림이
+#    한 줄이고, 하나로 합치면 로컬까지 함께 끌려 내려간다. **되돌리는 단위가 값이다.**
+#
+# ⚠️ 그래도 가장 빠른 되돌림은 여전히 환경변수 한 줄이다 — `STORE_BACKEND=sqlite`.
 #    사람이 적은 값이 언제나 이긴다(`app_env()` 와 같은 순서).
 DEFAULT_STORE_BACKEND_LOCAL = POSTGRES
-DEFAULT_STORE_BACKEND_VERCEL = SQLITE
+DEFAULT_STORE_BACKEND_VERCEL = POSTGRES
 
 
 def default_store_backend() -> str:
@@ -122,7 +129,7 @@ def default_store_backend() -> str:
 
 
 def store_backend() -> str:
-    """시세 읽기 경로가 쓸 저장소. `postgres`(로컬 기본) 또는 `sqlite`(배포본 기본).
+    """시세 읽기 경로가 쓸 저장소. 기본은 **양쪽 환경 다 `postgres`** 다 (S6 이후).
 
     **`app_env()` 와 같은 자리에 같은 모양으로 둔다** — 어휘 밖 값이면 예외를 던진다.
     오타(`postgre`·`pg`)를 조용히 기본값으로 떨어뜨리면 "스위치를 켰다고 믿었는데
@@ -142,9 +149,9 @@ def store_backend() -> str:
         # 막다른 길로 만들지 않는다 — 무엇을 해야 하는지까지 알려준다.
         raise ValueError(
             f"STORE_BACKEND 값 '{raw}' 을 모른다. 쓸 수 있는 값은 {', '.join(STORE_BACKENDS)} 다.\n"
-            f"  SQLite 로 읽기   : STORE_BACKEND={SQLITE} (배포본의 기본값)\n"
+            f"  SQLite 로 읽기   : STORE_BACKEND={SQLITE} (되돌릴 때 쓰는 값)\n"
             f"  Postgres 로 읽기 : STORE_BACKEND={POSTGRES} "
-            f"(로컬의 기본값 — DATABASE_URL 과 뜬 DB 가 함께 필요하다)"
+            f"(양쪽 환경의 기본값 — DATABASE_URL 과 붙을 수 있는 DB 가 함께 필요하다)"
         )
     return value
 

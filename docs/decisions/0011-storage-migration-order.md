@@ -37,7 +37,7 @@ ADR-DS-0002 가 "파일 캐시를 Postgres 로 옮긴다"를 정했고 `sql/init
    | **S3** | 일회성 적재기 — `scripts/load_pg.py` (SQLite → Postgres) | 780,484행이 들어가고 행수·합계가 원본과 일치 | ☑ 2026-08-23 (ADR-DS-0014) |
    | **S4** | 읽기 어댑터 + `STORE_BACKEND` 스위치 (**기본은 `sqlite`**) | 스위치를 켠 상태로 계약 스냅샷 51경로가 그대로 | ☑ 2026-08-25 (ADR-DS-0015) |
    | **S5** | 로컬 기본값 뒤집기 (`STORE_BACKEND=postgres`) | 로컬 화면 10개가 Postgres 로만 돈다 | ☑ 2026-08-25 (ADR-DS-0018) |
-   | **S6** | Supabase (core 유니버스만 · ADR-CT-0010) | 배포본이 DB 를 읽는다 | ☐ |
+   | **S6** | Supabase (core 유니버스만 · ADR-CT-0010) | 배포본이 DB 를 읽는다 | ☑ 2026-08-25 (ADR-DS-0021) |
    | **S7** | `bundle`·`snapshot` 폐기 + 출처 어휘 정리 | `tier()` 3단 분기 제거 · `test_source_vocabulary.py` 개정 | ☐ |
    | **S8** | 쓰기 경로 — 수집이 Postgres 에 적재한다 | `ohlcv_sync_log` 의 `rows=0` 규칙이 살아 있다 | ☐ |
    | **S9** | 잔가지 — 파생 지표 재계산 · `trading_calendar` 채우기·읽기 | `weekday() < 5` 근사가 사라진다 | ☐ |
@@ -50,6 +50,9 @@ ADR-DS-0002 가 "파일 캐시를 Postgres 로 옮긴다"를 정했고 `sql/init
 
 4. **`bundle` 폐기(S7)는 배포본이 DB 를 읽은 뒤(S6)에만 한다.** 순서를 뒤집으면
    배포본이 조용히 빈 화면이 된다 — 지금 배포본은 번들로만 돌기 때문이다.
+   → **2026-08-25 에 그 전제가 섰다** (ADR-DS-0021). 배포본이 Supabase 를 읽는다.
+   ⚠️ 다만 S7 은 **core 350 만 있다는 사실**을 함께 봐야 한다 — 번들을 버리면 배포본에서
+   core 밖 2,525종목은 조회할 곳이 아예 없어진다. "폐기" 가 곧 "기능 축소" 인 구간이다.
 
 5. **S2 는 아무도 import 하지 않는 상태로 끝낸다.** `tests/test_db.py` 가 그것을 얼려 두고,
    **S4 에서 그 테스트를 지우는 것이 곧 "이제 연결했다"는 표시**다.

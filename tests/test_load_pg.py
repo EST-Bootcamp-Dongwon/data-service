@@ -229,12 +229,13 @@ def test_a_code_the_master_json_does_not_know_still_gets_a_row():
     `security_id` 가 없어 **그 종목의 시세가 통째로 사라진다.** 원천은 daily_price 다.
     """
     folded = loader.fold_securities([_row("000075", "20260731", "삼양홀딩스우", 100)])
-    enriched = loader.enrich_security(folded["000075"], industry={}, corp={})
+    enriched = loader.enrich_security(folded["000075"], industry={}, corp={}, core_codes=set())
     assert enriched["code"] == "000075"
     assert enriched["name"] == "삼양홀딩스우"
     assert enriched["industry_code"] is None      # 모르는 것은 비운다. 지어내지 않는다
     assert enriched["corp_code"] is None
     assert enriched["fiscal_month"] is None
+    assert enriched["universe_tier"] == "full"    # 목록에 없으면 full 이다
 
 
 def test_master_values_are_paint_not_source():
@@ -243,11 +244,45 @@ def test_master_values_are_paint_not_source():
         folded["000020"],
         industry={"000020": {"industry_code": "212", "fiscal_month": "12"}},
         corp={"000020": {"corp_code": "00119195"}},
+        core_codes=set(),
     )
     assert enriched["name"] == "동화약품"          # 이름은 여전히 시세 쪽 값이다
     assert enriched["industry_code"] == "212"
     assert enriched["fiscal_month"] == 12
     assert enriched["corp_code"] == "00119195"
+
+
+# ==================================================
+# 4-1. 유니버스 딱지 — 목록 파일이 정본이다 (ADR-DS-0021)
+# ==================================================
+def test_core_membership_comes_from_the_list_not_from_a_proxy():
+    """⚠️ `universe_tier` 를 시가총액 같은 **대용**으로 정하지 않는다.
+
+    대용으로 찍으면 컬럼이 거짓말을 하고 다음 사람이 구성종목이라고 믿는다.
+    ADR-DS-0014 가 "추정을 사실로 굳히지 않는다" 로 비워 두었고, ADR-DS-0020 은
+    같은 이유로 `core` 라는 낱말 자체를 피했다. 이제 실제 목록이 있으므로 그것만 본다.
+    """
+    folded = loader.fold_securities([
+        _row("005930", "20260731", "삼성전자", 5_969_782_550),
+        _row("000075", "20260731", "삼양홀딩스우", 100),
+    ])
+    core = {"005930"}
+    assert loader.enrich_security(folded["005930"], {}, {}, core)["universe_tier"] == "core"
+    assert loader.enrich_security(folded["000075"], {}, {}, core)["universe_tier"] == "full"
+
+
+def test_universe_vocabulary_matches_the_ddl():
+    """어휘가 DDL 의 CHECK 와 갈리면 적재가 제약 위반으로 죽는다.
+
+    산문이 아니라 **DDL 파일을 읽어** 대조한다 — `tests/test_clip.py` 가
+    `clip_kind_ck` 를 다루는 방식과 같다. 두 벌이 되지 않게 하는 것이 요점이다.
+    """
+    schema = (Path(__file__).resolve().parents[1] / "sql" / "init" / "01-schema.sql").read_text(
+        encoding="utf-8")
+    match = re.search(r"CHECK \(universe_tier IN \(([^)]*)\)\)", schema)
+    assert match, "01-schema.sql 에서 universe_tier CHECK 를 찾지 못했다"
+    allowed = {value.strip().strip("'") for value in match.group(1).split(",")}
+    assert set(loader.UNIVERSES) == allowed
 
 
 # ==================================================
