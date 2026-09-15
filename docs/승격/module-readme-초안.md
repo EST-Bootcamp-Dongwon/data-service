@@ -54,7 +54,8 @@ invoke check                            # 검증 정본
 
 - [ ] 루트 `README.md`를 이 초안으로 교체(기존 내용 흡수)
 - [ ] `lecture/` 하위 강의 원본 — 유지할지 별도 브랜치로 뺄지 결정
-- [ ] `app/services/timeseries/*` — C generator 베이스라인이므로 `factor-service`로 이관
+- [ ] `app/services/timeseries/*` — C generator 베이스라인이었으나 이관 계획은 폐기됐다
+      (`factor-service` 미개발 결정, 2026-09-15) — 이 저장소에 남는다
 - [ ] `docs/md/` · `docs/todo.md` · `docs/작업-프롬프트-기록.txt` — Diátaxis 구조로 재배치
 - [ ] `.vercel/` · `uvicorn.log` · `node_modules/` — `.gitignore` 확인
 - [ ] `프로젝트 작업 프롬프트 (...).txt` — `docs/` 로 이동하거나 제거

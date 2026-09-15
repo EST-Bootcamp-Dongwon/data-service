@@ -1,6 +1,6 @@
 # data-service — 모듈 자기 것만 둔다.
-# 팀 단계에서 상위 조립(quant-contract/compose.yaml)이 include 로 흡수한다.
-# 그래야 지금은 이 레포 하나만 클론해도 그대로 뜬다.
+# 팀 단계 상위 조립(quant-contract/compose.yaml) 계획은 폐기됐다(2026-09-15) —
+# 이 레포는 독립적으로 완성되는 개인 프로젝트다. 클론 하나만으로 그대로 뜬다.
 #
 #   docker compose up -d                      앱만
 #   docker compose --profile local-db up -d   앱 + 로컬 Postgres (5432 직결)

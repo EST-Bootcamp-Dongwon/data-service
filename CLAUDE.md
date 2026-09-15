@@ -8,5 +8,4 @@
 ## 이 레포에서만 쓰는 것
 
 - 세션을 시작할 때는 `세션-시작-프롬프트.md`를 먼저 읽는다.
-- 상위 규칙 정본: `../quant-contract/AGENTS.md`
-- 컨텍스트 스파인: `../quant-contract/CONTEXT.md`
+- 규칙 정본은 이 레포 자체의 `AGENTS.md` 다 (상위 공통 레포 `quant-contract` 는 2026-09-15 폐기됐다).

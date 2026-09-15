@@ -89,7 +89,8 @@ ADR-DS-0002 의 목표 DDL 은 `securities` 에 `listed_shares bigint` 를 두�
 - `sql/init/01-schema.sql` 의 `ohlcv` 에 `listed_shares bigint` 가 선다.
 - `market_data.py:109` 의 회전율이 **거래일 시점 주식수**로 계산된다. 전환 후에도
   지금과 같은 값이 나와야 한다 — 다르면 적재 쪽을 의심한다.
-- 하류 `label-service` 가 시점 정확한 주식수를 쓸 수 있다. 백테스트에서 액면분할 종목의
+- 하류 소비 코드가 시점 정확한 주식수를 쓸 수 있다(예전 계획이던 `label-service` 는
+  개발하지 않기로 폐기됐다 — 2026-09-15). 백테스트에서 액면분할 종목의
   회전율·유동성 지표가 분할 시점에 튀지 않는다.
 - `tests/test_schema_fitness.py` 가 이 컬럼이 다시 빠지는 것을 막는다.
 - 저장 6MB 증가. 파티션마다 나뉘므로 한 파티션당 부담은 그보다 작다.

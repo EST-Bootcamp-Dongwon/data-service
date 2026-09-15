@@ -6,7 +6,7 @@
 
 ## 맥락
 
-공통 규칙(`quant-contract/AGENTS.md`)은 검증 정본을
+공통 규칙(`quant-contract/AGENTS.md` — 그 레포는 2026-09-15 폐기됐다)은 검증 정본을
 `ruff check → ruff format --check → pytest → uv export → docker build` 로 규정한다.
 
 이 모듈에 그대로 적용하려고 실측했더니 **93개 파일 15,442줄**이 바뀐다.
