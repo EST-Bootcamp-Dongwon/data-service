@@ -229,7 +229,7 @@ def _index(rels: list[Path], stamp: str, commit: str, subject: str) -> str:
         "## 원격",
         "",
         "- GitHub — `EST-Bootcamp-Dongwon/data-service`",
-        "- GitLab — `dev-dongwon05253/est-data-service` (push 가 곧 Vercel 배포다)",
+        "- GitLab — `mygithub05253/est-data-service` (push 가 곧 Vercel 배포다)",
         "",
     ]
     return "\n".join(lines)
